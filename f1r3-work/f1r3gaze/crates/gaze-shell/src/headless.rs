@@ -36,7 +36,8 @@ pub struct Report {
 
 pub fn run(eng: Rc<Engine>, url: &str, opts: &Options) -> Report {
     let wake = WakeHandle::default();
-    let mut tab = Tab::new(Rc::clone(&eng), 1, wake);
+    // No window, so no cursor: the page keeps Blitz's dummy shell provider.
+    let mut tab = Tab::new(Rc::clone(&eng), 1, wake, None);
     tab.navigate(url, true);
     let mut doc: Option<RhoDocument> = None;
     let mut console = Vec::new();

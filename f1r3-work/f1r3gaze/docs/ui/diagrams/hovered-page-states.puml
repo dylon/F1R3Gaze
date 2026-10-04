@@ -1,0 +1,40 @@
+@startuml hovered-page-states
+' The arbiter's record of the page host under the pointer (`hovered`), and
+' what each transition does to the pages. Colours: blue = the pointer is over
+' the chrome, purple = over a page.
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam state {
+  BorderColor #52687A
+  ArrowColor #52687A
+  FontColor #182734
+}
+title Pointer hover across the chrome and its pages
+
+state "Over the chrome" as OverChrome #DDEBF7
+OverChrome : hovered = None
+OverChrome : cursor: that of the chrome element under the pointer
+
+state "Over page P" as OverPage #E4DFEC
+OverPage : hovered = P's host
+OverPage : cursor: that of P's element under the pointer
+OverPage : <b>Without leaving P:</b>
+OverPage : · the pointer moves in P, or P is laid out again
+OverPage : (refresh_hover): P reports dirty, the cursor is recomputed
+OverPage : · a new document replaces P (page_attached): it is seeded
+OverPage : · the hover moves onto another page Q: clear P, seed Q
+
+[*] --> OverChrome
+OverChrome --> OverPage : the chrome's hover moves onto P's host\n(a pointer event, or a layout change:\ntab switch, sidebar toggle)\n<b>seed P</b>: set_hover_to(pointer in P's coordinates)
+OverPage --> OverChrome : the chrome's hover leaves P's host\n<b>clear P</b>: clear_hover() ends :hover\nand forgets P's pointer position
+OverPage --> OverChrome : P's host is removed (tab closed)\n<b>forget it</b>: view_removed (node ids are reused)
+
+note right of OverPage
+  Every sync ends the same way:
+  cursor = window_cursor(get_cursor(), hidden_by_css),
+  and the window is told only when it changed.
+  Seeding and clearing change hover state only:
+  no DOM event is dispatched, as with Blitz's refresh_hover.
+end note
+@enduml

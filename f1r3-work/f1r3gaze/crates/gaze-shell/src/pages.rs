@@ -4,13 +4,17 @@
 //! bare text directly inside a button: Blitz never restyles the anonymous
 //! box such text gets, so it would keep its colour across a theme switch
 //! (docs/ui/ledger.md, L2).
+//!
+//! Buttons show the hand, as the chrome's do. Blitz's default style sheet
+//! sets no `cursor` for buttons, which would leave a text cursor over the
+//! label (L8). Links already get the hand from Blitz.
 
 use crate::display::{failure_reason, failure_summary};
 use crate::engine::escape;
 
 const STYLE: &str = "body{font-family:system-ui,sans-serif;margin:48px auto;max-width:680px;padding:0 24px;color:#1d2330;line-height:1.5}
 h1{font-weight:600}code{background:#eef1f6;padding:1px 4px;border-radius:3px}code.url{overflow-wrap:anywhere}
-button{font:inherit;padding:8px 16px;border:1px solid #9aa4b5;border-radius:6px;background:#fff}
+button{font:inherit;padding:8px 16px;border:1px solid #9aa4b5;border-radius:6px;background:#fff;cursor:pointer}
 button.lit{background:#ffcf3f;border-color:#c79a00}.muted{color:#667085}
 a.btn{display:inline-block;padding:8px 16px;border:1px solid #9aa4b5;border-radius:6px;background:#fff;color:#1d2330;text-decoration:none}
 summary{cursor:pointer;color:#667085}details p{margin:8px 0 0}";

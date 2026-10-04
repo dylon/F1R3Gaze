@@ -7,6 +7,8 @@
 //! * `chrome` (feature `window`): the window's own document — tab strip,
 //!   address bar, prompt bar, grants and console panels — hosting each tab's
 //!   `RhoDocument` as a sub-document.
+//! * `cursor` (feature `window`): the window's mouse cursor and the pointer's
+//!   hover inside pages, decided in one place by the chrome.
 //! * [`headless`]: the same pipeline without a window.
 
 pub mod display;
@@ -21,6 +23,8 @@ pub mod ui_state;
 
 #[cfg(feature = "window")]
 pub mod chrome;
+#[cfg(feature = "window")]
+pub mod cursor;
 
 #[cfg(test)]
 mod test_support;

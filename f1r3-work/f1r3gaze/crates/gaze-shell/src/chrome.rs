@@ -18,6 +18,7 @@
 //! * Labels are elements, never bare text in a flex box: Blitz never
 //!   restyles the anonymous box such text gets (`docs/ui/ledger.md`, L2).
 
+use crate::cursor::CursorArbiter;
 use crate::display::{self, LogLevel, Recency, SchemeKind, Tone};
 use crate::engine::{Engine, NavRequest, escape};
 use crate::tab::{Stage, Tab};
@@ -2237,6 +2238,9 @@ pub struct ChromeDocument {
     flash: Option<Flash>,
     /// Wakes the window when the message expires or find should look again.
     pacer: Pacer,
+    /// Decides the window's cursor and the pointer's hover inside pages
+    /// (`crate::cursor`; docs/ui/ledger.md, L8).
+    cursor: CursorArbiter,
     wallet: Arc<Mutex<WalletView>>,
     ui: UiState,
     parents: BTreeMap<u64, Option<u64>>,
@@ -2315,6 +2319,7 @@ impl ChromeDocument {
             active: 0,
             next_id: 0,
             pacer: Pacer::new(wake.clone()),
+            cursor: CursorArbiter::new(wake.clone()),
             wake,
             panel,
             remember: false,
@@ -2475,7 +2480,12 @@ impl ChromeDocument {
             m.append_children(main, &[v]);
             v
         };
-        let mut tab = Tab::new(Rc::clone(&self.eng), self.next_id, self.wake.clone());
+        let mut tab = Tab::new(
+            Rc::clone(&self.eng),
+            self.next_id,
+            self.wake.clone(),
+            Some(self.cursor.page_shell()),
+        );
         if load {
             tab.navigate(url, true);
         } else {
@@ -2553,6 +2563,7 @@ impl ChromeDocument {
             self.menu_tab = None;
         }
         tab.close();
+        self.cursor.view_removed(view);
         self.inner.remove_sub_document(view);
         {
             let mut m = self.inner.mutate();
@@ -4091,21 +4102,8 @@ impl ChromeDocument {
     }
 }
 
-fn rho_mut(doc: &mut BaseDocument, view: NodeId) -> Option<&mut RhoDocument> {
-    let d: &mut dyn Document = doc.get_node_mut(view)?.subdoc_mut()?;
-    let a: &mut dyn Any = d;
-    a.downcast_mut::<RhoDocument>()
-}
-
-impl Document for ChromeDocument {
-    fn inner(&self) -> DocGuard<'_> {
-        DocGuard::Ref(&self.inner)
-    }
-    fn inner_mut(&mut self) -> DocGuardMut<'_> {
-        DocGuardMut::Ref(&mut self.inner)
-    }
-
-    fn handle_ui_event(&mut self, event: UiEvent) {
+impl ChromeDocument {
+    fn dispatch_ui_event(&mut self, event: UiEvent) {
         // The window owns browser shortcuts and its fields' keys even while a
         // page sub-document has focus; they are handled before Blitz routes
         // the key anywhere.
@@ -4145,10 +4143,48 @@ impl Document for ChromeDocument {
         }
     }
 
+    /// Bring the cursor and the pages' hover up to date (ledger L8).
+    /// Returns whether the window must paint: a page's hover changed, so its
+    /// `:hover` styles changed, or a page asked to be painted.
+    fn settle_pointer(&mut self) -> bool {
+        let mut repaint = self.cursor.take_repaint();
+        if self.cursor.needs_sync() {
+            repaint |= self.cursor.sync(&mut self.inner);
+        }
+        repaint
+    }
+}
+
+fn rho_mut(doc: &mut BaseDocument, view: NodeId) -> Option<&mut RhoDocument> {
+    let d: &mut dyn Document = doc.get_node_mut(view)?.subdoc_mut()?;
+    let a: &mut dyn Any = d;
+    a.downcast_mut::<RhoDocument>()
+}
+
+impl Document for ChromeDocument {
+    fn inner(&self) -> DocGuard<'_> {
+        DocGuard::Ref(&self.inner)
+    }
+    fn inner_mut(&mut self) -> DocGuardMut<'_> {
+        DocGuardMut::Ref(&mut self.inner)
+    }
+
+    fn handle_ui_event(&mut self, event: UiEvent) {
+        // Ledger L8: the window's cursor is decided once the page under the
+        // pointer has seen the event, not by Blitz before it is forwarded.
+        self.cursor.install(&mut self.inner);
+        self.cursor.note_pointer(&event);
+        self.dispatch_ui_event(event);
+        if self.settle_pointer() {
+            self.inner.shell_provider.request_redraw();
+        }
+    }
+
     fn poll(&mut self, cx: Option<TaskContext>) -> bool {
         if let Some(cx) = &cx {
             self.wake.set_waker(cx.waker());
         }
+        self.cursor.install(&mut self.inner);
         let waker = cx.as_ref().map(|c| c.waker().clone());
         let mut changed = self.inner.poll_subdocuments(waker.as_ref());
         // Ledger L1/H7: a page attached while find was open is searched once
@@ -4182,6 +4218,9 @@ impl Document for ChromeDocument {
                 let view = self.tabs[i].1;
                 self.inner.remove_sub_document(view);
                 self.inner.set_sub_document(view, Box::new(doc));
+                // L8: a page that loads under a resting pointer learns where
+                // the pointer is.
+                self.cursor.page_attached(&mut self.inner, view);
                 let themed = Self::themed_as_builtin(&self.tabs[i].0);
                 if let Some(r) = rho_mut(&mut self.inner, view) {
                     r.set_foreground(i == self.active);
@@ -4234,6 +4273,9 @@ impl Document for ChromeDocument {
         }
         self.scan_sidebar_pages(changed);
         changed |= self.render();
+        // L8: hover changes reported during layout (Blitz's refresh_hover),
+        // pages loaded under the pointer, and pages' redraw requests.
+        changed |= self.settle_pointer();
         self.save_workspace();
         self.schedule_wakes();
         changed

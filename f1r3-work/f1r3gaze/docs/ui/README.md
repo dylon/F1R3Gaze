@@ -209,6 +209,120 @@ matters in three places:
 - The badge is computed from the field's live text, after the address has been
   restored.
 
+### 3.4 The pointer over pages: cursor and hover
+
+The window has one mouse cursor, but two documents have a say in it: the
+chrome, and the page under the pointer. Each page is a Blitz sub-document of
+the chrome, hosted by a `.view` element. With pages as Blitz builds them, the
+cursor disappeared over a page after Back, a rail click or a tab-row click,
+and links never showed the hand ([ledger L8](ledger.md)). Three engine facts
+combine to cause this:
+
+| # | Fact (Blitz `674d7d2`) | Effect on pages | Source |
+|---|---|---|---|
+| 1 | The chrome's hit test stops at a page's host. A document asks its shell for a new cursor only when its hovered element changes. | Moving inside a page never changes the chrome's hover, so the chrome never asks for a new cursor. | `node/node.rs` `hit_inner`; `document.rs` `set_hover_to` |
+| 2 | When the hover moves onto a host, the chrome reads the page's cursor *before* it forwards the event to the page. A page with nothing hovered answers `None`, and blitz-shell hides the cursor for `None`. | Entering a page that has not seen the pointer yet hides the cursor (every page after Back, a navigation, or a lazy tab's first selection). Entering any other page shows the cursor of wherever the pointer last was in it. | `events/driver.rs` `handle_ui_event`; `document.rs` `get_cursor`; `blitz-shell/src/lib.rs` `set_cursor` |
+| 3 | A document built without a shell provider gets `DummyShellProvider`, and sub-documents receive no enter or leave events. | A page's own cursor and redraw requests are lost. Its `:hover` state outlives the pointer's visit. | `document.rs` `BaseDocument::new`; `events/mod.rs` `map_dom_event_to_ui_event` |
+
+**Why pages do not get the window's provider.** Blitz's own iframes share
+their parent's provider (`iframe.rs`). That would fix fact 3, but the provider
+is also the window's title, clipboard, file dialogs and window controls, and a
+page could then retitle the window (`mutator.rs` sets it from `<title>`). Pages
+hold capabilities, not ambient authority, so they get a provider that can
+only *report*.
+
+![The cursor arbiter](diagrams/cursor-arbiter-components.svg)
+
+| Part (`crate::cursor`) | What it is | What it does |
+|---|---|---|
+| `CursorRouter` | Two `AtomicBool`s, `dirty` and `repaint`, and the chrome's `WakeHandle` | Raising a flag wakes the window's event loop only when the flag was clear, so a burst of reports costs one poll. |
+| `WindowShell` | The chrome's provider: blitz-shell's, wrapped | Forwards the 13 other `ShellProvider` methods unchanged. `set_cursor` only raises `dirty`. `apply` is the one path by which a cursor reaches the window. |
+| `PageShell` | Every page's provider, through `Tab::config` (so iframes inside a page inherit it) | `set_cursor` raises `dirty`, `request_redraw` raises `repaint`, and every other method keeps the dummy's no-op. |
+| `CursorArbiter` | A field of `ChromeDocument` | Decides the cursor, and moves the pointer's hover between pages. |
+
+blitz-shell sets its provider in `View::init`, after the document is built,
+and offers no hook. So `install` runs first in every `handle_ui_event` and
+`poll`, and wraps the provider whenever it is not already a `WindowShell`.
+
+![The pointer enters a page](diagrams/pointer-into-page-sequence.svg)
+
+**The sync.** In literate form [Knuth 1984]:
+
+```text
+⟨sync⟩ ≡
+    host ← the chrome's hovered element, if it hosts a page
+    if host ≠ hovered:
+        ⟨end the hover of the page the pointer left⟩
+        ⟨tell the page the pointer entered where the pointer is⟩
+        hovered ← host
+    want ← window_cursor(chrome.get_cursor(), hidden_by_css(chrome))
+    if shown ≠ want:
+        window.apply(want);  shown ← want
+    dirty ← false
+    return whether a page's hover changed      — its :hover styles need painting
+
+⟨end the hover of the page the pointer left⟩ ≡
+    if the old host still hosts a page:  page.clear_hover()
+
+⟨tell the page the pointer entered where the pointer is⟩ ≡
+    if host ≠ None and the pointer's position is known:
+        page.set_hover_to(page_point(pointer, host's position, page's scroll))
+```
+
+`chrome.get_cursor()` reads through the host into the page, so the answer is
+the page's own cursor. `sync` runs only after the page has seen the event, so
+that answer is current. Seeding and clearing change hover state only. No DOM
+event is dispatched, just as with Blitz's own `refresh_hover`.
+
+`page_point` maps a point in the chrome into the page's coordinates, as
+Blitz maps the events it forwards (`adjust_coords_for_subdocument`):
+
+```math
+\mathbf{p}_{\mathrm{page}} = \mathbf{p}_{\mathrm{chrome}} - \mathbf{o}_{\mathrm{host}} + \mathbf{s}_{\mathrm{page}}
+```
+
+Here $`\mathbf{p}_{\mathrm{chrome}}`$ is the pointer's last position in the
+chrome and $`\mathbf{o}_{\mathrm{host}}`$ is the host's absolute position
+(`absolute_position(0, 0)`). $`\mathbf{s}_{\mathrm{page}}`$ is how far the
+page has scrolled (`viewport_scroll()`).
+
+**Reading Blitz's `None`.** `get_cursor` answers `None` in two cases, and only
+one of them should hide the cursor:
+
+| Blitz's answer | Hovered element's computed `cursor` | The window shows |
+|---|---|---|
+| `Some(icon)` | any | `icon` |
+| `None` | `none` | nothing: the page hid the cursor, as on the web |
+| `None` | anything else, or nothing hovered | the arrow: a page that has not seen the pointer yet, or is not laid out yet |
+
+The computed value comes from `resolved_style_value(id, "cursor")` on the
+deepest hovered document.
+
+![Pointer hover across the chrome and its pages](diagrams/hovered-page-states.svg)
+
+**When the sync runs.**
+
+| Trigger | Who reports it | Synced at |
+|---|---|---|
+| A pointer event | `WindowShell` (the chrome's hover changed) or `PageShell` (a page's hover changed) | the end of `handle_ui_event` |
+| A layout change under a still pointer: a tab switch, the sidebar toggled, a page reflowed or scrolled. Blitz re-resolves hover in `resolve` (`refresh_hover`). | either shell: raises `dirty` and wakes the loop | the next `poll` |
+| A page loads under the pointer | `page_attached` seeds it; its first layout hovers the right element | the same `poll`, then the one after that layout |
+| A page asks to be painted (a hover restyle, a scroll, a loaded image) | `PageShell` raises `repaint` | `handle_ui_event` asks the window to redraw; `poll` reports a change, which blitz-shell turns into a redraw |
+| A tab is closed | `view_removed` forgets its host, because Blitz reuses node ids | — |
+
+The window is asked for a cursor only when it changes, and moving within one
+element asks nothing of it. `shown` is exact because nothing but `apply`
+writes the cursor.
+
+Built-in pages give their buttons `cursor: pointer`, as the chrome does.
+Blitz's default style sheet sets no `cursor`, which would leave a text cursor
+over a button's label (§8.14).
+
+**Maintenance.** `WindowShell` must forward every `ShellProvider` method, or
+the trait's default no-op would silently swallow it. The test
+`window_shell_forwards_everything_but_the_cursor` lists them all. A Blitz
+upgrade that adds a method must add it in both places.
+
 ---
 
 ## 4. Colour tokens and contrast
@@ -672,6 +786,10 @@ Before: [`41-error-page`](../screenshots/ui/before/41-error-page.png).
 After: [`41-error-page`](../screenshots/ui/after/41-error-page.png),
 [`42-newtab`](../screenshots/ui/after/42-newtab.png).
 
+Buttons on built-in pages, such as the new-tab page's lamp, show the hand
+(`button{cursor:pointer}`), as the chrome's own buttons do. Links get the hand
+from Blitz (§3.4).
+
 ---
 
 ## 9. Keyboard
@@ -1004,12 +1122,18 @@ verified in their sources.
 | An inset box-shadow is a fill minus an analytic hole; a coincident edge keeps about 50 % of the colour. | R8 (ledger L5 R1). | `blitz-paint/src/render/box_shadow.rs:89-147` |
 | Gradients are sampled at pixel corners through a 512-entry ramp. | R8 solid images (§10.7). | `vello_shaders-0.10.0/shader/fine.wgsl:26,1076,1225-1236` |
 | On macOS, standard key bindings skip DOM handlers. | Field keys are handled before the event driver. | `blitz-shell` `driver.rs` |
+| Hit-testing stops at a sub-document's host. A document asks its shell for a cursor only when its hovered element changes. | The cursor arbiter recomputes the cursor after a page has seen each event (§3.4). | `node/node.rs` `hit_inner`; `document.rs` `set_hover_to` |
+| A parent reads a host's cursor before forwarding the event, from the sub-document's previous hover. `None` hides the cursor in blitz-shell. | `WindowShell` turns the chrome's cursor requests into "recompute". | `events/driver.rs`; `document.rs` `get_cursor`; `blitz-shell/src/lib.rs` |
+| Sub-documents get no enter or leave events, and nothing clears their hover. | The arbiter clears a page's hover when the pointer leaves it. | `events/mod.rs` `map_dom_event_to_ui_event` |
+| A document built without a shell provider gets `DummyShellProvider`. | Pages get `PageShell` through `Tab::config`. | `document.rs` `BaseDocument::new` |
+| `resolve` ends with `refresh_hover`, which re-resolves hover at the last pointer position. | A page told where the pointer is hovers the right element after its first layout. | `resolve.rs` |
 
 The ledger records the defects these facts caused and the measurements that
 established them.
-Three of the defects are written up, with reproductions measured against the
+Four of the defects are written up, with reproductions measured against the
 pinned versions, in [`upstream/`](upstream/README.md). They are filed as
-DioxusLabs/blitz#1037 and #1038, and linebender/vello#1975.
+DioxusLabs/blitz#1037, #1038 and #1040, and linebender/vello#1975. #1040 is the
+sub-document hover behind §3.4, reproduced on `main` too.
 
 ---
 
@@ -1017,7 +1141,7 @@ DioxusLabs/blitz#1037 and #1038, and linebender/vello#1975.
 
 ### 12.1 Tests
 
-`cargo test -p gaze-shell -p gaze-dom-blitz` runs 73 + 8 tests. By area:
+`cargo test -p gaze-shell -p gaze-dom-blitz` runs 87 + 8 tests. By area:
 
 | Area | Tests |
 |---|---|
@@ -1026,7 +1150,8 @@ DioxusLabs/blitz#1037 and #1038, and linebender/vello#1975.
 | Layout | `text_budgets_match_laid_out_boxes`, `the_status_bar_fits_on_one_line`, `measured_width_matches_blitz_layout` |
 | Builders | the strip, tab attention, history groups and counts, search highlights, prompts, the error page |
 | Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge |
-| Pure helpers | `display` (13), `text_fit` (13), `theme` (5), `ui_state` (6) |
+| The pointer over pages (L8) | through a recording window provider and real pointer events: a fresh page never hides the cursor; the cursor follows links and text; leaving a page ends its hover; hover changes are repainted; a page loaded, or a tab switched, under a resting pointer gets its cursor; `cursor: none`; background pages; no redundant cursor requests; built-in buttons |
+| Pure helpers | `display` (13), `text_fit` (13), `theme` (5), `ui_state` (6), `cursor` (4: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants) |
 
 Each fix in the ledger has a **mutation check**: the fix is commented out, its
 test must fail, and then the fix is restored.
@@ -1041,8 +1166,24 @@ CI (`.github/workflows/ci.yml`) runs:
 
 `scripts/ui-snapshots.sh` drives the real binary under a virtual X server
 (Xvfb). It uses `xdotool` for keys and pointer, and ImageMagick 7 for captures
-and measurements. Every one of the 60 scenes starts from a seeded throwaway
-profile.
+and measurements. Every one of the 68 scenes starts from a seeded throwaway
+profile, with the pointer parked on the status bar before the window opens,
+so no scene depends on where the previous one left it.
+
+**Cursor scenes (61–68, ledger L8).** A screen capture does not contain the X
+cursor, so these scenes read it from the server. `scripts/x-cursor.py` uses
+XFixes `GetCursorImage` (python-xlib), which returns the sprite the server
+draws. It prints the size, the hotspot, the number of opaque pixels (0 for a
+hidden cursor), and a SHA-256 of the sprite. Each scene first takes reference
+sprites in the same run:
+- the hand, over the Reload button (`button{cursor:pointer}`);
+- the text cursor, over the address field;
+- the arrow, over the rail's empty middle.
+
+The checks then compare hashes, so they do not depend on the cursor theme. The
+sprites are saved in `cursors/`. The pages are `site/cursor.html` and
+`site/cursor-next.html`: large boxes at fixed places, the second with its link
+where the first has a plain block.
 
 ```sh
 scripts/ui-snapshots.sh --after                  # all scenes → docs/screenshots/ui/after/
@@ -1053,15 +1194,21 @@ scripts/ui-snapshots.sh --compare                # side by side, into the work d
 ```
 
 The options and exit codes:
-- **Options.** `--size 1280x800` (the default), `--timeout SECS`, `--keep` (keep
-  the work directory), and `--calibrate` (draw the coordinate table on a
-  capture).
+- **Options.** `--size 1280x800` (the default), `--timeout SECS`, `--work DIR`
+  (the work directory; default `target/ui-snapshots`), `--keep` (keep the
+  profiles in the work directory), and `--calibrate` (draw the coordinate table
+  on a capture).
 - **Exit codes.** 0 for success; 1 when a scene or check failed; 2 when a tool,
   the binary, or a display is missing; 3 for an unsafe profile path; 64 for
   usage.
 
 **Safety.**
-- The harness works in `${TMPDIR:-/tmp}/f1r3gaze-ui-snapshots` under a lock.
+- The harness works in `target/ui-snapshots` under a lock. The directory is
+  fixed, so the demo site's `file://` URLs, which the captures show, are the
+  same in every run. It is on disk because `/tmp` is often tmpfs, i.e. RAM.
+  Runs before 2026-10-04 used `${TMPDIR:-/tmp}/f1r3gaze-ui-snapshots`, so
+  `file://` URLs in older captures show that path. Each run records its work
+  directory in `run.txt`.
 - It refuses to use the real profile.
 - It sets `XDG_DATA_HOME` inside the work directory.
 - It runs a mock Embers server for wallet scenes.
@@ -1086,6 +1233,16 @@ for `--after`. Every check names a crop of the screen and a limit:
 | `*_edge_artifact_px` (row, rail, notice) | 02, 16 | — | 0 | ≤ 0 |
 | `*_bar_px` (row, rail, tab, notice, prompt) | 02, 16, 57 | — | 3, 3, 2, 3, 3 | = width |
 | `menu_opened_px`, `duplicated_px`, `flash_shown_px` | 21, 22, 47 | recorded | > 0 | ≥ 1 |
+| `cursor_refs_distinct`: the three reference sprites differ | 61–65, 67, 68 | — | 1 | = 1 |
+| `page_opaque_px`, `page_is_arrow`: the cursor is visible and the arrow after entering a page from Back, a rail button, or a Tabs-panel row | 61, 62, 63 | 0 (hidden) | 272, 1 | ≥ 1, = 1 |
+| `link_is_hand`, `text_is_text_cursor`: over the page's link and text | 64, 65 | 0, 0 (hidden) | 1, 1 | = 1 |
+| `hover_fill_px`, `left_fill_px`: the link's `:hover` fill while hovered, and after the pointer leaves the page | 66 | 0, 18 000 | 18 000, 0 | ≥ 15 000, = 0 |
+| `resting_is_hand`: a page loaded under the resting pointer | 67 | 0 (arrow) | 1 | = 1 |
+| `hidden_opaque_px`, `back_opaque_px`, `back_is_arrow`: `cursor: none`, then off it | 68 | 0, 0, 0 | 0, 272, 1 | = 0, ≥ 1, = 1 |
+
+The "Before" column of the cursor rows is the release binary from before the
+L8 fix (`635ed212…`), run with `--out` in a scratch directory, not the
+`before/` capture.
 
 How the less obvious checks measure:
 - **Effect checks** (`≥ 1`) compare a capture taken just before an interaction

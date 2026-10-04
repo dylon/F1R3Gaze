@@ -9,6 +9,7 @@ use crate::profile::seed;
 use blitz_dom::DocumentConfig;
 use blitz_traits::navigation::{NavigationOptions, NavigationProvider};
 use blitz_traits::net::NetWaker;
+use blitz_traits::shell::ShellProvider;
 use gaze_broker::{GrantPlan, Site, Status};
 use gaze_dom_blitz::{PageState, RhoDocument, WakeHandle};
 use gaze_knf::Knf;
@@ -78,10 +79,20 @@ pub struct Tab {
     pub core: Option<Rc<RefCell<TabCore>>>,
     links: Arc<Mutex<Vec<String>>>,
     pub wake: WakeHandle,
+    /// The shell provider of this tab's documents. In the window this is the
+    /// chrome's `PageShell`, through which a page reports hover changes and
+    /// redraw requests and which grants it nothing else (docs/ui/ledger.md,
+    /// L8). `None` gives Blitz's `DummyShellProvider`, as in headless runs.
+    page_shell: Option<Arc<dyn ShellProvider>>,
 }
 
 impl Tab {
-    pub fn new(eng: Rc<Engine>, id: u64, wake: WakeHandle) -> Tab {
+    pub fn new(
+        eng: Rc<Engine>,
+        id: u64,
+        wake: WakeHandle,
+        page_shell: Option<Arc<dyn ShellProvider>>,
+    ) -> Tab {
         let (tx, rx) = channel();
         Tab {
             id,
@@ -102,6 +113,7 @@ impl Tab {
             core: None,
             links: Arc::default(),
             wake,
+            page_shell,
         }
     }
 
@@ -179,6 +191,7 @@ impl Tab {
                 queue: Arc::clone(&self.links),
                 wake: self.wake.clone(),
             })),
+            shell_provider: self.page_shell.clone(),
             ..Default::default()
         }
     }

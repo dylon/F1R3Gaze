@@ -1257,6 +1257,7 @@ dependencies = [
  "blitz-html",
  "blitz-shell",
  "blitz-traits",
+ "cursor-icon",
  "gaze-blob",
  "gaze-broker",
  "gaze-dom-blitz",

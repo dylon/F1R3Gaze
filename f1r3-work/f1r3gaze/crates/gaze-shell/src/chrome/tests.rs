@@ -7,7 +7,10 @@ use crate::test_support::{ScratchProfile, stale_text_colours};
 use blitz_traits::events::{
     BlitzKeyEvent, BlitzPointerEvent, BlitzPointerId, KeyState, MouseEventButtons, PointerCoords,
 };
+use blitz_traits::shell::ShellProvider;
+use cursor_icon::CursorIcon;
 use keyboard_types::{Code, Location};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -1482,4 +1485,461 @@ fn prompts_drop_default_ports() {
     );
     assert!(html.contains("<span> wants to fetch from https://example.org</span>"), "{html}");
     assert!(!html.contains(":443"), "{html}");
+}
+
+// ── Ledger L8: pointer feedback over pages ──────────────────────────────
+
+/// What the chrome asks of its window, as blitz-shell's provider would
+/// receive it: every cursor request in order, and the redraw requests.
+#[derive(Default)]
+struct WindowLog {
+    cursors: Mutex<Vec<Option<CursorIcon>>>,
+    redraws: AtomicUsize,
+}
+
+impl WindowLog {
+    fn cursors(&self) -> Vec<Option<CursorIcon>> {
+        self.cursors.lock().expect("the cursor log").clone()
+    }
+    /// What the window shows: `None` before any request, `Some(None)` while
+    /// the cursor is hidden.
+    fn shown(&self) -> Option<Option<CursorIcon>> {
+        self.cursors.lock().expect("the cursor log").last().copied()
+    }
+    fn redraws(&self) -> usize {
+        self.redraws.load(Ordering::SeqCst)
+    }
+}
+
+impl ShellProvider for WindowLog {
+    fn set_cursor(&self, icon: Option<CursorIcon>) {
+        self.cursors.lock().expect("the cursor log").push(icon);
+    }
+    fn request_redraw(&self) {
+        self.redraws.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// `#go`'s background while it is hovered (`#go:hover`).
+const HOVERED: &str = "rgb(204, 0, 0)";
+
+/// A page for the cursor tests, stacked at the top left: a text-free block,
+/// a link, a line of text, and a block whose CSS hides the cursor. With
+/// `link_first` the link and the block swap places, so this page puts its
+/// link where the other variant has its plain block.
+fn cursor_page(title: &str, link_first: bool) -> String {
+    let (first, second) = match link_first {
+        true => (r#"<a id="go" href="next.html"></a>"#, r#"<div id="plain"></div>"#),
+        false => (r#"<div id="plain"></div>"#, r#"<a id="go" href="next.html"></a>"#),
+    };
+    format!(
+        "<html><head><title>{title}</title><style>\
+         body{{margin:0;font:16px sans-serif;background:#fff}}\
+         #plain{{width:240px;height:40px}}\
+         #go{{display:block;width:240px;height:40px;background:#eeeeee}}\
+         #go:hover{{background:#cc0000}}\
+         #text{{display:inline-block;margin:0;line-height:40px}}\
+         #nocursor{{width:240px;height:40px;cursor:none}}\
+         </style></head><body>{first}{second}<p id=\"text\">Words to hover over</p>\
+         <div id=\"nocursor\"></div></body></html>"
+    )
+}
+
+/// A chrome showing `url` whose window is a `WindowLog`. It is installed
+/// after the document is built, as blitz-shell's `View::init` installs its
+/// own provider.
+fn chrome_with_window(profile: &ScratchProfile, url: &str) -> (ChromeDocument, Arc<WindowLog>) {
+    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), url);
+    let window = Arc::new(WindowLog::default());
+    chrome.inner.set_shell_provider(window.clone());
+    (chrome, window)
+}
+
+/// Poll until tab `i` shows a document titled `title` (bounded), then lay
+/// the window out, which lays the page out at its view's size.
+fn show(chrome: &mut ChromeDocument, i: usize, title: &str) {
+    let view = chrome.tabs[i].1;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        chrome.poll(None);
+        if rho_mut(&mut chrome.inner, view).is_some_and(|page| page.title() == title) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "tab {i} did not show {title:?} within 10 s"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    lay_out_chrome(chrome);
+}
+
+/// The centre of a chrome element, in window coordinates.
+fn point_in_chrome(chrome: &ChromeDocument, selector: &str) -> (f32, f32) {
+    let node = chrome
+        .inner
+        .query_selector(selector)
+        .expect("a valid selector")
+        .unwrap_or_else(|| panic!("nothing matches {selector}"));
+    let rect = chrome
+        .inner
+        .get_client_bounding_rect(node)
+        .expect("the element is laid out");
+    (
+        (rect.x + rect.width / 2.0) as f32,
+        (rect.y + rect.height / 2.0) as f32,
+    )
+}
+
+/// The centre of an element of tab `i`'s page, in window coordinates.
+fn point_in_page(chrome: &mut ChromeDocument, i: usize, selector: &str) -> (f32, f32) {
+    let view = chrome.tabs[i].1;
+    let origin = chrome
+        .inner
+        .get_client_bounding_rect(view)
+        .expect("the view is laid out");
+    let base = rho_mut(&mut chrome.inner, view).expect("attached").base();
+    let doc = base.borrow();
+    let node = doc
+        .query_selector(selector)
+        .expect("a valid selector")
+        .unwrap_or_else(|| panic!("the page has no {selector}"));
+    let rect = doc
+        .get_client_bounding_rect(node)
+        .expect("the page is laid out");
+    (
+        (origin.x + rect.x + rect.width / 2.0) as f32,
+        (origin.y + rect.y + rect.height / 2.0) as f32,
+    )
+}
+
+/// Move the pointer to the centre of an element of tab `i`'s page.
+fn hover_page(chrome: &mut ChromeDocument, i: usize, selector: &str) {
+    let point = point_in_page(chrome, i, selector);
+    move_to(chrome, point);
+}
+
+/// Move the pointer to the centre of a chrome element.
+fn hover_chrome(chrome: &mut ChromeDocument, selector: &str) {
+    let point = point_in_chrome(chrome, selector);
+    move_to(chrome, point);
+}
+
+fn move_to(chrome: &mut ChromeDocument, (x, y): (f32, f32)) {
+    chrome.handle_ui_event(pointer(UiEvent::PointerMove, x, y, MouseEventButtons::None));
+}
+
+fn click_at(chrome: &mut ChromeDocument, (x, y): (f32, f32)) {
+    move_to(chrome, (x, y));
+    chrome.handle_ui_event(pointer(UiEvent::PointerDown, x, y, MouseEventButtons::Primary));
+    chrome.handle_ui_event(pointer(UiEvent::PointerUp, x, y, MouseEventButtons::None));
+}
+
+/// The cursor tab `i`'s page itself would show.
+fn page_cursor(chrome: &mut ChromeDocument, i: usize) -> Option<CursorIcon> {
+    let view = chrome.tabs[i].1;
+    let base = rho_mut(&mut chrome.inner, view).expect("attached").base();
+    base.borrow().get_cursor()
+}
+
+/// The `id` of the element under the pointer in tab `i`'s page, if any
+/// (`""` for an element without one).
+fn page_hover(chrome: &mut ChromeDocument, i: usize) -> Option<String> {
+    let view = chrome.tabs[i].1;
+    let base = rho_mut(&mut chrome.inner, view).expect("attached").base();
+    let doc = base.borrow();
+    doc.get_hover_node_id().map(|id| {
+        doc.get_node(id)
+            .and_then(|node| node.attr(LocalName::from("id")))
+            .unwrap_or_default()
+            .to_string()
+    })
+}
+
+/// A computed style value of an element of tab `i`'s page.
+fn page_style(chrome: &mut ChromeDocument, i: usize, selector: &str, property: &str) -> String {
+    let view = chrome.tabs[i].1;
+    let base = rho_mut(&mut chrome.inner, view).expect("attached").base();
+    let doc = base.borrow();
+    let node = doc
+        .query_selector(selector)
+        .expect("a valid selector")
+        .unwrap_or_else(|| panic!("the page has no {selector}"));
+    doc.resolved_style_value(node, property)
+}
+
+/// L8/H1: the pointer goes from Back into the page that Back has just
+/// loaded. That page has never been under the pointer, and the cursor must
+/// stay visible.
+#[test]
+fn entering_a_fresh_page_never_hides_the_cursor() {
+    let profile = ScratchProfile::new("cursor-fresh");
+    let first = profile.document("first.html", &cursor_page("First", false));
+    let second = profile.document("second.html", &cursor_page("Second", false));
+    let (mut chrome, window) = chrome_with_window(&profile, &first);
+    show(&mut chrome, 0, "First");
+    chrome.act(Action::Go(Some(second)));
+    show(&mut chrome, 0, "Second");
+    let back = point_in_chrome(&chrome, "#back");
+    click_at(&mut chrome, back);
+    // Back loads a new document for the first page.
+    show(&mut chrome, 0, "First");
+    hover_page(&mut chrome, 0, "#plain");
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Default)),
+        "an arrow over a plain block of a page Back just loaded; the window was asked for {:?}",
+        window.cursors()
+    );
+}
+
+/// L8/H2: inside a page the cursor follows the element under the pointer: a
+/// hand over a link, a text cursor over text.
+#[test]
+fn the_cursor_follows_links_and_text_inside_a_page() {
+    let profile = ScratchProfile::new("cursor-follow");
+    let url = profile.document("first.html", &cursor_page("First", false));
+    let (mut chrome, window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "First");
+    hover_page(&mut chrome, 0, "#plain");
+    let entered = window.cursors();
+    hover_page(&mut chrome, 0, "#go");
+    assert_eq!(
+        page_cursor(&mut chrome, 0),
+        Some(CursorIcon::Pointer),
+        "control: the page itself would show a hand over its link"
+    );
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Pointer)),
+        "a hand over the link; entering the page asked the window for {entered:?}, and the link then for {:?}",
+        window.cursors()
+    );
+    hover_page(&mut chrome, 0, "#text");
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Text)),
+        "a text cursor over text; the window was asked for {:?}",
+        window.cursors()
+    );
+}
+
+/// L8/H3: leaving a page for the browser's own controls ends the page's
+/// hover. Its link loses `:hover`, and coming back over a plain block shows
+/// the arrow, whatever the window showed in between.
+#[test]
+fn leaving_a_page_ends_its_hover() {
+    let profile = ScratchProfile::new("cursor-leave");
+    let url = profile.document("first.html", &cursor_page("First", false));
+    let (mut chrome, window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "First");
+    hover_page(&mut chrome, 0, "#go");
+    lay_out_chrome(&mut chrome);
+    assert_eq!(
+        page_style(&mut chrome, 0, "#go", "background-color"),
+        HOVERED,
+        "control: the link is hovered"
+    );
+    hover_chrome(&mut chrome, "#rail");
+    lay_out_chrome(&mut chrome);
+    assert_eq!(
+        page_hover(&mut chrome, 0),
+        None,
+        "nothing in the page is under the pointer once it is over the rail"
+    );
+    assert_ne!(
+        page_style(&mut chrome, 0, "#go", "background-color"),
+        HOVERED,
+        "the link lost :hover"
+    );
+    hover_page(&mut chrome, 0, "#plain");
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Default)),
+        "an arrow over the plain block on coming back; the window was asked for {:?}",
+        window.cursors()
+    );
+}
+
+/// L8/H4: a hover change inside a page gets painted. Moving onto a link with
+/// a `:hover` rule must lead to a redraw, either asked of the window at once
+/// or reported by `poll`, which blitz-shell turns into one.
+#[test]
+fn hover_changes_inside_a_page_are_repainted() {
+    let profile = ScratchProfile::new("cursor-repaint");
+    let url = profile.document("first.html", &cursor_page("First", false));
+    let (mut chrome, window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "First");
+    hover_page(&mut chrome, 0, "#plain");
+    chrome.poll(None);
+    let before = window.redraws();
+    hover_page(&mut chrome, 0, "#go");
+    let asked = window.redraws() - before;
+    let polled = chrome.poll(None);
+    assert!(
+        asked > 0 || polled,
+        "moving onto the link led to no redraw: {asked} requests, poll() = {polled}"
+    );
+}
+
+/// L8: a page that loads under a resting pointer gets its cursor without
+/// the pointer moving. Here its link lands where the previous page had a
+/// plain block.
+#[test]
+fn a_page_loaded_under_a_resting_pointer_gets_its_cursor() {
+    let profile = ScratchProfile::new("cursor-rest");
+    let first = profile.document("first.html", &cursor_page("First", false));
+    let second = profile.document("second.html", &cursor_page("Second", true));
+    let (mut chrome, window) = chrome_with_window(&profile, &first);
+    show(&mut chrome, 0, "First");
+    hover_page(&mut chrome, 0, "#plain");
+    chrome.act(Action::Go(Some(second)));
+    show(&mut chrome, 0, "Second");
+    chrome.poll(None);
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Pointer)),
+        "a hand over the new page's link, with no pointer movement; the window was asked for {:?}",
+        window.cursors()
+    );
+    // Between attaching and its first layout the new page has nothing
+    // hovered. Blitz answers `None` for that, which must not hide the cursor.
+    assert!(
+        !window.cursors().contains(&None),
+        "the cursor was never hidden while the page loaded; the window was asked for {:?}",
+        window.cursors()
+    );
+}
+
+/// L8: switching tabs under a resting pointer (here by keyboard) shows the
+/// new page's cursor without the pointer moving. Its link is where the other
+/// page has a plain block.
+#[test]
+fn switching_tabs_under_a_resting_pointer_shows_the_new_page_cursor() {
+    let profile = ScratchProfile::new("cursor-switch");
+    let first = profile.document("first.html", &cursor_page("First", false));
+    let second = profile.document("second.html", &cursor_page("Second", true));
+    let (mut chrome, window) = chrome_with_window(&profile, &first);
+    show(&mut chrome, 0, "First");
+    chrome.open_tab(&second);
+    show(&mut chrome, 1, "Second");
+    chrome.act(Action::Select(chrome.tabs[0].0.id));
+    lay_out_chrome(&mut chrome);
+    hover_page(&mut chrome, 0, "#plain");
+    assert_eq!(window.shown(), Some(Some(CursorIcon::Default)), "control: the arrow");
+    chrome.act(Action::Select(chrome.tabs[1].0.id));
+    // The window lays itself out again, and polls once a frame has been drawn.
+    lay_out_chrome(&mut chrome);
+    chrome.poll(None);
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Pointer)),
+        "a hand over the newly shown page's link; the window was asked for {:?}",
+        window.cursors()
+    );
+    assert_eq!(page_hover(&mut chrome, 0).as_deref(), None, "the hidden page hovers nothing");
+}
+
+/// L8: a page may hide the cursor over its own elements with
+/// `cursor: none`, as on the web, and the cursor returns when the pointer
+/// leaves them.
+#[test]
+fn css_can_hide_the_cursor_over_page_elements() {
+    let profile = ScratchProfile::new("cursor-none");
+    let url = profile.document("first.html", &cursor_page("First", false));
+    let (mut chrome, window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "First");
+    hover_page(&mut chrome, 0, "#plain");
+    hover_page(&mut chrome, 0, "#nocursor");
+    assert_eq!(
+        window.shown(),
+        Some(None),
+        "hidden over `cursor: none`; the window was asked for {:?}",
+        window.cursors()
+    );
+    hover_page(&mut chrome, 0, "#plain");
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Default)),
+        "back once the pointer leaves it; the window was asked for {:?}",
+        window.cursors()
+    );
+}
+
+/// L8: only the page under the pointer decides the cursor. A page in a
+/// background tab whose hover changes (for example when it is laid out
+/// again) leaves the cursor alone.
+#[test]
+fn background_pages_cannot_change_the_cursor() {
+    let profile = ScratchProfile::new("cursor-background");
+    let first = profile.document("first.html", &cursor_page("First", false));
+    let second = profile.document("second.html", &cursor_page("Second", false));
+    let (mut chrome, window) = chrome_with_window(&profile, &first);
+    show(&mut chrome, 0, "First");
+    chrome.open_tab(&second);
+    show(&mut chrome, 1, "Second");
+    chrome.act(Action::Select(chrome.tabs[0].0.id));
+    lay_out_chrome(&mut chrome);
+    hover_page(&mut chrome, 0, "#plain");
+    // The background page, laid out on its own, gets its `cursor: none`
+    // block under its last pointer position.
+    let view = chrome.tabs[1].1;
+    lay_out_page(&mut chrome, view);
+    {
+        let base = rho_mut(&mut chrome.inner, view).expect("attached").base();
+        let mut doc = base.borrow_mut();
+        let node = doc
+            .query_selector("#nocursor")
+            .expect("a valid selector")
+            .expect("the page has #nocursor");
+        let rect = doc.get_client_bounding_rect(node).expect("laid out");
+        doc.set_hover_to(
+            (rect.x + rect.width / 2.0) as f32,
+            (rect.y + rect.height / 2.0) as f32,
+        );
+    }
+    chrome.poll(None);
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Default)),
+        "the arrow of the page under the pointer; the window was asked for {:?}",
+        window.cursors()
+    );
+}
+
+/// L8: moving within one element asks nothing of the window.
+#[test]
+fn moving_within_an_element_asks_nothing_of_the_window() {
+    let profile = ScratchProfile::new("cursor-still");
+    let url = profile.document("first.html", &cursor_page("First", false));
+    let (mut chrome, window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "First");
+    let (x, y) = point_in_page(&mut chrome, 0, "#plain");
+    move_to(&mut chrome, (x, y));
+    let asked = window.cursors().len();
+    for dx in [-60.0, -30.0, 30.0, 60.0] {
+        move_to(&mut chrome, (x + dx, y));
+    }
+    assert_eq!(
+        window.cursors().len(),
+        asked,
+        "moves within one block changed nothing; the window was asked for {:?}",
+        window.cursors()
+    );
+}
+
+/// L8: the built-in pages' buttons show the hand, like the chrome's, even
+/// over their label text (Blitz's default style sheet sets no `cursor`).
+#[test]
+fn built_in_buttons_show_the_hand() {
+    let profile = ScratchProfile::new("cursor-lamp");
+    let (mut chrome, window) = chrome_with_window(&profile, "gaze://newtab");
+    show(&mut chrome, 0, "New tab");
+    hover_page(&mut chrome, 0, "#lamp span");
+    assert_eq!(
+        window.shown(),
+        Some(Some(CursorIcon::Pointer)),
+        "a hand over the lamp's label; the window was asked for {:?}",
+        window.cursors()
+    );
 }

@@ -25,12 +25,16 @@ impl ScratchProfile {
 
     /// Write a static page (no f1r3lang) and return its `file://` URL.
     pub fn page(&self, file: &str, body: &str) -> String {
-        let path = self.0.join(file);
-        std::fs::write(
-            &path,
-            format!("<html><head><title>{file}</title></head><body>{body}</body></html>"),
+        self.document(
+            file,
+            &format!("<html><head><title>{file}</title></head><body>{body}</body></html>"),
         )
-        .expect("write the page");
+    }
+
+    /// Write a complete HTML document and return its `file://` URL.
+    pub fn document(&self, file: &str, html: &str) -> String {
+        let path = self.0.join(file);
+        std::fs::write(&path, html).expect("write the page");
         url::Url::from_file_path(&path)
             .expect("absolute page path")
             .to_string()

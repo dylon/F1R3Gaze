@@ -14,16 +14,17 @@
 #   scripts/ui-snapshots.sh --after --calibrate # crosshairs on the coordinate table
 #
 # Options: --bin PATH (default target/release/f1r3gaze), --out DIR,
-# --size WxH (default 1280x800), --timeout SECS per scene (default 25), --keep.
+# --work DIR (default target/ui-snapshots), --size WxH (default 1280x800),
+# --timeout SECS per scene (default 25), --keep.
 #
 # Exit codes: 0 ok; 1 a scene or an enforced check failed; 2 a tool, the
 # binary, or the display is missing; 3 an unsafe profile path was refused;
 # 64 usage error.
 #
-# Safety: every profile lives under the work directory
-# ${TMPDIR:-/tmp}/f1r3gaze-ui-snapshots (held with flock), F1R3GAZE_PROFILE and
-# XDG_DATA_HOME point inside it, and the user's real profile is refused.
-# Wallets are imported from fixed test keys that must never be funded.
+# Safety: every profile lives under the work directory (held with flock),
+# F1R3GAZE_PROFILE and XDG_DATA_HOME point inside it, and the user's real
+# profile is refused. The work directory is on disk, not /tmp, which is often
+# tmpfs (RAM). Wallets are imported from fixed test keys that are never funded.
 #
 # Design and the scene catalogue: docs/ui/README.md ("Snapshot harness").
 
@@ -33,6 +34,7 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 MODE=""
 BIN="$ROOT/target/release/f1r3gaze"
 OUT=""
+WORK=""
 ONLY=""
 SIZE="1280x800"
 SCENE_TIMEOUT=25
@@ -42,7 +44,7 @@ CALIBRATE=0
 COMPARE=0
 
 usage() {
-    sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 64
 }
 
@@ -52,6 +54,7 @@ while (($#)); do
     --after) MODE=after ;;
     --bin) BIN=${2:?--bin needs a path}; shift ;;
     --out) OUT=${2:?--out needs a directory}; shift ;;
+    --work) WORK=${2:?--work needs a directory}; shift ;;
     --only) ONLY=${2:?--only needs a regular expression}; shift ;;
     --size) SIZE=${2:?--size needs WxH}; shift ;;
     --timeout) SCENE_TIMEOUT=${2:?--timeout needs seconds}; shift ;;
@@ -98,10 +101,17 @@ SCENES=(
     56-theme-prompt-to-light 57-theme-prompt-fresh-light
     58-theme-newtab-to-light 59-theme-newtab-fresh-light
     60-theme-wallet-to-light
+    61-cursor-back 62-cursor-rail 63-cursor-tab-row 64-cursor-link
+    65-cursor-text 66-cursor-hover-style 67-cursor-resting 68-cursor-css-none
 )
 # Scene 60 used to be before-only (it needed the removed palette button); it now
-# reaches the same state through Appearance in after mode.
-declare -A ONLY_IN=()
+# reaches the same state through Appearance in after mode. The cursor scenes
+# (L8) came after the before capture and use only the after coordinates.
+declare -A ONLY_IN=(
+    [61-cursor-back]=after [62-cursor-rail]=after [63-cursor-tab-row]=after
+    [64-cursor-link]=after [65-cursor-text]=after [66-cursor-hover-style]=after
+    [67-cursor-resting]=after [68-cursor-css-none]=after
+)
 
 if ((LIST)); then
     printf '%s\n' "${SCENES[@]}"
@@ -158,6 +168,17 @@ coordinates_before() {
     AT[LINE_TAB_BAR]=""
     AT[LINE_NOTICE_BAR]=""
     AT[LINE_PROMPT_BAR]=""
+    # The cursor scenes run in after mode only.
+    AT[BACK]=""
+    AT[RELOAD]=""
+    AT[URL_FIELD]=""
+    AT[RAIL_MID]=""
+    AT[PAGE_PLAIN]=""
+    AT[PAGE_PLAIN_OPEN]=""
+    AT[PAGE_GO]=""
+    AT[PAGE_TEXT]=""
+    AT[PAGE_NOCURSOR]=""
+    AT[CROP_GO]=""
 }
 coordinates_after() {
     AT[TAB1]="60 20"
@@ -202,6 +223,19 @@ coordinates_after() {
     AT[LINE_TAB_BAR]="1x10+100+0"         # active tab's top bar
     AT[LINE_NOTICE_BAR]="12x1+56+505"     # palette notice, Appearance (light)
     AT[LINE_PROMPT_BAR]="10x1+0+105"      # prompt bar (light)
+    # Cursor scenes (L8). Toolbar buttons and the address field sit on y=60.
+    AT[BACK]="55 60"
+    AT[RELOAD]="119 60"
+    AT[URL_FIELD]="700 60"
+    AT[RAIL_MID]="20 520"                 # the rail's empty middle: the arrow
+    # site/cursor.html's boxes (320x80 at page x=200), with the page area at
+    # (42,84), or at x=342 when the sidebar is open.
+    AT[PAGE_PLAIN]="402 184"
+    AT[PAGE_PLAIN_OPEN]="702 184"
+    AT[PAGE_GO]="402 304"
+    AT[PAGE_TEXT]="270 424"               # over the first word of the text
+    AT[PAGE_NOCURSOR]="402 544"
+    AT[CROP_GO]="300x60+252+274"          # inside the link's box
 }
 
 # ── Setup ────────────────────────────────────────────────────────────────
@@ -212,8 +246,13 @@ fi
 OUT=${OUT:-$ROOT/docs/screenshots/ui/$MODE}
 "coordinates_$MODE"
 
-BASE_TMP=${TMPDIR:-/tmp}
-WORK="$BASE_TMP/f1r3gaze-ui-snapshots"
+# A fixed directory, so the demo site's file:// URLs (which the captures show)
+# are the same in every run. It is under target/ on disk: /tmp is often tmpfs,
+# and profiles, logs and reference captures would then occupy RAM.
+# BASE_TMP=${TMPDIR:-/tmp}
+# WORK="$BASE_TMP/f1r3gaze-ui-snapshots"
+# Disabled 2026-10-04: the default put the work directory on tmpfs.
+WORK=${WORK:-$ROOT/target/ui-snapshots}
 mkdir -p -- "$WORK"
 exec 9>"$WORK/.lock"
 flock -n 9 || die 2 "another ui-snapshots run holds $WORK/.lock"
@@ -244,6 +283,15 @@ for tool in Xvfb xdotool import magick montage jq gawk xdpyinfo python3 timeout 
     command -v "$tool" >/dev/null || die 2 "missing tool: $tool"
 done
 [[ -x $BIN ]] || die 2 "binary not found or not executable: $BIN (cargo build --release -p gaze-shell)"
+# The cursor scenes read the X cursor through XFixes (python-xlib).
+if [[ $MODE == after ]]; then
+    for name in "${SCENES[@]}"; do
+        [[ $name == *-cursor-* && (-z $ONLY || $name =~ $ONLY) ]] || continue
+        python3 -c 'import Xlib.ext.xfixes' 2>/dev/null ||
+            die 2 "missing tool: python-xlib (the cursor scenes read the X cursor with scripts/x-cursor.py)"
+        break
+    done
+fi
 
 # Refuse anything outside the work directory, and the user's own profile
 # (computed from the real environment, before it is overridden below).
@@ -393,6 +441,31 @@ HTML
     cat >"$SITE/plain.html" <<'HTML'
 <html><head><title>Plain page</title><style>body{font-family:sans-serif;margin:32px;color:#222;background:#fff}</style></head><body><h1>Plain page</h1><p>A static document.</p></body></html>
 HTML
+    # The cursor scenes' pages (L8). The second puts its link where the first
+    # has its plain block, for a page that loads under a resting pointer.
+    cursor_page_html "Cursor page" 60 180 >"$SITE/cursor.html"
+    cursor_page_html "Cursor next" 180 60 >"$SITE/cursor-next.html"
+}
+
+# cursor_page_html TITLE PLAIN_TOP LINK_TOP: large boxes at fixed places, so
+# the coordinate table's points hit them with room to spare.
+cursor_page_html() {
+    cat <<HTML
+<html><head><title>$1</title><style>
+body{margin:0;font:24px sans-serif;color:#222;background:#fff}
+.box{position:absolute;left:200px;width:320px;height:80px}
+#plain{top:$2px;background:#f4f4f4}
+#go{display:block;top:$3px;background:#eeeeee}
+#go:hover{background:#cc0000}
+#text{position:absolute;left:200px;top:300px;margin:0;line-height:80px}
+#nocursor{top:420px;background:#f4f4f4;cursor:none}
+</style></head><body>
+<div id="plain" class="box"></div>
+<a id="go" class="box" href="cursor-next.html"></a>
+<p id="text">Words to hover over</p>
+<div id="nocursor" class="box"></div>
+</body></html>
+HTML
 }
 
 # Fixed test keys: deterministic addresses; never fund them.
@@ -475,6 +548,10 @@ fail() {
 }
 
 launch() {
+    # The window opens under wherever the previous scene left the pointer, and
+    # a page that loads under it would be hovered there. Park the pointer on
+    # the status bar first, so no scene depends on the one before it (L8).
+    pointer NEUTRAL
     "$BIN" --profile "$PROFILE" "$@" >>"$WORK/logs/$SCENE.log" 2>&1 &
     APP_PID=$!
     (sleep "$SCENE_TIMEOUT" && kill -TERM "$APP_PID") 2>/dev/null &
@@ -927,6 +1004,131 @@ scene_60_theme_wallet_to_light() {
     esac
 }
 
+# ── Cursor scenes (docs/ui/ledger.md, L8) ────────────────────────────────
+# A screen capture does not contain the X cursor, so these scenes read it
+# from the server (scripts/x-cursor.py). Each one compares it with reference
+# sprites taken in the same run, which keeps the checks independent of the
+# cursor theme: a hand over a toolbar button (button{cursor:pointer}), a text
+# cursor over the address field, and the arrow over the rail's empty middle.
+# Every sprite read is kept in cursors/ next to the captures.
+PROBE="$ROOT/scripts/x-cursor.py"
+CURSOR_TITLE="Cursor page"
+C_OPAQUE=0
+C_SHA=""
+REF_HAND=""
+REF_TEXT=""
+REF_ARROW=""
+
+# cursor_probe NAME: read the cursor shown now; sets C_OPAQUE and C_SHA.
+cursor_probe() {
+    local line
+    sleep 0.3
+    mkdir -p -- "$OUT/cursors"
+    line=$(python3 "$PROBE" --png "$OUT/cursors/$SCENE.$1.png") || { fail "the cursor probe failed"; return 1; }
+    read -r _ _ _ _ C_OPAQUE C_SHA <<<"$line"
+    log "  cursor $1: $line"
+}
+same() { [[ $1 == "$2" ]] && echo 1 || echo 0; }
+# The reference sprites. Moving over them never touches the page, so a page
+# that has not been under the pointer stays that way.
+cursor_refs() {
+    pointer RELOAD && cursor_probe ref-hand && REF_HAND=$C_SHA &&
+        pointer URL_FIELD && cursor_probe ref-text && REF_TEXT=$C_SHA &&
+        pointer RAIL_MID && cursor_probe ref-arrow && REF_ARROW=$C_SHA || return 1
+    local distinct=0
+    [[ $REF_HAND != "$REF_TEXT" && $REF_HAND != "$REF_ARROW" && $REF_TEXT != "$REF_ARROW" ]] && distinct=1
+    check "$SCENE" cursor_refs_distinct "$distinct" eq 1
+}
+# cursor_is NAME REFERENCE CHECK: the cursor shown now has the reference shape.
+cursor_is() {
+    cursor_probe "$1" || return 1
+    check "$SCENE" "$3" "$(same "$C_SHA" "$2")" eq 1
+}
+# cursor_visible_arrow NAME: the arrow, visible.
+cursor_visible_arrow() {
+    cursor_probe "$1" || return 1
+    check "$SCENE" "${1}_opaque_px" "$C_OPAQUE" ge 1
+    check "$SCENE" "${1}_is_arrow" "$(same "$C_SHA" "$REF_ARROW")" eq 1
+}
+cursor_tabs() {
+    jq -cn --arg site "$SITE_URL" '[
+      {url: ($site + "/cursor.html"), title: "Cursor page", parent: null},
+      {url: ($site + "/notes.html"), title: "Field notes on gaze and capability", parent: null}
+    ]'
+}
+
+# C1: Back loads a new document, and the pointer goes from Back into it.
+scene_61_cursor_back() {
+    new_profile "$SCENE"
+    seed dark tabs false false 0 "$(cursor_tabs)"
+    launch && wait_title "$CURSOR_TITLE" && cursor_refs &&
+        key ctrl+l && key ctrl+a && typeit "$SITE_URL/cursor-next.html" && key Return && wait_title "Cursor next" &&
+        click BACK 1 0.3 && wait_title "$CURSOR_TITLE" && sleep 0.5 && pointer PAGE_PLAIN && shot 0.5 || return 1
+    cursor_visible_arrow page
+}
+# C2: a rail button, then into a page that has not been under the pointer.
+scene_62_cursor_rail() {
+    new_profile "$SCENE"
+    seed dark tabs true false 0 "$(cursor_tabs)"
+    launch && wait_title "$CURSOR_TITLE" && cursor_refs && click RAIL_HISTORY 1 0.5 &&
+        pointer PAGE_PLAIN_OPEN && shot 0.5 || return 1
+    cursor_visible_arrow page
+}
+# C3: a Tabs-panel row selects a tab, whose page loads on selection.
+scene_63_cursor_tab_row() {
+    new_profile "$SCENE"
+    seed dark tabs true false 1 "$(cursor_tabs)"
+    launch && wait_title "$NOTES_TITLE" && cursor_refs && click FIRST_ROW 1 0.3 &&
+        wait_title "$CURSOR_TITLE" && sleep 0.5 && pointer PAGE_PLAIN_OPEN && shot 0.5 || return 1
+    cursor_visible_arrow page
+}
+# C4: a hand over a link inside the page.
+scene_64_cursor_link() {
+    new_profile "$SCENE"
+    seed dark tabs false false 0 "$(cursor_tabs)"
+    launch && wait_title "$CURSOR_TITLE" && cursor_refs && pointer PAGE_PLAIN && sleep 0.3 &&
+        pointer PAGE_GO && shot 0.5 || return 1
+    cursor_is link "$REF_HAND" link_is_hand
+}
+# C5: a text cursor over the page's text.
+scene_65_cursor_text() {
+    new_profile "$SCENE"
+    seed dark tabs false false 0 "$(cursor_tabs)"
+    launch && wait_title "$CURSOR_TITLE" && cursor_refs && pointer PAGE_PLAIN && sleep 0.3 &&
+        pointer PAGE_TEXT && shot 0.5 || return 1
+    cursor_is text "$REF_TEXT" text_is_text_cursor
+}
+# C6: the link's :hover style is painted while the pointer is on it, and
+# cleared once the pointer leaves the page.
+scene_66_cursor_hover_style() {
+    new_profile "$SCENE"
+    seed dark tabs false false 0 "$(cursor_tabs)"
+    launch && wait_title "$CURSOR_TITLE" && pointer PAGE_PLAIN && sleep 0.3 && pointer PAGE_GO &&
+        ref hovered 0.5 && pointer RAIL_MID && shot 0.5 || return 1
+    check "$SCENE" hover_fill_px "$(count_color_in "$WORK/refs/$SCENE.hovered.png" "${AT[CROP_GO]}" '#CC0000')" ge 15000
+    check "$SCENE" left_fill_px "$(count_color_in "$OUT/$SCENE.png" "${AT[CROP_GO]}" '#CC0000')" eq 0
+}
+# C7: a page loads under a resting pointer; its link lands where the
+# previous page's plain block was.
+scene_67_cursor_resting() {
+    new_profile "$SCENE"
+    seed dark tabs false false 0 "$(cursor_tabs)"
+    launch && wait_title "$CURSOR_TITLE" && cursor_refs && pointer PAGE_PLAIN && sleep 0.3 &&
+        key ctrl+l && key ctrl+a && typeit "$SITE_URL/cursor-next.html" && key Return &&
+        wait_title "Cursor next" && sleep 0.5 && shot 0.5 || return 1
+    cursor_is page "$REF_HAND" resting_is_hand
+}
+# C8: `cursor: none` hides the cursor over that element only.
+scene_68_cursor_css_none() {
+    new_profile "$SCENE"
+    seed dark tabs false false 0 "$(cursor_tabs)"
+    launch && wait_title "$CURSOR_TITLE" && cursor_refs && pointer PAGE_PLAIN && sleep 0.3 &&
+        pointer PAGE_NOCURSOR && cursor_probe hidden || return 1
+    check "$SCENE" hidden_opaque_px "$C_OPAQUE" eq 0
+    pointer PAGE_PLAIN && shot 0.5 || return 1
+    cursor_visible_arrow back
+}
+
 # ── Calibration ──────────────────────────────────────────────────────────
 calibrate() {
     SCENE=calibrate
@@ -972,6 +1174,7 @@ BIN_SHA=$(sha256sum "$BIN" | cut -d' ' -f1)
     printf 'binary\t%s\n' "$BIN_SHA"
     printf 'imagemagick\t%s\n' "$(magick -version | head -n1)"
     printf 'size\t%sx%s\n' "$W" "$H"
+    printf 'work\t%s\n' "$WORK"
     printf 'only\t%s\n' "${ONLY:-all scenes}"
 } >"$OUT/run.txt"
 

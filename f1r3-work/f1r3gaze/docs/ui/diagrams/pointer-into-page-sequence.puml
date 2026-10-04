@@ -1,0 +1,71 @@
+@startuml pointer-into-page-sequence
+' The pointer moves from the Back button into a page that Back has just
+' loaded. Colours: blue = the chrome's own code, green = Blitz, purple = the
+' page's document, red = the window (blitz-shell and winit), yellow = the
+' cursor arbiter (crate::cursor, ledger L8).
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #52687A
+  LifeLineBorderColor #52687A
+  ParticipantBorderColor #52687A
+  GroupBorderColor #52687A
+  GroupBackgroundColor #F5F7FA
+}
+title The pointer enters a page: who decides the cursor
+
+actor "User" as user #FFFFFF
+participant "Window\n(blitz-shell, winit)" as window #F8CBAD
+participant "ChromeDocument\n::handle_ui_event" as handle #DDEBF7
+participant "EventDriver\n(Blitz)" as driver #E2EFDA
+participant "chrome\nBaseDocument" as chrome #E2EFDA
+participant "page\nBaseDocument" as page #E4DFEC
+participant "page's\nShellProvider" as pageshell #E4DFEC
+participant "CursorArbiter\n+ WindowShell" as arbiter #FFF2CC
+
+user -> window : pointer moves from Back onto the page
+window -> handle : UiEvent::PointerMove(x, y)
+
+group Before (Blitz 674d7d2, pages with DummyShellProvider)
+  handle -> driver : UiEvent
+  driver -> chrome : set_hover_to(x, y)
+  note right of chrome
+    hit-testing stops at the page's host:
+    hover #back → .view (changed)
+  end note
+  chrome -> chrome : get_cursor(): .view hosts a page, so it asks\npage.get_cursor(), which runs <b>before</b> the page sees the event
+  chrome -> page : get_cursor()
+  page --> chrome : None (the page has nothing hovered yet)
+  chrome -> window : set_cursor(None)
+  window -> window : <b>cursor hidden</b>
+  driver -> page : forward PointerMove (page coordinates)
+  page -> page : set_hover_to: hover → #plain
+  page -> pageshell : set_cursor(Default), request_redraw()
+  pageshell -> pageshell : <b>discarded</b> (DummyShellProvider)
+  note over chrome, page
+    later moves inside the page keep the chrome's hover on .view:
+    the chrome never asks again, so the cursor stays hidden,
+    and a link never shows the hand
+  end note
+end
+
+group After (ledger L8)
+  handle -> arbiter : install(): the chrome's provider is a WindowShell
+  handle -> arbiter : note_pointer(x, y)
+  handle -> driver : UiEvent
+  driver -> chrome : set_hover_to(x, y): hover → .view
+  chrome -> arbiter : WindowShell.set_cursor(stale answer)\n→ dirty (not shown)
+  driver -> page : forward PointerMove
+  page -> page : set_hover_to: hover → #plain
+  page -> pageshell : set_cursor(…), request_redraw()
+  pageshell -> arbiter : PageShell → dirty, repaint
+  handle -> arbiter : settle_pointer() → sync()
+  arbiter -> arbiter : host changed: clear the page left,\nseed the page entered (no DOM events)
+  arbiter -> chrome : get_cursor() → page.get_cursor() = Default\n(the page has now seen the event)
+  arbiter -> arbiter : window_cursor(Default, hidden_by_css = false)\nis Default, and the window shows something else
+  arbiter -> window : WindowShell.apply(Some(Default))
+  window -> window : <b>arrow shown</b>
+  handle -> window : request_redraw(): the page's :hover styles get painted
+end
+@enduml

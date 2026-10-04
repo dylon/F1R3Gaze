@@ -582,3 +582,219 @@ How the fixes were made:
   was rebuilt from the final source (`635ed212…`) and the after capture taken
   again: 60 scenes, 28 of 28 checks pass, and all 60 images are pixel-identical
   to the `11245cc1…` capture.
+
+---
+
+## L8 — The cursor disappears over pages, and links show no hand
+
+**Report (user, 2026-10-04).** "The mouse cursor tends to disappear over the
+content pane after clicking left panel tab icons or other buttons like the
+back button; the cursor does not become a pointer over clickable elements in
+the content pane."
+
+**Mechanism, from the sources (Blitz `674d7d2`).** The design that resulted is
+in [README §3.4](README.md#34-the-pointer-over-pages-cursor-and-hover).
+1. **The chrome never asks again.** The chrome's hit test stops at a page's
+   host `.view` (`node/node.rs` `hit_inner` walks only the chrome's own boxes).
+   `set_hover_to` (`document.rs:1811-1888`) calls
+   `shell_provider.set_cursor(get_cursor())` only when the hovered or hit node
+   changes. Moving inside a page changes neither.
+2. **The cursor comes from before the event.** `EventDriver::handle_ui_event`
+   (`events/driver.rs:148-269`) updates hover, and with it the cursor, *before*
+   it dispatches the event. That dispatch is what forwards it to the page
+   (`events/mod.rs:119`).
+   - `get_cursor` (`document.rs:2147-2199`) delegates to the page's
+     `get_cursor()`, which still describes where the pointer was when the page
+     last saw it.
+   - A page that has never seen the pointer has no hover node, so the answer
+     is `None`. `BlitzShellProvider::set_cursor(None)` hides the cursor
+     (`blitz-shell/src/lib.rs:101-111`).
+3. **Pages cannot report.** `Tab::config` left `shell_provider` unset, so pages
+   got `DummyShellProvider` (`document.rs:427-429`). Their own `set_cursor` and
+   `request_redraw` calls were dropped.
+   - Sub-documents get no enter or leave events (`events/mod.rs:53-58`), and
+     nothing calls a page's `clear_hover`.
+   - `resolve` ends with `refresh_hover` (`resolve.rs:138`), which re-resolves
+     hover at the last pointer position. The chrome's runs before its pages
+     are resolved.
+
+**Defects predicted from the mechanism.**
+
+| ID | Defect |
+|---|---|
+| D1 | The cursor never follows page content: no hand over links |
+| D2 | The cursor is hidden on entering a page that has not seen the pointer, and stays hidden while the pointer is in the page |
+| D3 | A page's `:hover` state outlives the pointer's visit |
+| D4 | A page's hover restyles are not painted. The page's redraw request goes to the dummy, the chrome's hover does not change, and `RhoDocument::drive` reports only f1r3lang frame changes |
+
+**Hypotheses, experiments and verdicts.** The experiments ran 2026-10-04,
+first through the chrome with a recording window provider, then on the
+release binary under Xvfb.
+
+| ID | Hypothesis | Prediction | Experiment | Raw result | Verdict |
+|---|---|---|---|---|---|
+| H1 | D2 | Entering a never-hovered page records `set_cursor(None)`, then nothing | `entering_a_fresh_page_never_hides_the_cursor`, unfixed. Click Back, then move into the page Back loaded | The window was asked for `[Some(Pointer), None]`: the hand over Back, then hidden | **Supported** |
+| H2 | D1 | Moving from a plain block to a link records no call, while the page itself answers `Pointer` | `the_cursor_follows_links_and_text_inside_a_page`, unfixed | Control `page_cursor == Some(Pointer)` passed. The window was asked for `[None]` on entering, and nothing after the move to the link | **Supported** |
+| H3 | D3 | After the pointer moves to the rail, the page's hover is still the link | `leaving_a_page_ends_its_hover`, unfixed | Control: `#go` background `rgb(204, 0, 0)` while hovered (passed). After the move: `left: Some("go") right: None` | **Supported** |
+| H4 | D4 | Moving onto a link with a `:hover` rule requests no redraw, and `poll` reports no change | `hover_changes_inside_a_page_are_repainted`, unfixed | `0 requests, poll() = false` | **Supported** |
+| R1 | The cursor is hidden by CSS | Some chrome or page style has `cursor: none` | `grep cursor` in the chrome's and pages' CSS | No `cursor: none` anywhere | **Refuted** |
+| R2 | winit or the compositor hides the cursor | The provider would not be asked for `None` | H1's log at the provider boundary | `None` is requested exactly on entering the page | **Refuted** |
+| R3 | The page computes the wrong cursor | The page's own `get_cursor()` would not be `Pointer` over a link | H2's control | `Some(Pointer)` | **Refuted** |
+
+**Red, end to end.** The harness's new cursor scenes ran on the release
+binary before the fix (sha256 `635ed212…ba30`, the binary of the committed
+`after/` capture). Each scene reads the X cursor's sprite through XFixes
+(`scripts/x-cursor.py`) and compares it with reference sprites taken in the
+same run. The references were: the hand over Reload (24×24, 335 opaque px),
+the text cursor over the address field (24×24, 233 px), and the arrow over the
+rail (24×24, 272 px).
+
+| Scene | Interaction | Cursor before the fix |
+|---|---|---|
+| 61 | Back, then into the page | 1×1 sprite, 0 opaque px: **hidden** |
+| 62 | a rail button, then into the page | hidden |
+| 63 | a Tabs-panel row, then into the page | hidden |
+| 64 | onto the page's link | hidden (no hand) |
+| 65 | onto the page's text | hidden |
+| 66 | onto the link, then out to the rail | `:hover` fill 0 px while hovered, **18 000 px after leaving** (D3 and D4 together) |
+| 67 | a page loads under the resting pointer | arrow, where the new page has its link |
+| 68 | onto `cursor: none`, then off it | hidden, and still hidden after leaving |
+
+The first red run ([`cursor-red`]) put scene 65's hand over plain text. The
+window had opened under the pointer where the previous scene left it, so the
+page was hovered at that spot and the hover was never cleared (D3). Entering
+the page later then showed the cursor of that old spot (mechanism 2). This is
+the second failure mode the mechanism predicts: a stale cursor rather than a
+hidden one. The harness now parks the pointer on the status bar before every
+launch, so no scene depends on the one before it. The deterministic red run
+(`cursor-red-2`) is the table above. The raw logs are kept in the session's
+scratch directory (`target/scratch/session-28795e59/cursor/`).
+
+Scene 67's arrow, rather than a hidden cursor, probably came from typing the
+address: the suggestions dropdown moved the chrome's hover off the page and
+back, so the old page's cursor was asked for. That path was not measured
+separately. The check's prediction, "not the hand", holds either way.
+
+### Fix
+
+`crate::cursor` makes one place decide the cursor, after the page has seen the
+event (README §3.4):
+- **`WindowShell`** wraps blitz-shell's provider. It forwards every request
+  except `set_cursor`, which becomes a request to recompute.
+- **`PageShell`** is every page's provider (through `Tab::config`). It reports
+  hover changes and redraw requests, and grants nothing else.
+- **`CursorArbiter::sync`** clears the hover of the page the pointer left, and
+  tells the page it entered where the pointer is. It then computes
+  `window_cursor(get_cursor(), hidden_by_css)` and sends the result to the
+  window only when it changes. Blitz's `None` hides the cursor only for
+  `cursor: none`.
+- **`page_attached`** and **`view_removed`** cover a page loaded under the
+  pointer and a closed tab.
+- Built-in pages give buttons `cursor: pointer`. Blitz's default sheet sets
+  none, which left a text cursor over the lamp's label (mutation M7 below).
+
+Two tests were added after the fix, for paths the first set did not reach:
+- L8j `switching_tabs_under_a_resting_pointer_shows_the_new_page_cursor`
+  (seeding on a host change without an event);
+- a stronger L8e that also asserts the cursor is never hidden while a page
+  loads (the `None` rule before the page's first layout).
+
+Their red evidence is mutations M4b and M3.
+
+### Green (2026-10-04)
+
+- `cargo test -p gaze-shell -p gaze-dom-blitz`: 87 + 8 passed. That is 73
+  before, plus 10 L8 behaviour tests, plus 4 unit tests in `cursor`.
+- The cursor scenes on the fixed binary (`62f4282b…`), all checks pass:
+
+  | Scene | Cursor after the fix |
+  |---|---|
+  | 61, 62, 63 | the arrow, visible (272 opaque px) |
+  | 64 | the hand |
+  | 65 | the text cursor |
+  | 66 | `:hover` fill 18 000 px while hovered, 0 after leaving |
+  | 67 | the hand, with no pointer movement |
+  | 68 | hidden over `cursor: none` (0 px), the arrow again after leaving |
+
+### Mutation checks
+
+Each check commented out one part of the fix, ran the L8 tests and the
+`cursor` unit tests, and restored the file byte for byte (`cmp`). The script
+and the raw output of every run are in the session's scratch directory
+(`cursor/mutations/`).
+
+| ID | Part commented out | Tests that went red |
+|---|---|---|
+| M1 | `WindowShell` lets Blitz's own cursor through | L8c (re-entry after leaving: a stale `None` stood, because the arbiter believed the window already showed the arrow), L8e, L8g, L8j, `window_shell_forwards_everything_but_the_cursor` |
+| M2 | pages keep `DummyShellProvider` | L8b, L8d, L8e, L8f |
+| M3 | Blitz's `None` always hides | L8e (hidden while the new page loaded), `blitz_none_hides_the_cursor_only_for_css_none` |
+| M4a | no seeding when a page attaches under the pointer | L8e |
+| M4b | no seeding when the hovered page changes without an event | L8j |
+| M5 | no clearing when the pointer leaves a page | L8c, L8j |
+| M6 | a page's redraw requests are dropped | L8d, `page_shell_only_reports` |
+| M7 | built-in buttons without `cursor: pointer` | `built_in_buttons_show_the_hand`. The window was asked for `[Some(Default), Some(Text)]`: Blitz gives a text cursor over the label |
+
+### Regression
+
+The plan was to compare a fixed-binary run with the committed `after/`
+capture. That comparison would have mixed two variables. The harness's work
+directory moved off `/tmp` in the same change (README §12.2), and the demo
+site's `file://` URLs, which the captures show, moved with it. So both
+binaries were instead run through the full suite with the same harness and
+the same work directory, and only the binary differs:
+- **B0**, before the fix: `635ed212…`.
+- **B1**, after it: `62f4282b…`.
+
+| Measure | B0 (before) | B1 (after) |
+|---|---|---|
+| Scenes run, failed | 68, 0 | 68, 0 |
+| The 28 checks of scenes 01–60 | 28 pass | 28 pass |
+| The 21 cursor checks | 8 pass (the reference checks, and `hidden_opaque_px` by accident) | 21 pass |
+
+Scenes 01–60 are pixel-identical between B0 and B1 (`magick compare -metric
+AE` = 0 for all 60). So are cursor scenes 61, 62, 63, 65 and 68. Three cursor
+scenes differ, and each differs by exactly the link's `:hover` fill. It is a
+320×80 box of `#CC0000`, 25 600 px:
+
+| Scene | Changed region | `#CC0000` px, B0 → B1 | Why |
+|---|---|---|---|
+| 64 (on the link) | `320x80+242+264` | 0 → 25 600 | the hover is now painted (D4) |
+| 66 (left the page) | `320x80+242+264` | 25 600 → 0 | the stale hover is now cleared (D3) |
+| 67 (loaded under the pointer) | `320x80+242+144` | 0 → 25 600 | the new page is now told where the pointer is, and painted |
+
+In B0, scene 66 shows D3 and D4 at once. The fill is not painted while the
+link is hovered, and it is painted after the pointer has left.
+
+### Upstream
+
+The defect is in the browser's own code: pages were left with Blitz's dummy
+provider (mechanism 3). The two facts behind it, though, are Blitz's own, and
+they affect any embedder of sub-documents, iframes included:
+- a sub-document's hover is never ended (mechanism 1);
+- the parent reads the sub-document's cursor before the event reaches it
+  (mechanism 2).
+
+They were reproduced without F1R3Gaze by a headless program on blitz-dom's
+public API ([`upstream/repro-subdocument-hover.rs`](upstream/repro-subdocument-hover.rs)).
+The output was identical at the pin `674d7d2` and on `main` at `0db8c74`:
+- the child keeps `:hover` after the pointer leaves its host;
+- a relaid-out child sends `set_cursor(None)` while the pointer is over the
+  parent;
+- entering asks for the child's pre-event cursor (`None`) first.
+
+After a duplicate search of open and closed issues and pull requests, which
+is recorded in [`upstream/README.md`](upstream/README.md), it was filed as
+[DioxusLabs/blitz#1040](https://github.com/DioxusLabs/blitz/issues/1040)
+([report](upstream/blitz-subdocument-hover.md)).
+
+### Not fixed here (noted)
+
+- blitz-shell ignores `PointerLeft` for the mouse (`window.rs:701-734`). So
+  the chrome's hover outlasts the pointer leaving the window, and with it the
+  hover of the page under it. A toolbar button or a page link the pointer was
+  on stays in its `:hover` style until the pointer comes back, and the next
+  move inside the window resets both. This is blitz-shell's behaviour for any
+  document, not part of L8. It is not filed.
+- Blitz's default style sheet sets no `cursor` for buttons, so a button's
+  label on an arbitrary page shows the text cursor. Built-in pages set
+  `button{cursor:pointer}` (M7). Other pages get what their own CSS asks for.

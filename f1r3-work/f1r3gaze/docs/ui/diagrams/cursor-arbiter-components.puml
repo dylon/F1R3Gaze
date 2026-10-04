@@ -1,0 +1,51 @@
+@startuml cursor-arbiter-components
+' Who may set the window's cursor. Colours: red = the window (blitz-shell),
+' blue = the chrome, yellow = crate::cursor, purple = pages, green = Blitz.
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam component {
+  BorderColor #52687A
+  ArrowColor #52687A
+}
+skinparam rectangle {
+  BorderColor #52687A
+}
+title The cursor arbiter: one place decides the window's cursor
+left to right direction
+
+rectangle "Window" #FBE5D6 {
+  component "BlitzShellProvider\nset_cursor(None) hides the cursor" as real #F8CBAD
+  component "winit window" as winit #F8CBAD
+}
+
+rectangle "Chrome" #EAF1FB {
+  component "ChromeDocument\nhandle_ui_event · poll\n→ settle_pointer()" as chromedoc #DDEBF7
+  component "chrome BaseDocument\n(Blitz)" as chromebase #E2EFDA
+}
+
+rectangle "crate::cursor" #FFF8E1 {
+  component "WindowShell\nforwards 13 methods;\nset_cursor → dirty" as windowshell #FFF2CC
+  component "CursorRouter\ndirty, repaint: AtomicBool\nwake on false → true" as router #FFF2CC
+  component "PageShell\nset_cursor → dirty\nrequest_redraw → repaint\neverything else: no-op" as pageshell #FFF2CC
+  component "CursorArbiter\nsync(): clear / seed hover,\ncompute, apply when changed" as arbiter #FFF2CC
+}
+
+rectangle "Pages" #F3F0F7 {
+  component "page BaseDocument\n(one per tab, via Tab::config)" as page #E4DFEC
+  component "iframes inside a page\n(inherit the page's provider)" as iframe #E4DFEC
+}
+
+chromebase --> windowshell : shell_provider
+windowshell --> real : title, IME, clipboard,\nfile dialogs, window controls,\nredraw
+windowshell --> router : set_cursor(…)
+page --> pageshell : shell_provider
+iframe --> pageshell : shell_provider
+pageshell --> router : set_cursor(…), request_redraw()
+router --> chromedoc : wake() → poll()
+chromedoc --> arbiter : install, note_pointer,\nsettle_pointer
+arbiter --> chromebase : get_cursor(), hover,\nresolved_style_value("cursor")
+arbiter --> page : clear_hover(), set_hover_to(seed)
+arbiter --> windowshell : apply(cursor)\n(the only path to the window)
+real --> winit : set_cursor_visible, set_cursor
+@enduml

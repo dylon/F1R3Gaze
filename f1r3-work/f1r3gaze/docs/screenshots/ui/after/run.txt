@@ -1,7 +1,8 @@
 mode	after
-date	2026-10-04T08:13:38-04:00
+date	2026-10-04T16:23:23-04:00
 git	f6ee26a (dirty)
-binary	635ed2121774739fa05546ec90074c6ddf32dbbfc485a0820187d2b1d9c2ba30
+binary	62f4282bcafee0bb500568047ec8fe0d263bc7828aa727ae85049bbb0d2dac27
 imagemagick	Version: ImageMagick 7.1.2-32 Q16-HDRI x86_64 68f8d115a:20260926 https://imagemagick.org
 size	1280x800
-only	all scenes
+work	/home/dylon/Workspace/f1r3fly.io/F1R3Gaze/f1r3-work/f1r3gaze/target/ui-snapshots
+only	cursor

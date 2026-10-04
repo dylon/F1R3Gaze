@@ -245,7 +245,7 @@ Three defects in the existing code were found and fixed on the way:
 | `gaze-shard` | 11 | the deploy preimage matches `prost`; signatures verify; against mock nodes: a lying observer is outvoted, a split is an error, a rollback is stale, nothing is deployed before consent, and the body the validator receives verifies |
 | `gaze-wallet` | 5 | addresses, wallet files and signature bytes identical to the Embers SDK's own output; the contract check refuses a changed recipient, amount or note, smuggled code, hidden fields, a high fee or another shard; wallets kept, exported, switched; transfers through an honest mock Embers, and nothing signed for a dishonest one |
 | `gaze-reach` | 3 | the reach tier commits exactly the native executive's hashes for the same page and clicks; integrity; `shard` is dead |
-| `gaze-shell` | 73 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
+| `gaze-shell` | 87 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
 
 End-to-end, on the real binary:
 
@@ -269,10 +269,13 @@ End-to-end, on the real binary:
 CI also runs `cargo clippy --workspace --all-targets --locked -- -D warnings`
 (the `lint` job in `.github/workflows/ci.yml`).
 
-`scripts/ui-snapshots.sh` drives the real binary under Xvfb through 60 scenes
+`scripts/ui-snapshots.sh` drives the real binary under Xvfb through 68 scenes
 of the chrome. It writes the screenshots and their pixel checks (no page
 reflow, no stale colours, legible labels, exact bars) to
-`docs/screenshots/ui/{before,after}/`; see `docs/ui/README.md` §12.
+`docs/screenshots/ui/{before,after}/`. The eight cursor scenes read the X
+cursor itself through XFixes (`scripts/x-cursor.py`, which needs python-xlib):
+it stays visible over pages, becomes a hand over links, and follows `cursor:
+none`. See `docs/ui/README.md` §12.
 
 ## Deviations from the specification, for review
 
