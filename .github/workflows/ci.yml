@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.91"
+          toolchain: "1.95"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: f1r3-work/f1r3gaze
@@ -31,13 +31,28 @@ jobs:
             --headless gaze://newtab --click "#lamp" | tee out.txt
           grep -q 'id="lamp" class="lit"' out.txt
 
+  # The whole workspace stays clippy-clean (docs/ui/ledger.md, L7). Linux
+  # only: that is where the clean state is verified.
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
   reach:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.91"
+          toolchain: "1.95"
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:

@@ -1,0 +1,21 @@
+scene	check	value	limit	verdict
+21-tab-menu	menu_opened_px	160499	ge 1	recorded
+22-tab-menu-after-action	duplicated_px	1524.02	ge 1	recorded
+27-find-open	page_reflow_px	18002.9	le 0	recorded
+30-find-cleared	selection_pixels	720	le 0	recorded
+34-url-suggestions	rail_reflow_px	430.507	le 0	recorded
+45-rail-hover	bubble_px	0	ge 1	recorded
+46-row-hover	hover_px	917.323	ge 1	recorded
+47-flash-shown	flash_shown_px	75.2052	ge 1	recorded
+48-flash-expired	flash_cleared_px	0	ge 1	recorded
+49-search-reset	sidebar_px_vs_03	4415.69	le 0	recorded
+53-theme-appearance-fresh-light	stale_colour_px_vs_52	0	le 0	recorded
+55-theme-appearance-fresh-dark	stale_colour_px_vs_54	0	le 0	recorded
+56-theme-prompt-to-light	allow_label_contrast	1.00	ge 3	recorded
+57-theme-prompt-fresh-light	stale_colour_px_vs_56	335	le 0	recorded
+58-theme-newtab-to-light	lamp_label_contrast	1.47	ge 3	recorded
+59-theme-newtab-fresh-light	stale_colour_px_vs_58	218	le 0	recorded
+60-theme-wallet-to-light	export_label_contrast	1.00	ge 3	recorded
+50-wallet-review	recipient_px	250.427	ge 1	recorded
+50-wallet-review	amount_px	428.723	ge 1	recorded
+50-wallet-review	review_px	6405.25	ge 1	recorded

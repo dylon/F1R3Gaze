@@ -1,0 +1,72 @@
+@startuml event-pipeline
+' From a window event to pixels. Colours: blue = the chrome's own code,
+' green = Blitz, yellow = state changes, orange = the render pass.
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #52687A
+  LifeLineBorderColor #52687A
+  ParticipantBorderColor #52687A
+  GroupBorderColor #52687A
+  GroupBackgroundColor #F5F7FA
+}
+title Event → Action → render: how one input reaches the screen
+
+actor "User" as user #FFFFFF
+participant "Window\n(gaze-dom-blitz)" as window #E2EFDA
+participant "ChromeDocument\n::handle_ui_event" as handle #DDEBF7
+participant "global_shortcut" as shortcut #DDEBF7
+participant "chrome_key\n(by KeyFocus)" as chromekey #DDEBF7
+participant "EventDriver\n(Blitz)" as driver #E2EFDA
+participant "ChromeHandler" as handler #DDEBF7
+participant "act(Action)" as act #FFF2CC
+participant "render()" as render #FCE4D6
+participant "BaseDocument\n(Blitz)" as doc #E2EFDA
+
+user -> window : key or pointer
+window -> handle : UiEvent
+alt KeyDown, not composing
+  handle -> shortcut : key, modifiers, tab ids
+  alt Ctrl/Cmd+T W R L F H B, Tab, 1–9
+    shortcut --> handle : Action
+    handle -> act : act(action)
+    note right of handle : consumed: the page never sees it,\neven when it has the focus
+  else no shortcut
+    handle -> chromekey : key, KeyFocus, dropdown open?
+    alt Enter / ↑ / ↓ / Esc in #url, Enter / Esc in #find, Esc in #side-search
+      chromekey --> handle : (Action, consumed = true)
+      handle -> act : act(action)
+    else Esc elsewhere
+      chromekey --> handle : (Dismiss, consumed = false)
+      handle -> act : act(Dismiss)
+      handle -> driver : the event too: pages may handle Esc
+    else any other key
+      handle -> driver : UiEvent
+    end
+  end
+else pointer, wheel, other keys
+  handle -> driver : UiEvent
+end
+driver -> doc : hit-test, focus, text editing
+driver -> handler : DomEvent (Click, Blur, ContextMenu, Input…)
+handler -> handler : walk up to the nearest [data-action];\nstop at [disabled]
+handler -> handler : Action::parse("verb:arg")
+handler --> handle : Vec<Action>
+loop each Action
+  handle -> act : act(action)
+  act -> act : change state\n(tabs, panel, queries, flash, select_pending…)
+end
+act -> window : wake()
+window -> render : next frame: poll() then render()
+render -> doc : set_html(region, html) when the string changed\nsync_attr(id, name, value) when the live attribute differs
+doc -> window : restyle · layout · paint (Vello)
+
+group Click before Blur: choosing a suggestion with the pointer
+  user -> driver : PointerDown on a .suggestion
+  driver -> handler : Click on [data-action="select:7"]
+  handler --> act : Select(7): the tab is switched first
+  driver -> handler : Blur of #url (the default action clears focus)
+  handler --> act : AddressDismiss: the dropdown closes afterwards
+end
+@enduml

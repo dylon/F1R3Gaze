@@ -9,13 +9,20 @@
 //!   `RhoDocument` as a sub-document.
 //! * [`headless`]: the same pipeline without a window.
 
+pub mod display;
 pub mod engine;
 pub mod headless;
 pub mod pages;
 pub mod profile;
 pub mod tab;
+pub mod text_fit;
+pub mod theme;
+pub mod ui_state;
 
 #[cfg(feature = "window")]
 pub mod chrome;
+
+#[cfg(test)]
+mod test_support;
 
 pub use engine::Engine;

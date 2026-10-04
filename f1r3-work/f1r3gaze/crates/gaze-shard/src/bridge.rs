@@ -65,7 +65,10 @@ impl Rung {
 }
 
 fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Collapse a node answer (a list of values) to one term.
@@ -85,29 +88,35 @@ pub struct EventHub {
 
 impl EventHub {
     pub fn start(url: String) -> Arc<EventHub> {
-        let hub = Arc::new(EventHub { subs: Mutex::new(Vec::new()) });
+        let hub = Arc::new(EventHub {
+            subs: Mutex::new(Vec::new()),
+        });
         let h = Arc::clone(&hub);
-        let _ = std::thread::Builder::new().name("gaze-shard-events".into()).spawn(move || {
-            let mut backoff = 1u64;
-            loop {
-                if Arc::strong_count(&h) == 1 {
-                    return; // nobody left
-                }
-                if let Ok((mut ws, _)) = tungstenite::connect(&url) {
-                    backoff = 1;
-                    while let Ok(msg) = ws.read() {
-                        if let Ok(t) = msg.to_text() {
-                            let v: Value = serde_json::from_str(t).unwrap_or(Value::Null);
-                            if v.get("event").and_then(|e| e.as_str()) == Some("block-finalised") {
-                                h.notify();
+        let _ = std::thread::Builder::new()
+            .name("gaze-shard-events".into())
+            .spawn(move || {
+                let mut backoff = 1u64;
+                loop {
+                    if Arc::strong_count(&h) == 1 {
+                        return; // nobody left
+                    }
+                    if let Ok((mut ws, _)) = tungstenite::connect(&url) {
+                        backoff = 1;
+                        while let Ok(msg) = ws.read() {
+                            if let Ok(t) = msg.to_text() {
+                                let v: Value = serde_json::from_str(t).unwrap_or(Value::Null);
+                                if v.get("event").and_then(|e| e.as_str())
+                                    == Some("block-finalised")
+                                {
+                                    h.notify();
+                                }
                             }
                         }
                     }
+                    std::thread::sleep(Duration::from_secs(backoff));
+                    backoff = (backoff * 2).min(60);
                 }
-                std::thread::sleep(Duration::from_secs(backoff));
-                backoff = (backoff * 2).min(60);
-            }
-        });
+            });
         hub
     }
 
@@ -165,8 +174,17 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    pub fn new(cfg: ShardConfig, http: Http, pool: Pool, payer: Arc<dyn Payer>, blobs: Arc<Blobs>) -> Arc<Bridge> {
-        let events = cfg.observers.first().map(|o| EventHub::start(Node::new(o, http.clone()).events_url()));
+    pub fn new(
+        cfg: ShardConfig,
+        http: Http,
+        pool: Pool,
+        payer: Arc<dyn Payer>,
+        blobs: Arc<Blobs>,
+    ) -> Arc<Bridge> {
+        let events = cfg
+            .observers
+            .first()
+            .map(|o| EventHub::start(Node::new(o, http.clone()).events_url()));
         Arc::new(Bridge {
             cfg,
             http,
@@ -179,7 +197,11 @@ impl Bridge {
     }
 
     fn observers(&self) -> Vec<Node> {
-        self.cfg.observers.iter().map(|o| Node::new(o, self.http.clone())).collect()
+        self.cfg
+            .observers
+            .iter()
+            .map(|o| Node::new(o, self.http.clone()))
+            .collect()
     }
     fn validator(&self) -> Node {
         Node::new(&self.cfg.validator, self.http.clone())
@@ -220,7 +242,10 @@ impl Bridge {
         if n >= self.cfg.quorum.max(2) {
             Ok((Rung::Quorum, v, num))
         } else {
-            Err(format!("observers disagree at block {block} ({n} of {} agree)", obs.len()))
+            Err(format!(
+                "observers disagree at block {block} ({n} of {} agree)",
+                obs.len()
+            ))
         }
     }
 
@@ -228,14 +253,17 @@ impl Bridge {
         let mut seen = self.seen.lock().map_err(|_| "poisoned")?;
         let e = seen.entry(binding.to_string()).or_insert(num);
         if num < *e {
-            return Err(format!("stale answer: block {num} is older than {e}, already seen for {binding}"));
+            return Err(format!(
+                "stale answer: block {num} is older than {e}, already seen for {binding}"
+            ));
         }
         *e = num;
         Ok(())
     }
 
     pub fn lookup(&self, uri: &str) -> Result<(Rung, Norm), String> {
-        let (rung, v, num) = self.graded(&|o, b| o.registry(uri, Some(b)).map(|(d, _, _)| collapse(&d)))?;
+        let (rung, v, num) =
+            self.graded(&|o, b| o.registry(uri, Some(b)).map(|(d, _, _)| collapse(&d)))?;
         self.check_fresh(uri, num)?;
         Ok((rung, v))
     }
@@ -253,14 +281,17 @@ impl Bridge {
     /// Resolve a site's manifest (with freshness).
     pub fn resolve_site(&self, addr: &SiteAddr) -> Result<(Rung, SiteManifest), String> {
         let uri = addr.registry_uri();
-        let (rung, v, num) = self.graded(&|o, b| o.registry(&uri, Some(b)).map(|(d, _, _)| collapse(&d)))?;
+        let (rung, v, num) =
+            self.graded(&|o, b| o.registry(&uri, Some(b)).map(|(d, _, _)| collapse(&d)))?;
         self.check_fresh(&addr.binding(), num)?;
         Ok((rung, SiteManifest::from_norm(&v)?))
     }
 
     /// One file of a site, verified by hash.
     pub fn site_file(&self, m: &SiteManifest, path: &str) -> Result<(String, Vec<u8>), String> {
-        let (name, h) = m.file_for(path).ok_or_else(|| format!("no such file: {path}"))?;
+        let (name, h) = m
+            .file_for(path)
+            .ok_or_else(|| format!("no such file: {path}"))?;
         Ok((name.to_string(), self.blobs.get(&h, &m.mirrors)?))
     }
 
@@ -273,10 +304,17 @@ impl Bridge {
 
     pub fn estimate(&self, term: &str, key: &SigningKey) -> Result<u64, String> {
         let obs = self.observers();
-        obs.first().ok_or("no observers")?.estimate_cost(term, &hex(&public_key(key)))
+        obs.first()
+            .ok_or("no observers")?
+            .estimate_cost(term, &hex(&public_key(key)))
     }
 
-    pub fn sign_and_deploy(&self, key: &SigningKey, term: &str, phlo_limit: i64) -> Result<SignedDeploy, String> {
+    pub fn sign_and_deploy(
+        &self,
+        key: &SigningKey,
+        term: &str,
+        phlo_limit: i64,
+    ) -> Result<SignedDeploy, String> {
         let (_, num) = self.validator().last_finalized()?;
         let now = now_ms();
         let d = sign(
@@ -321,8 +359,15 @@ pub struct Prompt {
 }
 
 enum Pending {
-    Deploy { term: String, cost: u64, ret: Option<Name> },
-    Session { uri: String, ret: Option<Name> },
+    Deploy {
+        term: String,
+        cost: u64,
+        ret: Option<Name>,
+    },
+    Session {
+        uri: String,
+        ret: Option<Name>,
+    },
 }
 
 struct Session {
@@ -364,7 +409,9 @@ fn hash_arg(n: &Norm) -> Option<[u8; 32]> {
         Some(Lit::Bytes(b)) => b.to_vec().try_into().ok(),
         _ => {
             let s = n.as_str()?;
-            gaze_net::unhex(s.strip_prefix("blake2b-256:").unwrap_or(s))?.try_into().ok()
+            gaze_net::unhex(s.strip_prefix("blake2b-256:").unwrap_or(s))?
+                .try_into()
+                .ok()
         }
     }
 }
@@ -394,7 +441,11 @@ impl ShardService {
     }
 
     fn job(&self, f: impl FnOnce(&Bridge) -> Option<ShardOut> + Send + 'static) {
-        let (b, sh, w) = (Arc::clone(&self.bridge), Arc::clone(&self.shared), Arc::clone(&self.wake));
+        let (b, sh, w) = (
+            Arc::clone(&self.bridge),
+            Arc::clone(&self.shared),
+            Arc::clone(&self.wake),
+        );
         self.bridge.pool.spawn(move || {
             if let Some(o) = f(&b) {
                 Self::push(&sh, &w, o);
@@ -410,7 +461,11 @@ impl ShardService {
         if label != "rho:gaze:shard" {
             return self.session_send(label, args);
         }
-        let verb = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let verb = args
+            .first()
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let reply = move |d: Norm| ret.clone().map(|chan| ShardOut::Reply { chan, datum: d });
         match verb.as_str() {
             "lookup" => {
@@ -440,22 +495,30 @@ impl ShardService {
                 });
             }
             "explore" => {
-                let (Some(h), pargs) = (args.get(1).and_then(hash_arg), args.get(2).cloned()) else {
+                let (Some(h), pargs) = (args.get(1).and_then(hash_arg), args.get(2).cloned())
+                else {
                     return self.now(reply(err3("type", "explore wants a program hash")));
                 };
-                let pargs: Vec<Norm> = pargs.and_then(|l| l.as_coll(CollKind::List).map(|x| x.to_vec())).unwrap_or_default();
+                let pargs: Vec<Norm> = pargs
+                    .and_then(|l| l.as_coll(CollKind::List).map(|x| x.to_vec()))
+                    .unwrap_or_default();
                 self.job(move |b| {
-                    reply(match b.render_by_hash(&h, &pargs).and_then(|t| b.explore(&t)) {
-                        Ok((r, v)) => ok3(r.name(), v),
-                        Err(e) => err3("shard", &e),
-                    })
+                    reply(
+                        match b.render_by_hash(&h, &pargs).and_then(|t| b.explore(&t)) {
+                            Ok((r, v)) => ok3(r.name(), v),
+                            Err(e) => err3("shard", &e),
+                        },
+                    )
                 });
             }
             "deploy" => {
-                let (Some(h), pargs) = (args.get(1).and_then(hash_arg), args.get(2).cloned()) else {
+                let (Some(h), pargs) = (args.get(1).and_then(hash_arg), args.get(2).cloned())
+                else {
                     return self.now(reply(err3("type", "deploy wants a program hash")));
                 };
-                let pargs: Vec<Norm> = pargs.and_then(|l| l.as_coll(CollKind::List).map(|x| x.to_vec())).unwrap_or_default();
+                let pargs: Vec<Norm> = pargs
+                    .and_then(|l| l.as_coll(CollKind::List).map(|x| x.to_vec()))
+                    .unwrap_or_default();
                 let site = self.site.clone();
                 self.next += 1;
                 let id = self.next;
@@ -492,7 +555,10 @@ impl ShardService {
                 });
             }
             "watch" => {
-                let (Some(uri), Some(ch)) = (args.get(1).and_then(|u| u.as_str()), args.get(2).and_then(as_name)) else {
+                let (Some(uri), Some(ch)) = (
+                    args.get(1).and_then(|u| u.as_str()),
+                    args.get(2).and_then(as_name),
+                ) else {
                     return;
                 };
                 if let Ok(mut s) = self.shared.lock() {
@@ -540,7 +606,10 @@ impl ShardService {
     /// the wallet signs).
     fn session_send(&mut self, label: &str, args: &[Norm]) {
         let s = match self.shared.lock() {
-            Ok(g) => g.sessions.get(label).map(|s| (s.key.clone(), s.uri.clone())),
+            Ok(g) => g
+                .sessions
+                .get(label)
+                .map(|s| (s.key.clone(), s.uri.clone())),
             Err(_) => None,
         };
         let Some((key, uri)) = s else { return };
@@ -574,43 +643,57 @@ impl ShardService {
             return;
         }
         self.watcher = true;
-        let (b, sh, w) = (Arc::clone(&self.bridge), Arc::downgrade(&self.shared), Arc::clone(&self.wake));
+        let (b, sh, w) = (
+            Arc::clone(&self.bridge),
+            Arc::downgrade(&self.shared),
+            Arc::clone(&self.wake),
+        );
         let rx = b.events.as_ref().map(|e| e.subscribe());
-        let _ = std::thread::Builder::new().name("gaze-shard-watch".into()).spawn(move || {
-            loop {
-                let Some(shared) = sh.upgrade() else { return }; // tab closed
-                let watches: Vec<(String, Name, Vec<u8>)> = shared.lock().map(|s| s.watches.clone()).unwrap_or_default();
-                for (i, (uri, ch, last)) in watches.into_iter().enumerate() {
-                    if let Ok((r, v)) = b.lookup(&uri) {
-                        if v.encode() != last.as_slice() {
+        let _ = std::thread::Builder::new()
+            .name("gaze-shard-watch".into())
+            .spawn(move || {
+                loop {
+                    let Some(shared) = sh.upgrade() else { return }; // tab closed
+                    let watches: Vec<(String, Name, Vec<u8>)> =
+                        shared.lock().map(|s| s.watches.clone()).unwrap_or_default();
+                    for (i, (uri, ch, last)) in watches.into_iter().enumerate() {
+                        if let Ok((r, v)) = b.lookup(&uri)
+                            && v.encode() != last.as_slice()
+                        {
                             if let Ok(mut s) = shared.lock() {
                                 if let Some(wt) = s.watches.get_mut(i) {
                                     wt.2 = v.encode().to_vec();
                                 }
                                 s.out.push(ShardOut::Reply {
                                     chan: ch,
-                                    datum: Norm::tuple(vec![Norm::str("changed"), Norm::str(r.name()), v]),
+                                    datum: Norm::tuple(vec![
+                                        Norm::str("changed"),
+                                        Norm::str(r.name()),
+                                        v,
+                                    ]),
                                 });
                             }
                             w();
                         }
                     }
-                }
-                drop(shared);
-                // Re-resolve on each finalized block; poll if there is no stream.
-                match &rx {
-                    Some(r) => {
-                        let _ = r.recv_timeout(Duration::from_secs(30));
+                    drop(shared);
+                    // Re-resolve on each finalized block; poll if there is no stream.
+                    match &rx {
+                        Some(r) => {
+                            let _ = r.recv_timeout(Duration::from_secs(30));
+                        }
+                        None => std::thread::sleep(Duration::from_secs(10)),
                     }
-                    None => std::thread::sleep(Duration::from_secs(10)),
                 }
-            }
-        });
+            });
     }
 
     /// Prompts waiting for the user.
     pub fn prompts(&self) -> Vec<Prompt> {
-        self.shared.lock().map(|s| s.prompts.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default()
+        self.shared
+            .lock()
+            .map(|s| s.prompts.iter().map(|(p, _)| p.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// The user's answer to a prompt.
@@ -625,7 +708,10 @@ impl ShardService {
         let Some(p) = pending else { return };
         match p {
             Pending::Deploy { ret, .. } | Pending::Session { ret, .. } if !yes => {
-                self.now(ret.map(|chan| ShardOut::Reply { chan, datum: err3("denied", "the user declined") }))
+                self.now(ret.map(|chan| ShardOut::Reply {
+                    chan,
+                    datum: err3("denied", "the user declined"),
+                }))
             }
             Pending::Deploy { term, cost, ret } => {
                 let site = self.site.clone();
@@ -633,9 +719,18 @@ impl ShardService {
                 self.job(move |b| {
                     let limit = (cost as i64).saturating_mul(3) / 2 + 10_000;
                     let _ = &site;
-                    let d = match b.payer.payer().and_then(|(k, _)| b.sign_and_deploy(&k, &term, limit)) {
+                    let d = match b
+                        .payer
+                        .payer()
+                        .and_then(|(k, _)| b.sign_and_deploy(&k, &term, limit))
+                    {
                         Ok(d) => d,
-                        Err(e) => return ret.map(|chan| ShardOut::Reply { chan, datum: err3("shard", &e) }),
+                        Err(e) => {
+                            return ret.map(|chan| ShardOut::Reply {
+                                chan,
+                                datum: err3("shard", &e),
+                            });
+                        }
                     };
                     let id = d.id();
                     if let Some(chan) = ret.clone() {
@@ -644,27 +739,34 @@ impl ShardService {
                             &w,
                             ShardOut::Reply {
                                 chan,
-                                datum: ok3("node", Norm::map(vec![(Norm::str("deploy"), Norm::str(&id))])),
+                                datum: ok3(
+                                    "node",
+                                    Norm::map(vec![(Norm::str("deploy"), Norm::str(&id))]),
+                                ),
                             },
                         );
                     }
                     // Then once more with the outcome.
                     for _ in 0..100 {
                         std::thread::sleep(Duration::from_secs(3));
-                        if let Ok((st, blk)) = b.finalization(&id) {
-                            if st != "Pending" {
-                                return ret.map(|chan| ShardOut::Reply {
-                                    chan,
-                                    datum: ok3(
-                                        "node",
-                                        Norm::map(vec![
-                                            (Norm::str("deploy"), Norm::str(&id)),
-                                            (Norm::str("status"), Norm::str(&st)),
-                                            (Norm::str("block"), blk.map(|h| Norm::str(&h)).unwrap_or_else(Norm::nil)),
-                                        ]),
-                                    ),
-                                });
-                            }
+                        if let Ok((st, blk)) = b.finalization(&id)
+                            && st != "Pending"
+                        {
+                            return ret.map(|chan| ShardOut::Reply {
+                                chan,
+                                datum: ok3(
+                                    "node",
+                                    Norm::map(vec![
+                                        (Norm::str("deploy"), Norm::str(&id)),
+                                        (Norm::str("status"), Norm::str(&st)),
+                                        (
+                                            Norm::str("block"),
+                                            blk.map(|h| Norm::str(&h))
+                                                .unwrap_or_else(Norm::nil),
+                                        ),
+                                    ]),
+                                ),
+                            });
                         }
                     }
                     None
@@ -701,7 +803,10 @@ impl ShardService {
 
     /// Everything ready for the tab.
     pub fn drain(&mut self) -> Vec<ShardOut> {
-        self.shared.lock().map(|mut s| std::mem::take(&mut s.out)).unwrap_or_default()
+        self.shared
+            .lock()
+            .map(|mut s| std::mem::take(&mut s.out))
+            .unwrap_or_default()
     }
 
     /// Close a session: its key is destroyed.
@@ -709,6 +814,19 @@ impl ShardService {
         if let Ok(mut s) = self.shared.lock() {
             s.sessions.remove(label);
         }
+    }
+
+    /// Labels and resource URIs only; signing keys never leave the service.
+    pub fn list_sessions(&self) -> Vec<(String, String)> {
+        self.shared
+            .lock()
+            .map(|s| {
+                s.sessions
+                    .iter()
+                    .map(|(label, session)| (label.clone(), session.uri.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -753,14 +871,19 @@ impl BlobSource for DriveSource {
         if meta.is_nil() {
             return Ok(None);
         }
-        let mut out = meta.map_get("firstChunk").and_then(bytes_of).unwrap_or_default();
+        let mut out = meta
+            .map_get("firstChunk")
+            .and_then(bytes_of)
+            .unwrap_or_default();
         let mut others: Vec<(i64, String)> = meta
             .map_get("otherChunks")
             .and_then(|m| m.as_coll(CollKind::Map))
             .map(|kv| {
                 kv.chunks(2)
                     .filter_map(|p| {
-                        let i = p[0].as_int().or_else(|| p[0].as_str().and_then(|s| s.parse().ok()))?;
+                        let i = p[0]
+                            .as_int()
+                            .or_else(|| p[0].as_str().and_then(|s| s.parse().ok()))?;
                         Some((i, p[1].as_str()?.to_string()))
                     })
                     .collect()

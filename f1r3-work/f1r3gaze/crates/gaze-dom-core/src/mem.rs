@@ -247,15 +247,15 @@ impl MemDom {
     fn matches_compound(&self, n: usize, c: &Compound) -> bool {
         let Kind::El { tag, attrs } = &self.nodes[n].kind else { return false };
         let get = |k: &str| attrs.iter().find(|(x, _)| x == k).map(|(_, v)| v.as_str());
-        if let Some(t) = &c.tag {
-            if t != tag {
-                return false;
-            }
+        if let Some(t) = &c.tag
+            && t != tag
+        {
+            return false;
         }
-        if let Some(id) = &c.id {
-            if get("id") != Some(id.as_str()) {
-                return false;
-            }
+        if let Some(id) = &c.id
+            && get("id") != Some(id.as_str())
+        {
+            return false;
         }
         let classes: Vec<&str> = get("class").map(|v| v.split_whitespace().collect()).unwrap_or_default();
         if !c.classes.iter().all(|k| classes.contains(&k.as_str())) {

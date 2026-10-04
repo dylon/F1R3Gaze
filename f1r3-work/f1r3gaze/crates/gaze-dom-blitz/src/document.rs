@@ -22,7 +22,9 @@
 
 use crate::backend::BlitzDom;
 use crate::events::RhoEventHandler;
-use blitz_dom::{BaseDocument, DocGuard, DocGuardMut, Document, EventDriver, NoopEventHandler, local_name};
+use blitz_dom::{
+    BaseDocument, DocGuard, DocGuardMut, Document, EventDriver, NoopEventHandler, local_name,
+};
 use blitz_traits::events::UiEvent;
 use gaze_exec::{CapRequest, Class, Grant, LoadError, TabExec};
 use gaze_knf::{Knf, KnfError, default_urn};
@@ -37,6 +39,8 @@ use std::time::{Duration, Instant};
 
 pub const FOREGROUND_INTERVAL_MS: u64 = 16;
 pub const BACKGROUND_INTERVAL_MS: u64 = 250;
+/// A revealed find hit stays this many CSS px above the viewport's bottom.
+pub const REVEAL_BOTTOM_MARGIN: f64 = 36.0;
 
 /// One `<script type="application/f1r3lang">`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,7 +68,10 @@ fn parse_level(s: &str) -> Option<Level> {
 
 impl ScriptRef {
     fn urns(&self) -> Vec<(&str, &str)> {
-        self.imports.iter().map(|(i, u)| (i.as_str(), u.as_str())).collect()
+        self.imports
+            .iter()
+            .map(|(i, u)| (i.as_str(), u.as_str()))
+            .collect()
     }
 
     fn compile(&self, text: &str) -> Result<Knf, KnfError> {
@@ -78,10 +85,14 @@ impl ScriptRef {
     /// Inline kernel text, compiled at the declared level with a manifest
     /// built from the attributes.
     pub fn compile_inline(&self) -> Result<Knf, String> {
-        let text = self.inline.as_deref().ok_or("script has neither src nor text")?;
+        let text = self
+            .inline
+            .as_deref()
+            .ok_or("script has neither src nor text")?;
         let k = self.compile(text).map_err(|e| format!("{e:?}"))?;
         if let Some(i) = &self.integrity {
-            k.verify_integrity(i).map_err(|_| "integrity mismatch on inline script".to_string())?;
+            k.verify_integrity(i)
+                .map_err(|_| "integrity mismatch on inline script".to_string())?;
         }
         Ok(k)
     }
@@ -93,12 +104,17 @@ impl ScriptRef {
         let k = if bytes.starts_with(gaze_knf::MAGIC) {
             Knf::decode(bytes).map_err(|e| format!("bad .knf: {e:?}"))?
         } else {
-            let text = std::str::from_utf8(bytes).map_err(|_| "script is neither .knf nor UTF-8 text")?;
+            let text =
+                std::str::from_utf8(bytes).map_err(|_| "script is neither .knf nor UTF-8 text")?;
             self.compile(text).map_err(|e| format!("{e:?}"))?
         };
         if let Some(i) = &self.integrity {
-            k.verify_integrity(i)
-                .map_err(|_| format!("integrity mismatch for {}", self.src.as_deref().unwrap_or("script")))?;
+            k.verify_integrity(i).map_err(|_| {
+                format!(
+                    "integrity mismatch for {}",
+                    self.src.as_deref().unwrap_or("script")
+                )
+            })?;
         }
         Ok(k)
     }
@@ -147,22 +163,32 @@ impl WakeHandle {
         }
     }
     pub fn set_waker(&self, w: &Waker) {
-        if let Ok(mut g) = self.0.lock() {
-            if !g.as_ref().is_some_and(|o| o.will_wake(w)) {
-                *g = Some(w.clone());
-            }
+        if let Ok(mut g) = self.0.lock()
+            && !g.as_ref().is_some_and(|o| o.will_wake(w))
+        {
+            *g = Some(w.clone());
         }
     }
 }
 
 /// A thread that wakes the loop at the next frame or timer.
-struct Pacer {
+///
+/// The thread starts on the first [`Pacer::at`], keeps only the earliest
+/// pending deadline (later requests coalesce into it), and exits when the
+/// `Pacer` is dropped. Hosts use it for any timed wake-up of their own, such
+/// as expiring a status message, without a thread per request.
+pub struct Pacer {
     tx: Option<Sender<Instant>>,
     wake: WakeHandle,
 }
 
 impl Pacer {
-    fn at(&mut self, when: Instant) {
+    pub fn new(wake: WakeHandle) -> Pacer {
+        Pacer { tx: None, wake }
+    }
+
+    /// Wake the loop at `when` (or at an earlier pending deadline).
+    pub fn at(&mut self, when: Instant) {
         let wake = self.wake.clone();
         let tx = self.tx.get_or_insert_with(|| {
             let (tx, rx) = channel::<Instant>();
@@ -205,6 +231,26 @@ fn pacer_main(rx: Receiver<Instant>, wake: WakeHandle) {
     }
 }
 
+#[cfg(test)]
+mod find_tests {
+    use super::*;
+
+    #[test]
+    fn find_uses_rendered_text_without_changing_page_dom() {
+        let page = RhoDocument::from_html(
+            "<html><body><p>Alpha beta alpha</p><p style='display:none'>alpha hidden</p><script>alpha script</script></body></html>",
+            blitz_dom::DocumentConfig::default(),
+        );
+        let base = page.base();
+        base.borrow_mut().viewport_mut().window_size = (800, 600);
+        base.borrow_mut().resolve(0.0);
+        let before = base.borrow().root_node().text_content();
+        let hits = page.find("ALPHA", 100);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(base.borrow().root_node().text_content(), before);
+    }
+}
+
 /// Where a page is in its life.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageState {
@@ -229,6 +275,24 @@ pub struct RhoDocument {
     wake: WakeHandle,
     pacer: Pacer,
     console_seen: usize,
+    host_theme: Option<String>,
+}
+
+/// A match in Blitz's rendered inline text. Offsets are UTF-8 byte offsets.
+/// This is a read-only snapshot; search never inserts nodes into a page.
+#[derive(Clone, Debug)]
+pub struct FindHit {
+    pub node: blitz_dom::NodeId,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FindRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 impl RhoDocument {
@@ -248,12 +312,10 @@ impl RhoDocument {
             last_hash: [0; 32],
             foreground: true,
             pending_input: false,
-            pacer: Pacer {
-                tx: None,
-                wake: wake.clone(),
-            },
+            pacer: Pacer::new(wake.clone()),
             wake,
             console_seen: 0,
+            host_theme: None,
         };
         if !d.scripts().is_empty() {
             d.state = PageState::Loading;
@@ -263,6 +325,147 @@ impl RhoDocument {
 
     pub fn base(&self) -> Rc<RefCell<BaseDocument>> {
         Rc::clone(&self.inner)
+    }
+
+    /// Search rendered inline text, including text produced by f1r3lang.
+    /// Nodes without a layout are skipped, so scripts and hidden content do
+    /// not appear. The cap bounds work when a page changes every frame.
+    pub fn find(&self, query: &str, limit: usize) -> Vec<FindHit> {
+        if query.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let needle = query.to_lowercase();
+        let doc = self.inner.borrow();
+        let mut out = Vec::new();
+        for (id, node) in doc.tree().iter() {
+            if !node.flags.is_inline_root() {
+                continue;
+            }
+            if let Some(text) = node
+                .element_data()
+                .and_then(|e| e.inline_layout_data.as_ref())
+                .map(|l| l.text.as_str())
+            {
+                // lowercasing may change byte offsets (e.g. İ). Work in the
+                // original text and only accept boundaries that map exactly.
+                for (start, _) in text.char_indices() {
+                    let Some(end) = text.get(start..).and_then(|tail| {
+                        tail.char_indices()
+                            .nth(query.chars().count())
+                            .map(|(n, _)| start + n)
+                            .or(Some(text.len()))
+                    }) else {
+                        continue;
+                    };
+                    if text
+                        .get(start..end)
+                        .is_some_and(|s| s.to_lowercase() == needle)
+                    {
+                        out.push(FindHit {
+                            node: id,
+                            start,
+                            end,
+                        });
+                        if out.len() >= limit {
+                            return out;
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Highlight the active result using the renderer's selection state.
+    pub fn select_find_hit(&self, hit: Option<&FindHit>) {
+        let mut doc = self.inner.borrow_mut();
+        if let Some(h) = hit {
+            doc.set_text_selection(h.node, h.start, h.node, h.end);
+        } else {
+            doc.clear_text_selection();
+        }
+    }
+
+    /// Geometry for chrome-owned highlight overlays, in page viewport CSS px.
+    /// Only the chrome paints these; the page document is untouched.
+    pub fn find_rects(&self, hit: &FindHit) -> Vec<FindRect> {
+        use parley::{Affinity, Cursor, Selection};
+        let doc = self.inner.borrow();
+        let Some(node) = doc.get_node(hit.node) else {
+            return Vec::new();
+        };
+        let Some(layout) = node
+            .element_data()
+            .and_then(|e| e.inline_layout_data.as_ref())
+            .map(|l| &l.layout)
+        else {
+            return Vec::new();
+        };
+        let Some(bounds) = doc.get_client_bounding_rect(hit.node) else {
+            return Vec::new();
+        };
+        let box_layout = node.final_layout();
+        let x = bounds.x + f64::from(box_layout.border.left + box_layout.padding.left);
+        let y = bounds.y + f64::from(box_layout.border.top + box_layout.padding.top);
+        let scale = f64::from(layout.scale());
+        let anchor = Cursor::from_byte_index(layout, hit.start, Affinity::Downstream);
+        let focus = Cursor::from_byte_index(layout, hit.end, Affinity::Downstream);
+        let selection = Selection::new(anchor, focus);
+        let mut rects = Vec::new();
+        selection.geometry_with(layout, |r, _| {
+            if r.x1 > r.x0 && r.y1 > r.y0 {
+                rects.push(FindRect {
+                    x: x + r.x0 / scale,
+                    y: y + r.y0 / scale,
+                    width: (r.x1 - r.x0) / scale,
+                    height: (r.y1 - r.y0) / scale,
+                });
+            }
+        });
+        rects
+    }
+
+    /// Scroll so the hit is visible, at least `top_margin` CSS px below the
+    /// viewport's top edge (the host may float a find box there) and
+    /// [`REVEAL_BOTTOM_MARGIN`] above its bottom edge.
+    pub fn reveal_find_hit(&self, hit: &FindHit, top_margin: f64) {
+        let Some(rect) = self.find_rects(hit).first().copied() else {
+            return;
+        };
+        let mut doc = self.inner.borrow_mut();
+        let height = f64::from(doc.viewport().window_size.1)
+            / f64::from(doc.viewport().hidpi_scale.max(1.0));
+        if height <= 0.0 {
+            return;
+        }
+        let old = doc.viewport_scroll();
+        let next_y = if rect.y < top_margin {
+            old.y + rect.y - top_margin
+        } else if rect.y + rect.height > height - REVEAL_BOTTOM_MARGIN {
+            old.y + rect.y + rect.height - height + REVEAL_BOTTOM_MARGIN
+        } else {
+            old.y
+        };
+        if (next_y - old.y).abs() > 1.0 {
+            let root = doc.root_element().id;
+            doc.scroll_to(
+                root,
+                old.x,
+                next_y.max(0.0),
+                blitz_dom::ScrollBehavior::Auto,
+            );
+        }
+    }
+
+    /// A host-owned UA stylesheet for built-in pages. It is not a page DOM
+    /// mutation and therefore does not enter f1r3lang replay or DOM hashes.
+    pub fn set_host_theme(&mut self, css: &str) {
+        let mut doc = self.inner.borrow_mut();
+        if let Some(old) = self.host_theme.take() {
+            doc.remove_user_agent_stylesheet(&old);
+        }
+        doc.add_user_agent_stylesheet(css);
+        self.host_theme = Some(css.to_string());
     }
 
     /// The document's f1r3lang scripts, in document order.
@@ -282,43 +485,52 @@ impl RhoDocument {
         let mut js = false;
         let mut stack = vec![doc.root_node().id];
         while let Some(id) = stack.pop() {
-            let Some(node) = doc.get_node(id) else { continue };
-            if let Some(el) = node.element_data() {
-                if el.name.local == local_name!("script") {
-                    let ty = el.attr(local_name!("type")).unwrap_or("").trim().to_ascii_lowercase();
-                    match ty.as_str() {
-                        "application/f1r3lang" => {
-                            let get = |k: &str| {
-                                el.attrs()
-                                    .iter()
-                                    .find(|a| a.name.local.as_ref() == k)
-                                    .map(|a| a.value.clone())
-                            };
-                            let level = get("level").as_deref().map(parse_level).unwrap_or(Some(Level::K1G));
-                            let imports = get("imports")
-                                .unwrap_or_default()
-                                .split_whitespace()
-                                .filter_map(|t| match t.split_once('=') {
-                                    Some((i, u)) => Some((i.to_string(), u.to_string())),
-                                    None => default_urn(t).map(|u| (t.to_string(), u.to_string())),
-                                })
-                                .collect();
-                            let src = get("src");
-                            let text = node.text_content();
-                            out.push(ScriptRef {
-                                inline: if src.is_none() { Some(text) } else { None },
-                                src,
-                                integrity: get("integrity"),
-                                level: level.unwrap_or(Level::K1G),
-                                imports,
-                                semiring: get("semiring"),
-                            });
-                        }
-                        "" | "text/javascript" | "application/javascript" | "module" => js = true,
-                        _ => {}
+            let Some(node) = doc.get_node(id) else {
+                continue;
+            };
+            if let Some(el) = node.element_data()
+                && el.name.local == local_name!("script")
+            {
+                let ty = el
+                    .attr(local_name!("type"))
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                match ty.as_str() {
+                    "application/f1r3lang" => {
+                        let get = |k: &str| {
+                            el.attrs()
+                                .iter()
+                                .find(|a| a.name.local.as_ref() == k)
+                                .map(|a| a.value.clone())
+                        };
+                        let level = get("level")
+                            .as_deref()
+                            .map(parse_level)
+                            .unwrap_or(Some(Level::K1G));
+                        let imports = get("imports")
+                            .unwrap_or_default()
+                            .split_whitespace()
+                            .filter_map(|t| match t.split_once('=') {
+                                Some((i, u)) => Some((i.to_string(), u.to_string())),
+                                None => default_urn(t).map(|u| (t.to_string(), u.to_string())),
+                            })
+                            .collect();
+                        let src = get("src");
+                        let text = node.text_content();
+                        out.push(ScriptRef {
+                            inline: if src.is_none() { Some(text) } else { None },
+                            src,
+                            integrity: get("integrity"),
+                            level: level.unwrap_or(Level::K1G),
+                            imports,
+                            semiring: get("semiring"),
+                        });
                     }
-                    continue;
+                    "" | "text/javascript" | "application/javascript" | "module" => js = true,
+                    _ => {}
                 }
+                continue;
             }
             stack.extend(node.children.iter().rev().copied());
         }
@@ -383,7 +595,10 @@ impl RhoDocument {
         self.tab.as_mut()
     }
     pub fn grants(&self) -> Vec<Grant> {
-        self.tab.as_ref().map(|t| t.grants.clone()).unwrap_or_default()
+        self.tab
+            .as_ref()
+            .map(|t| t.grants.clone())
+            .unwrap_or_default()
     }
     /// Revoke a capability for this page (the shell has already dropped the
     /// broker's route).
@@ -423,7 +638,9 @@ impl RhoDocument {
     }
     pub fn title(&self) -> String {
         let doc = self.inner.borrow();
-        doc.find_title_node().map(|n| n.text_content().trim().to_string()).unwrap_or_default()
+        doc.find_title_node()
+            .map(|n| n.text_content().trim().to_string())
+            .unwrap_or_default()
     }
 
     fn now_ms(&self) -> u64 {
@@ -431,7 +648,9 @@ impl RhoDocument {
     }
 
     fn drive(&mut self) -> bool {
-        let Some(tab) = &mut self.tab else { return false };
+        let Some(tab) = &mut self.tab else {
+            return false;
+        };
         let mut out = Vec::new();
         if let Some(s) = &mut self.services {
             s.poll(&mut out);
@@ -441,7 +660,11 @@ impl RhoDocument {
             deliver(tab, d);
         }
         let now = self.epoch.elapsed().as_millis() as u64;
-        let interval = if self.foreground { FOREGROUND_INTERVAL_MS } else { BACKGROUND_INTERVAL_MS };
+        let interval = if self.foreground {
+            FOREGROUND_INTERVAL_MS
+        } else {
+            BACKGROUND_INTERVAL_MS
+        };
         let due = tab.next_deadline().is_some_and(|t| t <= now);
         let want = tab.wants_frame() || due || self.pending_input || got_answers;
         let mut changed = false;
@@ -480,7 +703,11 @@ fn deliver(tab: &mut TabExec<BlitzDom>, d: Delivery) {
     match d.bind {
         Some(label) => {
             let k = tab.bind_ext(&label);
-            let v = Norm::tuple(vec![Norm::str("ok"), Norm::str("node"), Norm::eval(Name::Unforgeable(k))]);
+            let v = Norm::tuple(vec![
+                Norm::str("ok"),
+                Norm::str("node"),
+                Norm::eval(Name::Unforgeable(k)),
+            ]);
             tab.deliver(d.class, d.chan, vec![v]);
         }
         None => tab.deliver(d.class, d.chan, d.args),

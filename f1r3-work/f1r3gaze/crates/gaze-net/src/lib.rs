@@ -30,7 +30,7 @@ pub fn hex(b: &[u8]) -> String {
 }
 
 pub fn unhex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
@@ -282,12 +282,13 @@ fn percent_decode(s: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(b[i]);
         i += 1;
@@ -351,10 +352,10 @@ pub fn fetch_url(http: &Http, schemes: &Schemes, url: &str) -> Result<(String, V
         other => {
             let h = schemes.get(other).ok_or_else(|| NetError::Url(url.into()))?;
             let bytes = h.get(url)?;
-            if let Some(want) = content_hash(url) {
-                if digest(&bytes) != want {
-                    return Err(NetError::Integrity(url.into()));
-                }
+            if let Some(want) = content_hash(url)
+                && digest(&bytes) != want
+            {
+                return Err(NetError::Integrity(url.into()));
             }
             Ok((url.into(), bytes))
         }
@@ -479,10 +480,10 @@ pub fn fetch_reply(f: &PageFetch, r: Result<HttpResponse, NetError>) -> Norm {
         Err(NetError::TooLarge) => err("quota", &f.request.url),
         Err(e) => err("net", &e.to_string()),
         Ok(r) => {
-            if let Some(i) = &f.integrity {
-                if !verify_integrity(&r.body, i) {
-                    return err("integrity", &f.request.url);
-                }
+            if let Some(i) = &f.integrity
+                && !verify_integrity(&r.body, i)
+            {
+                return err("integrity", &f.request.url);
             }
             let headers = Norm::map(r.headers.iter().map(|(k, v)| (Norm::str(k), Norm::str(v))).collect());
             let body = match std::str::from_utf8(&r.body) {

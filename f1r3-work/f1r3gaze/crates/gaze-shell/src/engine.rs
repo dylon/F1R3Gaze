@@ -7,9 +7,12 @@ use gaze_broker::{Broker, FileGrants, NAV, NET, Refusal, SHARD, STORE, ShardClas
 use gaze_dom_blitz::{Delivery, Services, WakeHandle};
 use gaze_exec::{CapRequest, Class};
 use gaze_net::{Http, NetError, Pool, Schemes, content_hash, fetch_reply, fetch_request, unhex};
-use gaze_shard::{Bridge, DriveSource, FileKeystore, Keystore, Payer, ShardOut, ShardService, SiteAddr, SiteManifest};
-use gaze_wallet::{Embers, Limits, Wallets};
+use gaze_shard::{
+    Bridge, DriveSource, FileKeystore, Keystore, Payer, ShardOut, ShardService, SiteAddr,
+    SiteManifest,
+};
 use gaze_store::{OriginStore, path_for};
+use gaze_wallet::{Embers, Limits, Wallets};
 use k1ndl1ng_norm::{Name, Node, Norm};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -29,6 +32,8 @@ pub struct Engine {
     pub wallets: Arc<Wallets>,
     pub broker: RefCell<Broker<FileGrants>>,
     pub sites: Arc<SiteCache>,
+    stores: RefCell<BTreeMap<Site, Rc<RefCell<OriginStore>>>>,
+    store_index: RefCell<Vec<String>>,
 }
 
 /// Resolved site manifests, briefly cached (sub-resources of one page load
@@ -41,12 +46,11 @@ pub struct SiteCache {
 impl SiteCache {
     pub fn manifest(&self, a: &SiteAddr) -> Result<SiteManifest, String> {
         let key = a.registry_uri();
-        if let Ok(m) = self.map.lock() {
-            if let Some((t, m)) = m.get(&key) {
-                if t.elapsed() < Duration::from_secs(15) {
-                    return Ok(m.clone());
-                }
-            }
+        if let Ok(m) = self.map.lock()
+            && let Some((t, m)) = m.get(&key)
+            && t.elapsed() < Duration::from_secs(15)
+        {
+            return Ok(m.clone());
         }
         let (_, m) = self.bridge.resolve_site(a)?;
         if let Ok(mut map) = self.map.lock() {
@@ -66,7 +70,10 @@ impl Engine {
         let settings = Settings::load(&dir);
         let http = Http::new();
         let pool = Pool::new(6);
-        let blobs = Arc::new(Blobs::new(ContentCache::new(dir.join("cache"), settings.cache_bytes), http.clone()));
+        let blobs = Arc::new(Blobs::new(
+            ContentCache::new(dir.join("cache"), settings.cache_bytes),
+            http.clone(),
+        ));
         for m in &settings.mirrors {
             blobs.add_source(Arc::new(gaze_blob::MirrorSource::new(m, http.clone())));
         }
@@ -94,7 +101,13 @@ impl Engine {
         });
         let wallets = Arc::new(Wallets::open(dir.clone(), keys, embers));
         let payer: Arc<dyn Payer> = wallets.clone();
-        let bridge = Bridge::new(shard_cfg, http.clone(), pool.clone(), payer, Arc::clone(&blobs));
+        let bridge = Bridge::new(
+            shard_cfg,
+            http.clone(),
+            pool.clone(),
+            payer,
+            Arc::clone(&blobs),
+        );
         blobs.add_source(Arc::new(DriveSource {
             bridge: Arc::clone(&bridge),
             root: "/gaze-blob/".into(),
@@ -114,20 +127,34 @@ impl Engine {
                 }),
             );
             let s = Arc::clone(&sites);
-            schemes.register("f1r3", Arc::new(move |u: &str| s.file(u).map(|(_, b)| b).map_err(NetError::NotFound)));
+            schemes.register(
+                "f1r3",
+                Arc::new(move |u: &str| s.file(u).map(|(_, b)| b).map_err(NetError::NotFound)),
+            );
             schemes.register(
                 "gaze",
-                Arc::new(|u: &str| pages::builtin(u).map(|s| s.into_bytes()).ok_or_else(|| NetError::NotFound(u.into()))),
+                Arc::new(|u: &str| {
+                    pages::builtin(u)
+                        .map(|s| s.into_bytes())
+                        .ok_or_else(|| NetError::NotFound(u.into()))
+                }),
             );
             schemes.register(
                 "file",
                 Arc::new(|u: &str| {
-                    let p = url::Url::parse(u).ok().and_then(|x| x.to_file_path().ok()).ok_or_else(|| NetError::Url(u.into()))?;
+                    let p = url::Url::parse(u)
+                        .ok()
+                        .and_then(|x| x.to_file_path().ok())
+                        .ok_or_else(|| NetError::Url(u.into()))?;
                     std::fs::read(p).map_err(|e| NetError::NotFound(e.to_string()))
                 }),
             );
         }
         let broker = RefCell::new(Broker::new(FileGrants::new(dir.join("grants.tsv"))));
+        let store_index = std::fs::read(dir.join("store/origins.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Rc::new(Engine {
             dir,
             settings,
@@ -139,22 +166,82 @@ impl Engine {
             wallets,
             broker,
             sites,
+            stores: RefCell::new(BTreeMap::new()),
+            store_index: RefCell::new(store_index),
         })
+    }
+
+    pub fn store_sites(&self) -> Vec<String> {
+        self.store_index.borrow().clone()
+    }
+
+    fn save_store_index(&self) {
+        let dir = self.dir.join("store");
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(bytes) = serde_json::to_vec(&*self.store_index.borrow()) {
+            let tmp = dir.join("origins.json.part");
+            if std::fs::write(&tmp, bytes).is_ok() {
+                let _ = std::fs::rename(tmp, dir.join("origins.json"));
+            }
+        }
+    }
+
+    pub fn store_for(&self, site: &Site) -> Result<Rc<RefCell<OriginStore>>, String> {
+        if let Some(s) = self.stores.borrow().get(site) {
+            return Ok(Rc::clone(s));
+        }
+        let path = path_for(&self.dir.join("store"), site.as_str());
+        let store = Rc::new(RefCell::new(
+            OriginStore::open(path, self.settings.store_quota).map_err(|e| format!("{e:?}"))?,
+        ));
+        self.stores
+            .borrow_mut()
+            .insert(site.clone(), Rc::clone(&store));
+        if !self.store_index.borrow().iter().any(|s| s == site.as_str()) {
+            self.store_index
+                .borrow_mut()
+                .push(site.as_str().to_string());
+            self.save_store_index();
+        }
+        Ok(store)
+    }
+
+    pub fn clear_store(&self, site: &str) -> Result<(), String> {
+        let Some(s) = Site::of_url(site) else {
+            return Err("bad site".into());
+        };
+        self.stores.borrow_mut().remove(&s);
+        let p = path_for(&self.dir.join("store"), s.as_str());
+        if p.exists() {
+            std::fs::remove_file(p).map_err(|e| e.to_string())?;
+        }
+        self.store_index.borrow_mut().retain(|x| x != site);
+        self.save_store_index();
+        Ok(())
     }
 
     /// Fetch a top-level document: `(final URL, HTML)`. Non-HTML content is
     /// wrapped in a minimal page. Runs on a worker thread.
-    pub fn fetch_document(http: &Http, schemes: &Schemes, url: &str, https_only: bool) -> Result<(String, String), String> {
+    pub fn fetch_document(
+        http: &Http,
+        schemes: &Schemes,
+        url: &str,
+        https_only: bool,
+    ) -> Result<(String, String), String> {
         if https_only && url.starts_with("http://") {
             return Err(format!("plain HTTP is disabled in settings: {url}"));
         }
-        let (final_url, body, ctype) = if url.starts_with("http://") || url.starts_with("https://") {
+        let (final_url, body, ctype) = if url.starts_with("http://") || url.starts_with("https://")
+        {
             let r = http
                 .send_following(
                     &gaze_net::HttpRequest {
                         url: url.into(),
                         method: "GET".into(),
-                        headers: vec![("accept".into(), "text/html, application/xhtml+xml, */*".into())],
+                        headers: vec![(
+                            "accept".into(),
+                            "text/html, application/xhtml+xml, */*".into(),
+                        )],
                         body: Vec::new(),
                     },
                     &|_| true,
@@ -167,14 +254,21 @@ impl Engine {
             (r.url, r.body, ct)
         } else {
             let (u, b) = gaze_net::fetch_url(http, schemes, url).map_err(|e| e.to_string())?;
-            let ct = if u.ends_with(".txt") || u.ends_with(".rho") { "text/plain" } else { "text/html" };
+            let ct = if u.ends_with(".txt") || u.ends_with(".rho") {
+                "text/plain"
+            } else {
+                "text/html"
+            };
             (u, b, ct.to_string())
         };
         let text = String::from_utf8_lossy(&body).into_owned();
         let html = if ctype.contains("html") {
             text
         } else if ctype.starts_with("image/") {
-            format!("<html><body style=\"margin:0\"><img src=\"{}\"></body></html>", escape(&final_url))
+            format!(
+                "<html><body style=\"margin:0\"><img src=\"{}\"></body></html>",
+                escape(&final_url)
+            )
         } else {
             format!("<html><body><pre>{}</pre></body></html>", escape(&text))
         };
@@ -183,7 +277,10 @@ impl Engine {
 }
 
 pub fn escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn as_name(n: &Norm) -> Option<Name> {
@@ -220,7 +317,6 @@ pub struct TabCore {
     pub base_url: String,
     pub grant_hash: [u8; 32],
     eng: Rc<Engine>,
-    store: Option<OriginStore>,
     pub shard: Option<ShardService>,
     async_out: Arc<Mutex<Vec<Delivery>>>,
     pub wake: WakeHandle,
@@ -230,16 +326,26 @@ pub struct TabCore {
 }
 
 impl TabCore {
-    pub fn new(eng: Rc<Engine>, tab: u64, site: Site, base_url: &str, grant_hash: [u8; 32], wake: WakeHandle) -> TabCore {
+    pub fn new(
+        eng: Rc<Engine>,
+        tab: u64,
+        site: Site,
+        base_url: &str,
+        grant_hash: [u8; 32],
+        wake: WakeHandle,
+    ) -> TabCore {
         let w = wake.clone();
-        let shard = Some(ShardService::new(Arc::clone(&eng.bridge), site.as_str(), Arc::new(move || w.wake())));
+        let shard = Some(ShardService::new(
+            Arc::clone(&eng.bridge),
+            site.as_str(),
+            Arc::new(move || w.wake()),
+        ));
         TabCore {
             tab,
             site,
             base_url: base_url.to_string(),
             grant_hash,
             eng,
-            store: None,
             shard,
             async_out: Arc::default(),
             wake,
@@ -250,7 +356,12 @@ impl TabCore {
     }
 
     fn resolve(&self, u: &str) -> Option<String> {
-        url::Url::parse(&self.base_url).ok()?.join(u).ok().map(|x| x.to_string()).or_else(|| url::Url::parse(u).ok().map(|x| x.to_string()))
+        url::Url::parse(&self.base_url)
+            .ok()?
+            .join(u)
+            .ok()
+            .map(|x| x.to_string())
+            .or_else(|| url::Url::parse(u).ok().map(|x| x.to_string()))
     }
 
     fn hold(&mut self, text: String, h: Held) {
@@ -276,7 +387,9 @@ impl TabCore {
             }
             return;
         }
-        let Some(i) = self.held.iter().position(|(x, _, _)| *x == id) else { return };
+        let Some(i) = self.held.iter().position(|(x, _, _)| *x == id) else {
+            return;
+        };
         let (_, _, h) = self.held.remove(i);
         match h {
             Held::Net { site, args } => {
@@ -290,7 +403,11 @@ impl TabCore {
             Held::Shard { class, args } => {
                 if yes {
                     let gh = remember.then_some(self.grant_hash);
-                    let _ = self.eng.broker.borrow_mut().allow_shard(self.tab, class, gh);
+                    let _ = self
+                        .eng
+                        .broker
+                        .borrow_mut()
+                        .allow_shard(self.tab, class, gh);
                     if let Some(s) = &mut self.shard {
                         s.request(SHARD, &args);
                     }
@@ -309,7 +426,9 @@ impl TabCore {
     }
 
     fn net(&mut self, args: Vec<Norm>) {
-        let Some(ret) = args.last().and_then(as_name) else { return };
+        let Some(ret) = args.last().and_then(as_name) else {
+            return;
+        };
         let f = match fetch_request(&args) {
             Ok(f) => f,
             Err(code) => return self.push(Class::Net, ret, err(code, "fetch")),
@@ -321,20 +440,35 @@ impl TabCore {
         let check = self.eng.broker.borrow().check_net(self.tab, &url);
         match check {
             Ok(()) => {
-                let allowed = self.eng.broker.borrow().route(self.tab, NET).map(|r| r.att.net_sites.clone()).unwrap_or_default();
-                let (http, schemes, out, wake) = (self.eng.http.clone(), self.eng.schemes.clone(), Arc::clone(&self.async_out), self.wake.clone());
+                let allowed = self
+                    .eng
+                    .broker
+                    .borrow()
+                    .route(self.tab, NET)
+                    .map(|r| r.att.net_sites.clone())
+                    .unwrap_or_default();
+                let (http, schemes, out, wake) = (
+                    self.eng.http.clone(),
+                    self.eng.schemes.clone(),
+                    Arc::clone(&self.async_out),
+                    self.wake.clone(),
+                );
                 let mut f = f;
                 f.request.url = url;
                 self.eng.pool.spawn(move || {
                     let r = if f.request.url.starts_with("http") {
                         // Every redirect hop is checked against the allow-list.
-                        http.send_following(&f.request, &|hop| Site::of_url(hop).is_some_and(|s| allowed.contains(&s)))
+                        http.send_following(&f.request, &|hop| {
+                            Site::of_url(hop).is_some_and(|s| allowed.contains(&s))
+                        })
                     } else {
-                        gaze_net::fetch_url(&http, &schemes, &f.request.url).map(|(u, body)| gaze_net::HttpResponse {
-                            url: u,
-                            status: 200,
-                            headers: Vec::new(),
-                            body,
+                        gaze_net::fetch_url(&http, &schemes, &f.request.url).map(|(u, body)| {
+                            gaze_net::HttpResponse {
+                                url: u,
+                                status: 200,
+                                headers: Vec::new(),
+                                body,
+                            }
                         })
                     };
                     let datum = fetch_reply(&f, r);
@@ -356,32 +490,30 @@ impl TabCore {
     fn store(&mut self, args: &[Norm]) {
         let Some(ret) = args.last().and_then(as_name) else {
             // Writes without an acknowledgement still happen.
-            if let Some(s) = self.store_mut() {
-                let _ = s.serve(args);
+            if let Ok(s) = self.eng.store_for(&self.site) {
+                let _ = s.borrow_mut().serve(args);
             }
             return;
         };
         if self.eng.broker.borrow().route(self.tab, STORE).is_none() {
             return self.push(Class::Store, ret, err("revoked", ""));
         }
-        let datum = match self.store_mut() {
-            Some(s) => s.serve(args).unwrap_or_else(|| err("type", "store")),
-            None => err("io", "store unavailable"),
+        let datum = match self.eng.store_for(&self.site) {
+            Ok(s) => s
+                .borrow_mut()
+                .serve(args)
+                .unwrap_or_else(|| err("type", "store")),
+            Err(_) => err("io", "store unavailable"),
         };
         self.push(Class::Store, ret, datum);
     }
 
-    fn store_mut(&mut self) -> Option<&mut OriginStore> {
-        if self.store.is_none() {
-            let quota = self.eng.settings.store_quota;
-            self.store = OriginStore::open(path_for(&self.eng.dir.join("store"), self.site.as_str()), quota).ok();
-        }
-        self.store.as_mut()
-    }
-
     fn nav_req(&mut self, args: &[Norm]) {
         let verb = args.first().and_then(|v| v.as_str()).unwrap_or("");
-        let target = args.get(1).and_then(|v| v.as_str()).and_then(|u| self.resolve(u));
+        let target = args
+            .get(1)
+            .and_then(|v| v.as_str())
+            .and_then(|u| self.resolve(u));
         let req = match (verb, target) {
             ("go", Some(u)) | ("replace", Some(u)) => {
                 let same = Site::of_url(&u).is_some_and(|s| s.same_site(&self.site));
@@ -408,7 +540,11 @@ impl TabCore {
             }
             return;
         }
-        let verb = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let verb = args
+            .first()
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let check = self.eng.broker.borrow().check_shard(self.tab, &verb);
         match check {
             Ok(_) => {
@@ -476,5 +612,7 @@ impl Services for TabServices {
 
 /// Parse a hash in the forms pages and settings use.
 pub fn parse_hash(s: &str) -> Option<[u8; 32]> {
-    unhex(s.strip_prefix("blake2b-256:").unwrap_or(s))?.try_into().ok()
+    unhex(s.strip_prefix("blake2b-256:").unwrap_or(s))?
+        .try_into()
+        .ok()
 }

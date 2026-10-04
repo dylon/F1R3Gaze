@@ -1,0 +1,40 @@
+@startuml layers
+' Paint order, top to bottom. Blitz hoists an element out of its parent's
+' paint order only when it is positioned AND has a non-zero z-index
+' (blitz-paint paint_tree.rs). Everything else paints in document order,
+' and the page sub-documents paint with #main.
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam rectangle {
+  RoundCorner 6
+  BorderColor #52687A
+  FontColor #182734
+}
+title Layers: what paints over what (top is nearest the viewer)
+
+rectangle "<b>z-index 40</b>   hover labels  <i>.tip</i>\nshown by :hover > .tip { visibility: visible }\npointer-events: none" as tips #F4CCCC
+rectangle "<b>z-index 30</b>   address suggestions  <i>#suggestions</i>\nabsolute under #urlwrap; empty → display:none" as sugg #FCE4D6
+rectangle "<b>z-index 6</b>   floating find box  <i>#findbar</i>\nabsolute, top-right of #main; hidden with visibility" as find #FFF2CC
+rectangle "<b>z-index 2</b>   find highlights  <i>#findoverlay .findhit</i>\nabsolute, inset 0 over #main; pointer-events: none" as overlay #FFF9E5
+rectangle "<b>z-index auto</b>   chrome boxes in document order\nrows, row actions (absolute, z auto), cards, menus, status" as chrome #E2EFDA
+rectangle "<b>page sub-documents</b>   one RhoDocument per tab\npainted as part of #main, below every hoisted layer" as pages #DDEBF7
+
+tips -[hidden]down-> sugg
+sugg -[hidden]down-> find
+find -[hidden]down-> overlay
+overlay -[hidden]down-> chrome
+chrome -[hidden]down-> pages
+
+note right of chrome
+  <b>Rule R2.</b> Persistent boxes inside #panel and #tabs never get a
+  z-index: a hoisted box ignores clips from its ancestors and would
+  paint over the toolbar when the panel scrolls.
+  Ancestors of overlays get no opacity, transform or filter.
+end note
+note right of tips
+  Hoisted layers are also hit-tested first,
+  so the dropdown and the find box take
+  clicks before the page under them.
+end note
+@enduml

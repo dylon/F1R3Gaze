@@ -1,0 +1,47 @@
+@startuml find-states
+' The find box. Colours: grey = closed, blue = open and idle, green = a hit
+' is selected, yellow = waiting for a layout.
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam state {
+  BorderColor #52687A
+  ArrowColor #52687A
+  FontColor #182734
+}
+title Find in page: states and the selection invariant
+
+[*] --> Closed
+state "Closed\n~#findbar.off · no hits · no find selection" as Closed #EDEDED
+state "Open" as Open #F5F7FA {
+  state "Empty query\nghost hint · no selection" as Empty #DDEBF7
+  state "Matching\nhits from the laid-out page\nhit i selected and revealed" as Matching #E2EFDA
+  state "No match\ncount 0/0 in danger colour" as NoMatch #FCE4D6
+  state "Waiting for layout\nfind_rescan = true\nPacer wakes in 30 ms" as Waiting #FFF2CC
+  [*] --> Empty
+  Empty --> Matching : Input(q), page laid out,\nq occurs
+  Empty --> NoMatch : Input(q), page laid out,\nq absent
+  Empty --> Waiting : Input(q), page not laid out
+  Waiting --> Matching : poll(): laid out, q occurs
+  Waiting --> NoMatch : poll(): laid out, q absent
+  Matching --> Matching : Enter / Shift+Enter\n(next / previous, wraps)
+  Matching --> Empty : Input("")\n(clear_find_selection)
+  NoMatch --> Empty : Input("")
+  Matching --> NoMatch : Input(q'), absent
+  NoMatch --> Matching : Input(q'), occurs
+  Matching --> Matching : select(tab): clear the old\ntab's selection, search the new
+}
+Closed --> Open : Ctrl+F or toolbar magnifier\nfocus #find, select its text
+Open --> Closed : Esc or ×\nclear find's selection only,\nfocus returns to the page
+
+note right of Matching
+  <b>Invariant</b> (ledger L1)
+  find has a selection
+  ⇔ the box is open
+  ∧ the query is non-empty
+  ∧ there is a hit
+  ∧ the selection is on the active tab.
+  A selection the user made is never
+  cleared by find (find_selected_tab).
+end note
+@enduml

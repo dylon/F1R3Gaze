@@ -65,6 +65,9 @@ pub struct Tab {
     pub title: String,
     /// Shown in the status line (e.g. "JavaScript was not run").
     pub notice: Option<String>,
+    /// The document shown is F1R3Gaze's own "could not load" page, so it is
+    /// themed like the built-in pages.
+    pub error_page: bool,
     eng: Rc<Engine>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -88,6 +91,7 @@ impl Tab {
             stage: Stage::Fetching,
             title: String::new(),
             notice: None,
+            error_page: false,
             eng,
             tx,
             rx,
@@ -113,6 +117,7 @@ impl Tab {
         self.url = url.clone();
         self.stage = Stage::Fetching;
         self.notice = None;
+        self.error_page = false;
         self.fail = None;
         self.knfs.clear();
         self.plans.clear();
@@ -124,6 +129,16 @@ impl Tab {
             let _ = tx.send(Msg::Doc(g, Engine::fetch_document(&http, &schemes, &url, https_only)));
             w.wake();
         });
+    }
+
+    /// Whether [`Tab::back`] has an entry to go to.
+    pub fn can_go_back(&self) -> bool {
+        self.hist > 0
+    }
+
+    /// Whether [`Tab::forward`] has an entry to go to.
+    pub fn can_go_forward(&self) -> bool {
+        self.hist + 1 < self.history.len()
     }
 
     pub fn back(&mut self) -> bool {
@@ -218,8 +233,8 @@ impl Tab {
                     out = Some(doc);
                 }
                 Msg::Doc(_, Err(e)) => {
-                    self.stage = Stage::Failed(e.clone());
-                    self.title = "Could not load".into();
+                    self.title = pages::ERROR_TITLE.into();
+                    self.error_page = true;
                     out = Some(RhoDocument::from_html(&pages::error(&self.url, &e), self.config("gaze://error")));
                     self.stage = Stage::Failed(e);
                 }
@@ -275,10 +290,10 @@ impl Tab {
                 Err(e) => self.stage = Stage::Failed(e.to_string()),
             }
         }
-        if let PageState::Failed(e) = doc.state() {
-            if !matches!(self.stage, Stage::Failed(_)) {
-                self.stage = Stage::Failed(e.clone());
-            }
+        if let PageState::Failed(e) = doc.state()
+            && !matches!(self.stage, Stage::Failed(_))
+        {
+            self.stage = Stage::Failed(e.clone());
         }
         let t = doc.title();
         if !t.is_empty() {
@@ -291,10 +306,10 @@ impl Tab {
         let mut v: Vec<(String, String)> = Vec::new();
         for p in &self.plans {
             for e in &p.entries {
-                if let Status::Ask(t) = &e.status {
-                    if !v.iter().any(|(u, _)| *u == e.urn) {
-                        v.push((e.urn.clone(), t.clone()));
-                    }
+                if let Status::Ask(t) = &e.status
+                    && !v.iter().any(|(u, _)| *u == e.urn)
+                {
+                    v.push((e.urn.clone(), t.clone()));
                 }
             }
         }

@@ -185,12 +185,12 @@ impl Payer for Wallets {
 
     fn balance(&self) -> Option<u64> {
         let a = self.active()?;
-        if let Ok(i) = self.inner.lock() {
-            if let Some((t, ba, v)) = &i.balance {
-                if ba == &a && t.elapsed() < Duration::from_secs(15) {
-                    return Some(*v);
-                }
-            }
+        if let Ok(i) = self.inner.lock()
+            && let Some((t, ba, v)) = &i.balance
+            && ba == &a
+            && t.elapsed() < Duration::from_secs(15)
+        {
+            return Some(*v);
         }
         self.state(&a).ok().map(|s| s.balance)
     }

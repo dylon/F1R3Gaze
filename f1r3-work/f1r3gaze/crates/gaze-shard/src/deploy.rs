@@ -30,7 +30,9 @@ fn varint(mut v: u64, out: &mut Vec<u8>) {
 
 fn field_varint(n: u32, v: i64, out: &mut Vec<u8>) {
     if v != 0 {
-        varint(((n << 3) | 0) as u64, out);
+        // Key: field number << 3 | wire type, and the varint wire type is 0
+        // (`field_bytes` below uses 2, length-delimited).
+        varint((n << 3) as u64, out);
         varint(v as u64, out);
     }
 }

@@ -16,3 +16,4 @@ gaze-exec.workspace = true
 gaze-knf.workspace = true
 url = "2"
 keyboard-types = "0.7"
+parley = { git = "https://github.com/linebender/parley", rev = "332c1c7d9758839577e7979d211d1e3bbf4818af" }

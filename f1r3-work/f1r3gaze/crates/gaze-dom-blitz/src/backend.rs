@@ -334,10 +334,10 @@ impl DomBackend for BlitzDom {
     fn attr(&self, n: BNode, k: &str) -> Option<String> {
         let doc = self.doc.borrow();
         // A text control's live value is its editor's, not its attribute.
-        if k == "value" {
-            if let Some(ti) = doc.get_node(n.id()).and_then(|x| x.element_data()).and_then(|e| e.text_input_data()) {
-                return Some(ti.editor.raw_text().to_string());
-            }
+        if k == "value"
+            && let Some(ti) = doc.get_node(n.id()).and_then(|x| x.element_data()).and_then(|e| e.text_input_data())
+        {
+            return Some(ti.editor.raw_text().to_string());
         }
         get_attr(&doc, n.id(), k)
     }
@@ -391,7 +391,7 @@ impl DomBackend for BlitzDom {
     fn apply(&mut self, w: &Write<BNode>) -> Vec<(String, BNode)> {
         self.apply_batch(std::slice::from_ref(w)).pop().flatten().unwrap_or_default()
     }
-    fn apply_batch(&mut self, ws: &[Write<BNode>]) -> Vec<Option<Vec<(String, BNode)>>> {
+    fn apply_batch(&mut self, ws: &[Write<BNode>]) -> gaze_dom_core::BatchRefs<BNode> {
         let mut out = Vec::with_capacity(ws.len());
         let mut focus = Vec::new();
         {

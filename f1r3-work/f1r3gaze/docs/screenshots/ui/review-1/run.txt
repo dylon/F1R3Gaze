@@ -1,0 +1,7 @@
+mode	after
+date	2026-10-04T04:25:34-04:00
+git	f6ee26a (dirty)
+binary	c7faee7302cc2675bf5af3173b9ffe2436b2e28775cfbe2f6aa6ec68514a7027
+imagemagick	Version: ImageMagick 7.1.2-32 Q16-HDRI x86_64 68f8d115a:20260926 https://imagemagick.org
+size	1280x800
+only	all scenes

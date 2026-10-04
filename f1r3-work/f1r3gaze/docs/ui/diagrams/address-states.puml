@@ -1,0 +1,40 @@
+@startuml address-states
+' The address box. Colours: grey = showing the page, blue = focused,
+' green = searching (dropdown), yellow = a suggestion highlighted.
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam state {
+  BorderColor #52687A
+  ArrowColor #52687A
+  FontColor #182734
+}
+title The address box: states, keys, and what the badge shows
+
+[*] --> Showing
+state "Showing the page\nbadge: page identity (lock, file, shard…)\n~#url = page address (empty on gaze://newtab)" as Showing #EDEDED
+state "Focused, unedited\nwhole address selected\nbadge: page identity" as Focused #DDEBF7
+state "Searching\nbadge: magnifier\ndropdown when the text is non-empty" as Searching #E2EFDA
+state "Highlighted(i)\nsuggestion i marked .on" as Highlighted #FFF2CC
+
+Showing --> Focused : Ctrl+L\n(select_pending = url)
+Showing --> Focused : click in the box
+Focused --> Searching : typing, or the text is emptied
+Searching --> Highlighted : ↓ (first) or ↑ (last)
+Highlighted --> Highlighted : ↓ / ↑ (next_suggestion)
+Highlighted --> Searching : ↓ past the last, ↑ past the first
+Searching --> Showing : Enter: open the typed address
+Highlighted --> Showing : Enter: switch to the open tab,\nor open the suggestion
+Highlighted --> Showing : click a suggestion\n(Click is handled before Blur)
+Searching --> Focused : Esc: put the address back,\nselect it all
+Highlighted --> Focused : Esc
+Focused --> Showing : Blur, Enter, or tab switch
+Searching --> Showing : Blur (AddressDismiss)
+
+note bottom of Searching
+  A render never replaces what the user is typing:
+  url_dirty waits while #url is focused with a query.
+  The page's own address returns on Esc, Blur, Enter,
+  or a tab switch (dismiss_address).
+end note
+@enduml

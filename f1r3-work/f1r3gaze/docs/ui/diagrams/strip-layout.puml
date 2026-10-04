@@ -1,0 +1,49 @@
+@startuml strip-layout
+' strip_layout(count, active, room): how the tab strip spends its room.
+' Symbols: W window width, R room for tabs, n tab count, e equal share,
+' a active width, o width of each other tab, k tabs shown (all in CSS px).
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #DDEBF7
+  BorderColor #52687A
+  ArrowColor #52687A
+  FontColor #182734
+}
+title The tab strip: widths, icon-only tabs, and the "+N" window
+
+start
+:Room for tabs: strip padding, the gap, and the new-tab button come off
+<latex>R = W - 2 \cdot 8 - 4 - 30</latex>; <<#DDEBF7>>
+:Equal share, at most 200 px each, with 2 px between tabs
+<latex>e = \min\left(200,\ \frac{R - 2\,(n-1)}{n}\right)</latex>;
+if (e at least 128?) then (yes)
+  :every tab is <latex>e</latex> wide; <<#E2EFDA>>
+  stop
+endif
+:The active tab keeps 128 px; the others share the rest
+<latex>a = 128, \qquad o = \frac{R - 128 - 2\,(n-1)}{n-1}</latex>; <<#FFF2CC>>
+if (n at most 1, or o at least 44?) then (yes)
+  :all <latex>n</latex> tabs show; <<#E2EFDA>>
+  stop
+endif
+:Room left after the "+N" chip (44 px and its gap)
+<latex>R' = R - 44 - 2</latex>; <<#FCE4D6>>
+:As many tabs as fit at the minimum widths
+<latex>k = 1 + \left\lfloor \frac{R' - 128}{44 + 2} \right\rfloor</latex>; <<#FCE4D6>>
+:window = visible_window(n, active, k)
+centred on the active tab, clamped to the ends; <<#FCE4D6>>
+:split the <latex>k</latex> tabs as above, in <latex>R'</latex>; <<#FCE4D6>>
+:the chip reads <latex>+(n-k)</latex> and opens the Tabs panel; <<#FCE4D6>>
+stop
+
+note right
+  <b>Titles.</b> A tab <latex>w</latex> px wide fits its title to
+  <latex>w - 66</latex> when active (padding 16, borders 2,
+  icon 14, two 7 px gaps, close button 20), and to
+  <latex>w - 39</latex> otherwise: an inactive tab's close
+  button overlays the title on hover. A tab whose
+  fitted title is empty or "…" shows only its icon.
+end note
+@enduml

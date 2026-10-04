@@ -1,0 +1,7 @@
+mode	before
+date	2026-10-04T05:31:08-04:00
+git	f6ee26a (dirty)
+binary	f7a6d0b3827e12121bfd368756b2ab01b0947cc3da6b273343567c902efc55a5
+imagemagick	Version: ImageMagick 7.1.2-32 Q16-HDRI x86_64 68f8d115a:20260926 https://imagemagick.org
+size	1280x800
+only	^50-

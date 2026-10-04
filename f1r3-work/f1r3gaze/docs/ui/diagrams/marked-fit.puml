@@ -1,0 +1,38 @@
+@startuml marked-fit
+' How a search result's label and address are fitted so the match stays
+' visible (ledger L5 R9).
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #DDEBF7
+  BorderColor #52687A
+  ArrowColor #52687A
+  FontColor #182734
+}
+title Fitting a search result so that its match shows
+
+start
+:mark = match_span(query, label), by the rules of search_score:
+the first case-insensitive occurrence, else the first
+word within the typo bound; <<#DDEBF7>>
+:kept = the usual cut of the label (end cut);
+if (kept shows all of mark?) then (yes)
+  :label = kept, mark located in it; <<#E2EFDA>>
+else (no)
+  :label = a window around the mark,
+  …context <b>mark</b> context…, the context split evenly,
+  the left side taking the odd character; <<#FFF2CC>>
+endif
+if (the label shows a mark?) then (yes)
+  :address = its usual cut (origin + path tail); <<#E2EFDA>>
+  :mark the address's own match only where that cut shows it; <<#E2EFDA>>
+else (no)
+  :address = the URL cut if it shows the match,
+  else a window around the address's match; <<#FFF2CC>>
+endif
+:HTML: escape(before), then the match in a mark element, then escape(after).
+The match is coloured and underlined in accent,
+which changes no width, so the fit stays exact; <<#FCE4D6>>
+stop
+@enduml

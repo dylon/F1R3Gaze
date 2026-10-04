@@ -35,3 +35,7 @@ k1ndl1ng-norm.workspace = true
 getrandom = "0.2"
 url = "2"
 keyboard-types = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+liblevenshtein = { version = "=4.0.0-rc.4", default-features = false }
+parley = { git = "https://github.com/linebender/parley", rev = "332c1c7d9758839577e7979d211d1e3bbf4818af" }

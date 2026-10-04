@@ -60,6 +60,58 @@ Settings live in `settings.conf` in the profile directory
 the quorum, blob mirrors, `https_only`, and for the wallet `embers_api` and
 `max_fee`.
 
+### Browser controls
+
+The design of every control is in [`docs/ui/README.md`](docs/ui/README.md).
+
+- **Tab strip.** Drag a tab onto another to reorder it, middle-click to close
+  it, or right-click it for its menu. When tabs get crowded, the active tab
+  keeps a readable width and the others shrink to their icons; beyond that, a
+  "+N" chip opens the Tabs panel.
+- **Toolbar.** Show or hide the sidebar (`Ctrl+B`), Back and Forward (disabled
+  when there is nowhere to go), Reload, the address box, and Find.
+  - The badge in the address box shows what kind of address the page has;
+    click it for the page's permissions.
+  - Typing suggests open tabs (**Switch to tab**) and history, with the matched
+    text highlighted. ↓/↑ choose, Enter opens, and Esc puts the address back.
+- **Rail.** Opens Tabs, History, Site data, Permissions, Wallet, Console, and
+  Appearance. Each button names itself on hover; clicking the open panel's
+  button hides the sidebar.
+- **Tabs panel.**
+  - Search covers titles and addresses, including small typing errors (through
+    the native Rust `liblevenshtein` library), and shows the text that matched.
+    **Page text** also searches the text of loaded pages.
+  - **Tree** nests tabs under the tab that opened them.
+  - Each row's ⋯ menu duplicates, copies the address, moves, or closes tabs.
+  - **Recently closed** reopens tabs.
+- **History.** Grouped by how long ago, with relative times; × forgets an
+  entry, and **Clear…** asks first.
+- **Find.** `Ctrl+F`/`Cmd+F` opens a box over the top right of the page.
+  Enter and Shift+Enter step through the matches; Esc closes it.
+- **Keys.**
+  - `Ctrl+T` opens a tab and `Ctrl+W` closes one.
+  - `Ctrl+Shift+T` reopens the last closed tab.
+  - `Ctrl+L` selects the address.
+  - `Ctrl+Tab` and `Ctrl+Shift+Tab` cycle tabs; `Ctrl+1`–`Ctrl+9` jump to a
+    tab.
+  - `Ctrl+H` opens History.
+
+Recent history and open tabs are stored in `workspace.json`; restored
+background tabs load when selected.
+
+Appearance offers Dark, Light, and Custom.
+- **Create palette file** writes `palette.css` in the profile directory. Edit
+  its `--gaze-*` hex colors, then choose **Custom** (or **Reload palette**).
+- The browser checks text contrast (WCAG 4.5:1) and applies the scheme to its
+  controls and built-in `gaze://` pages. External sites keep their own styles.
+- The UI bundles Font Awesome Free 7 icons, Noto Sans, and Fira Code; licenses
+  are in `crates/gaze-shell/assets/`.
+
+Site data lists the sites that keep something: capability store usage,
+remembered permissions, and live shard sessions. It also shows the verified
+cache. Web cookies and Web localStorage are not implemented, and JavaScript is
+not executed. Clearing the cache does not remove wallet exports or replay logs.
+
 ### The wallet: the agent driving the browser pays
 
 Every deploy the browser makes (a page's program, a session message) is
@@ -91,7 +143,7 @@ cargo test --workspace
 cargo build -p gaze-reach --target wasm32-unknown-unknown --profile reach
 ```
 
-Rust 1.91, edition 2024. CampF1R3 (`gaze/map-remainders`, rev `ea2d323`) and
+Rust 1.95, edition 2024. CampF1R3 (`gaze/map-remainders`, rev `ea2d323`) and
 Blitz (rev `674d7d2`) are git dependencies pinned by revision; the CampF1R3
 revision must be pushed to GitHub before a clean checkout can build. On Linux the
 window needs Vulkan (or Mesa's `lavapipe`, `mesa-vulkan-drivers`) and
@@ -124,7 +176,8 @@ Verify a download: `gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c SHA25
 `crates/gaze-reach` compiles the executive and the DOM protocol to one wasm
 module (no `wasm-bindgen`); `web/gaze-reach.js` is its host in any modern
 browser: the DOM backend over the real page, the frame loop, `net` (same
-origin, integrity checked inside the module), `store` (IndexedDB) and `nav`.
+origin, integrity checked inside the module), the per-origin `store`
+capability and `nav`.
 `shard` is a dead channel there, since a stock browser has no key custody a
 page cannot reach. `.github/workflows/reach.yml` publishes the module and the
 demo page to GitHub Pages. A page opts in with
@@ -180,19 +233,19 @@ Three defects in the existing code were found and fixed on the way:
 
 ## Tests
 
-67 tests in this workspace, all passing (CampF1R3 carries its own 181):
+140 tests in this workspace, all passing (CampF1R3 carries its own 181):
 
 | crate | tests | what they establish |
 | --- | --- | --- |
 | `gaze-exec` | 9 | the specification's lamp; replay with identical commit hashes; seeds; dead channels; confinement; timers; bounded runaway pages; a remainder listener survives extra event fields where an exact one goes silent |
 | `gaze-dom-core`, `gaze-graded`, `gaze-knf` | 16 | the protocol engine, the semirings, the container |
-| `gaze-dom-blitz` | 7 | Blitz and `MemDom` commit identical hashes frame by frame; a Blitz log replays identically on both, including a click on a never-named node; scoped queries cannot leak; `decide` prevents; `setHTML` |
+| `gaze-dom-blitz` | 8 | Blitz and `MemDom` commit identical hashes frame by frame; a Blitz log replays identically on both, including a click on a never-named node; scoped queries cannot leak; `decide` prevents; `setHTML` |
 | `gaze-broker` | 5 | policy, prompts, remembered grants, routes, revocation |
 | `gaze-net`, `gaze-store`, `gaze-blob` | 10 | redirects, credentials stripped, hashes; torn-tail recovery and quota; verified cache |
 | `gaze-shard` | 11 | the deploy preimage matches `prost`; signatures verify; against mock nodes: a lying observer is outvoted, a split is an error, a rollback is stale, nothing is deployed before consent, and the body the validator receives verifies |
 | `gaze-wallet` | 5 | addresses, wallet files and signature bytes identical to the Embers SDK's own output; the contract check refuses a changed recipient, amount or note, smuggled code, hidden fields, a high fee or another shard; wallets kept, exported, switched; transfers through an honest mock Embers, and nothing signed for a dishonest one |
 | `gaze-reach` | 3 | the reach tier commits exactly the native executive's hashes for the same page and clicks; integrity; `shard` is dead |
-| `gaze-shell` | 1 | settings |
+| `gaze-shell` | 73 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
 
 End-to-end, on the real binary:
 
@@ -212,6 +265,14 @@ End-to-end, on the real binary:
   (screenshots 06–08);
 - the `.deb` installs and runs, the AppImage runs, and the signed checksums
   verify (and fail on a changed byte).
+
+CI also runs `cargo clippy --workspace --all-targets --locked -- -D warnings`
+(the `lint` job in `.github/workflows/ci.yml`).
+
+`scripts/ui-snapshots.sh` drives the real binary under Xvfb through 60 scenes
+of the chrome. It writes the screenshots and their pixel checks (no page
+reflow, no stale colours, legible labels, exact bars) to
+`docs/screenshots/ui/{before,after}/`; see `docs/ui/README.md` §12.
 
 ## Deviations from the specification, for review
 

@@ -136,10 +136,10 @@ fn main() {
             println!("console[{lvl}]: {line}");
         }
         println!("{}", r.document);
-        if let (Some(path), Some(bytes)) = (log, r.log) {
-            if let Err(e) = std::fs::write(&path, bytes) {
-                eprintln!("could not write {path}: {e}");
-            }
+        if let (Some(path), Some(bytes)) = (log, r.log)
+            && let Err(e) = std::fs::write(&path, bytes)
+        {
+            eprintln!("could not write {path}: {e}");
         }
         let code = if matches!(r.stage, gaze_shell::tab::Stage::Failed(_)) { 1 } else { 0 };
         std::process::exit(code);

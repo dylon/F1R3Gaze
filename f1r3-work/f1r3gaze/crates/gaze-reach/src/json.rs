@@ -89,11 +89,15 @@ impl J {
         }
     }
 
-    pub fn to_string(&self) -> String {
-        let mut s = String::new();
-        self.write(&mut s);
-        s
-    }
+    // An inherent `to_string` shadowed `ToString` (clippy:
+    // inherent_to_string). `J` implements `Display` below instead, so
+    // `.to_string()` gives the same text through `ToString`.
+    //
+    // pub fn to_string(&self) -> String {
+    //     let mut s = String::new();
+    //     self.write(&mut s);
+    //     s
+    // }
 
     pub fn parse(s: &str) -> Result<J, String> {
         let b = s.as_bytes();
@@ -104,6 +108,15 @@ impl J {
             return Err(format!("trailing data at {i}"));
         }
         Ok(v)
+    }
+}
+
+/// The JSON text of a value, as `write` produces it.
+impl std::fmt::Display for J {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = String::new();
+        self.write(&mut s);
+        f.write_str(&s)
     }
 }
 

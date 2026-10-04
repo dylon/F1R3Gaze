@@ -229,10 +229,14 @@ pub struct TabExec<B: DomBackend> {
     stalled_frames: u64,
 }
 
+/// A dispatch as the replay log records it: the target's path from the
+/// root, the event type, its fields (a map), and whether it bubbles.
+type RecordedDispatch = (Vec<u32>, String, Norm, bool);
+
 struct Replaying {
     injections: BTreeMap<u64, Vec<Injection>>,
     /// Dispatches recorded after frame `n`, re-run at the start of `n + 1`.
-    dispatches: BTreeMap<u64, Vec<(Vec<u32>, String, Norm, bool)>>,
+    dispatches: BTreeMap<u64, Vec<RecordedDispatch>>,
 }
 
 fn derive(label: &[u8], seed: &[u8; 32], extra: &[u8]) -> [u8; 32] {
@@ -722,10 +726,10 @@ impl<B: DomBackend> TabExec<B> {
         let verb = a.first().and_then(|v| v.as_str()).unwrap_or("");
         match verb {
             "frames" => {
-                if let Some(ch) = a.get(1).and_then(as_name) {
-                    if !self.frame_subs.contains(&ch) {
-                        self.frame_subs.push(ch);
-                    }
+                if let Some(ch) = a.get(1).and_then(as_name)
+                    && !self.frame_subs.contains(&ch)
+                {
+                    self.frame_subs.push(ch);
                 }
             }
             "stop" => {

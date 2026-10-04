@@ -55,11 +55,14 @@ fn frames<B: DomBackend>(tab: &mut TabExec<B>, t: &mut u64, n: usize) {
     }
 }
 
+/// Finds the node a selector names in a tab.
+type Finder<B> = dyn Fn(&TabExec<B>, &str) -> Option<<B as DomBackend>::Node>;
+
 /// Drive a page with a script of clicks given as selectors.
 fn drive<B: DomBackend>(
     mut tab: TabExec<B>,
     clicks: &[&str],
-    find: &dyn Fn(&TabExec<B>, &str) -> Option<B::Node>,
+    find: &Finder<B>,
 ) -> (Vec<[u8; 32]>, String, TabExec<B>) {
     let mut t = 0;
     frames(&mut tab, &mut t, 6);

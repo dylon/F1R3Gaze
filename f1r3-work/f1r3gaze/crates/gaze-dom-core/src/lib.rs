@@ -89,6 +89,11 @@ pub fn write_target<N: Copy>(w: &Write<N>) -> N {
     }
 }
 
+/// What [`DomBackend::apply_batch`] returns: for each write in order, the
+/// nodes it created for `("ref", k)` markers, or `None` when its target had
+/// been detached by the time it came up.
+pub type BatchRefs<N> = Vec<Option<Vec<(String, N)>>>;
+
 /// What a document engine must offer. Implemented by `mem::MemDom` here, by
 /// `gaze-dom-blitz` over `blitz-dom`, and by `gaze-reach` over a host DOM.
 pub trait DomBackend {
@@ -115,7 +120,7 @@ pub trait DomBackend {
     /// target was detached by the time it came up (an earlier write in the
     /// same batch may detach it). Backends that can apply a batch under one
     /// mutation session (Blitz: one `DocumentMutator`, one flush) override this.
-    fn apply_batch(&mut self, ws: &[Write<Self::Node>]) -> Vec<Option<Vec<(String, Self::Node)>>> {
+    fn apply_batch(&mut self, ws: &[Write<Self::Node>]) -> BatchRefs<Self::Node> {
         ws.iter()
             .map(|w| if self.attached(write_target(w)) { Some(self.apply(w)) } else { None })
             .collect()
@@ -639,22 +644,22 @@ pub fn frag_of(n: &Norm) -> Option<Frag> {
         "el" => {
             let tag = t.get(1)?.as_str()?.to_string();
             let mut attrs = Vec::new();
-            if let Some(m) = t.get(2) {
-                if !m.is_nil() {
-                    for kv in m.as_coll(CollKind::Map)?.chunks(2) {
-                        attrs.push((kv[0].as_str()?.to_string(), kv[1].as_str()?.to_string()));
-                    }
+            if let Some(m) = t.get(2)
+                && !m.is_nil()
+            {
+                for kv in m.as_coll(CollKind::Map)?.chunks(2) {
+                    attrs.push((kv[0].as_str()?.to_string(), kv[1].as_str()?.to_string()));
                 }
             }
             let mut children = Vec::new();
             let mut reference = None;
             if let Some(l) = t.get(3) {
                 for c in l.as_coll(CollKind::List)? {
-                    if let Some(ct) = c.as_coll(CollKind::Tuple) {
-                        if ct.first().and_then(|x| x.as_str()) == Some("ref") {
-                            reference = Some(ct.get(1)?.as_str()?.to_string());
-                            continue;
-                        }
+                    if let Some(ct) = c.as_coll(CollKind::Tuple)
+                        && ct.first().and_then(|x| x.as_str()) == Some("ref")
+                    {
+                        reference = Some(ct.get(1)?.as_str()?.to_string());
+                        continue;
                     }
                     children.push(frag_of(c)?);
                 }

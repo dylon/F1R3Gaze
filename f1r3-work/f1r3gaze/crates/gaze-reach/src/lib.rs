@@ -219,7 +219,7 @@ impl<H: Host> DomBackend for HostDom<H> {
     fn apply(&mut self, w: &Write<u32>) -> Vec<(String, u32)> {
         self.apply_batch(std::slice::from_ref(w)).pop().flatten().unwrap_or_default()
     }
-    fn apply_batch(&mut self, ws: &[Write<u32>]) -> Vec<Option<Vec<(String, u32)>>> {
+    fn apply_batch(&mut self, ws: &[Write<u32>]) -> gaze_dom_core::BatchRefs<u32> {
         let r = self.q("apply", vec![("writes", J::Arr(ws.iter().map(write_j).collect()))]);
         let res = r.arr().map(|v| v.to_vec()).unwrap_or_default();
         (0..ws.len())
@@ -245,7 +245,7 @@ impl<H: Host> DomBackend for HostDom<H> {
 // Terms from the host.
 
 fn unhex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()

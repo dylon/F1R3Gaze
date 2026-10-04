@@ -27,6 +27,14 @@ pub struct ContentCache {
     max_bytes: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheStats {
+    pub entries: usize,
+    pub bytes: u64,
+    pub partial_entries: usize,
+    pub partial_bytes: u64,
+}
+
 impl ContentCache {
     pub fn new(dir: impl AsRef<Path>, max_bytes: u64) -> ContentCache {
         ContentCache {
@@ -38,6 +46,47 @@ impl ContentCache {
     fn path(&self, h: &Hash) -> PathBuf {
         let x = hex(h);
         self.dir.join(&x[..2]).join(x)
+    }
+
+    pub fn stats(&self) -> CacheStats {
+        let mut out = CacheStats::default();
+        let Ok(top) = std::fs::read_dir(&self.dir) else {
+            return out;
+        };
+        for sub in top.flatten() {
+            let Ok(files) = std::fs::read_dir(sub.path()) else {
+                continue;
+            };
+            for file in files.flatten() {
+                if let Ok(m) = file.metadata()
+                    && m.is_file()
+                {
+                    if file.path().extension().is_some_and(|x| x == "part") {
+                        out.partial_entries += 1;
+                        out.partial_bytes += m.len();
+                    } else {
+                        out.entries += 1;
+                        out.bytes += m.len();
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    pub fn clear(&self) -> Result<(), String> {
+        let Ok(top) = std::fs::read_dir(&self.dir) else {
+            return Ok(());
+        };
+        for sub in top.flatten() {
+            let files = std::fs::read_dir(sub.path()).map_err(|e| e.to_string())?;
+            for file in files.flatten() {
+                if file.file_type().map_err(|e| e.to_string())?.is_file() {
+                    std::fs::remove_file(file.path()).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn get(&self, h: &Hash) -> Option<Vec<u8>> {
@@ -69,12 +118,20 @@ impl ContentCache {
     /// Drop the oldest files until the cache fits.
     pub fn evict(&self) {
         let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
-        let Ok(top) = std::fs::read_dir(&self.dir) else { return };
+        let Ok(top) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
         for sub in top.flatten() {
-            let Ok(rd) = std::fs::read_dir(sub.path()) else { continue };
+            let Ok(rd) = std::fs::read_dir(sub.path()) else {
+                continue;
+            };
             for f in rd.flatten() {
                 if let Ok(m) = f.metadata() {
-                    files.push((m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len(), f.path()));
+                    files.push((
+                        m.modified().unwrap_or(std::time::UNIX_EPOCH),
+                        m.len(),
+                        f.path(),
+                    ));
                 }
             }
         }
@@ -102,7 +159,11 @@ pub struct MirrorSource {
 
 impl MirrorSource {
     pub fn new(base: &str, http: Http) -> MirrorSource {
-        let base = if base.ends_with('/') { base.to_string() } else { format!("{base}/") };
+        let base = if base.ends_with('/') {
+            base.to_string()
+        } else {
+            format!("{base}/")
+        };
         MirrorSource { base, http }
     }
 }
@@ -164,8 +225,10 @@ impl Blobs {
             return Ok(b);
         }
         let mut tried = Vec::new();
-        let mut chain: Vec<Arc<dyn BlobSource>> =
-            mirrors.iter().map(|m| Arc::new(MirrorSource::new(m, self.http.clone())) as Arc<dyn BlobSource>).collect();
+        let mut chain: Vec<Arc<dyn BlobSource>> = mirrors
+            .iter()
+            .map(|m| Arc::new(MirrorSource::new(m, self.http.clone())) as Arc<dyn BlobSource>)
+            .collect();
         if let Ok(v) = self.sources.read() {
             chain.extend(v.iter().cloned());
         }
@@ -203,7 +266,11 @@ mod tests {
             "honest"
         }
         fn get(&self, h: &Hash) -> Result<Option<Vec<u8>>, String> {
-            Ok(if digest(&self.0) == *h { Some(self.0.clone()) } else { None })
+            Ok(if digest(&self.0) == *h {
+                Some(self.0.clone())
+            } else {
+                None
+            })
         }
     }
 
@@ -214,7 +281,12 @@ mod tests {
         let blobs = Blobs::new(ContentCache::new(&dir, 1 << 20), Http::new());
         blobs.add_source(Arc::new(Liar));
         let h = digest(b"page");
-        assert!(blobs.get(&h, &[]).unwrap_err().contains("liar: wrong content"));
+        assert!(
+            blobs
+                .get(&h, &[])
+                .unwrap_err()
+                .contains("liar: wrong content")
+        );
         blobs.add_source(Arc::new(Honest(b"page".to_vec())));
         assert_eq!(blobs.get(&h, &[]).unwrap(), b"page");
         // Now from the cache, even with only liars around.
@@ -236,7 +308,11 @@ mod tests {
             let b = vec![i; 1000];
             c.put(&digest(&b), &b).unwrap();
         }
-        let n: usize = std::fs::read_dir(&dir).unwrap().flatten().map(|d| std::fs::read_dir(d.path()).unwrap().count()).sum();
+        let n: usize = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|d| std::fs::read_dir(d.path()).unwrap().count())
+            .sum();
         assert!(n <= 2, "{n}");
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -180,7 +180,7 @@ fn embers(evil: bool) -> Mock {
                 let h = k1ndl1ng_norm::hash::blake2b_256(&contract).0;
                 assert!(vk.verify_prehash(&h, &sig).is_ok(), "bad signature");
                 assert_eq!(body["token"], "tok");
-                json!({"deploy_id": gaze_net::hex(&sig.to_der().as_bytes().to_vec())})
+                json!({"deploy_id": gaze_net::hex(sig.to_der().as_bytes())})
             } else {
                 json!({"message": "no route"})
             };

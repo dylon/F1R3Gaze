@@ -1,0 +1,57 @@
+@startwbs chrome-regions
+' The chrome document's regions: which element holds what, and how each
+' region is updated. Colours: blue = navigation, orange = questions from
+' pages, green = the sidebar, yellow = the page area, grey = status,
+' white = markup inside a region. "~" escapes a leading "#", which Creole
+' would otherwise read as a numbered list.
+<style>
+wbsDiagram {
+  FontName "Noto Sans"
+  FontSize 12
+  LineColor #52687A
+  node {
+    RoundCorner 10
+    LineColor #52687A
+    FontColor #182734
+    Padding 6
+  }
+}
+</style>
+title The chrome document: regions, their ids, and how each is updated
+*[#F5F7FA] <b>body</b>\nflex column
+**[#DDEBF7] <b>~#tabs</b> · 38 px
+***[#FFFFFF] <b>~#tablist</b> ← set_html\n(tab_strip_html)
+***[#FFFFFF] <b>~#newtab</b> · static\noutside the list: never clipped
+**[#DDEBF7] <b>~#toolbar</b> · 46 px\nstatic TOOLBAR_HTML
+***[#FFFFFF] ~#sidetoggle · ~#back · ~#fwd · ~#reload\n← sync_attr (aria-pressed, disabled)
+***[#FFFFFF] <b>~#urlwrap</b> ← sync_attr (class focus)
+****[#FFFFFF] ~#scheme ← set_html\n(scheme_badge_html)
+****[#FFFFFF] ~#url (input)\n~#url-ph ghost hint ← sync_attr
+****[#FCE4D6] ~#suggestions ← set_html\n(suggestions_html) · z-index 30
+***[#FFFFFF] ~#findbtn
+**[#FCE4D6] <b>~#prompt</b> ← set_html\n(prompt_bar_html)\nempty unless the page asks
+**[#FFFFFF] <b>~#workspace</b>\nflex row
+***[#E2EFDA] <b>~#rail</b> · 42 px\nstatic RAIL_HTML\n.rail-btn.on ← sync_attr
+***[#E2EFDA] <b>~#sidebar</b> · 300 px\ndisplay:none when hidden
+****[#FFFFFF] ~#sidehead ← set_html\n(title, count, Hide)
+****[#FFFFFF] ~#sidecontrols\nconstant per panel
+****[#FFFFFF] ~#panel ← set_html\none builder per panel\n(hidden for the Wallet)
+****[#FFFFFF] ~#wallet · static form\n~#walletmsg ~#walletcard\n~#walletlist ← set_html
+***[#FFF2CC] <b>~#main</b>\nposition: relative
+****[#FFFFFF] page views (.view)\none RhoDocument per tab
+****[#FFF9E5] ~#findoverlay ← set_html\nhit highlights · z-index 2
+****[#FFF2CC] ~#findbar · static FIND_BOX_HTML\nfloating · z-index 6 · .off
+**[#EDEDED] <b>~#status</b> ← set_html\n(status_html) · 24 px\nstage · reason or notice · flash
+legend right
+  <b>Update strategies</b>
+  ← set_html: rebuilt by a pure builder; an unchanged
+     string is skipped (the render cache).
+  ← sync_attr: one attribute on a stable id, compared with
+     the live DOM first, so fields keep their text and focus.
+  static: built once by shell_html, never replaced.
+  ====
+  <color:#9DC3E6>██</color> navigation   <color:#F4B183>██</color> page questions
+  <color:#A9D18E>██</color> sidebar      <color:#FFD966>██</color> page area
+  <color:#BFBFBF>██</color> status
+endlegend
+@endwbs

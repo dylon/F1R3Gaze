@@ -10,7 +10,9 @@ pub mod document;
 pub mod events;
 
 pub use backend::{BNode, BlitzDom, scope_selector};
-pub use document::{Delivery, PageState, RhoDocument, ScriptRef, Services, WakeHandle};
+pub use document::{
+    Delivery, FindHit, FindRect, PageState, Pacer, RhoDocument, ScriptRef, Services, WakeHandle,
+};
 pub use events::{RhoEventHandler, event_fields};
 
 use blitz_dom::{BaseDocument, DEFAULT_CSS, DocumentConfig};

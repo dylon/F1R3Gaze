@@ -1,0 +1,45 @@
+@startuml render-order
+' One render pass. Every step is idempotent: it compares with the live DOM
+' or with the last HTML it set, and reports whether anything changed.
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #DDEBF7
+  BorderColor #52687A
+  ArrowColor #52687A
+  FontColor #182734
+}
+title render(): the order of one pass and why
+
+start
+:Set the fitter's scale from the viewport,
+because widths are quantized to device pixels; <<#EDEDED>>
+:Drop the status message if it has expired; <<#EDEDED>>
+:<b>render_visibility</b>
+Show or hide the sidebar. Hide the panel for the Wallet
+<i>before</i> any panel HTML is set, so no gap opens above the form.
+Show the wallet form and the find box (.off) as needed; <<#E2EFDA>>
+:<b>render_toolbar_state</b>
+Rail .on, the sidebar toggle pressed, Back and Forward disabled; <<#DDEBF7>>
+:<b>render_address</b>
+Restore the page address unless the user is typing.
+The focus ring, and the ghost hints from the raw field text;
+if (a field asked to be selected by Ctrl+L, Esc or Ctrl+F\nand it still has the focus?) then (yes)
+  :select its whole text, caret at the start; <<#FFF2CC>>
+endif
+:<b>render_tab_strip</b>
+strip_layout, then the fitted titles; <<#DDEBF7>>
+:<b>render_suggestions</b>
+The badge, identity or magnifier, and the dropdown; <<#DDEBF7>>
+:<b>render_prompt</b>
+The active tab's first question, with "1 of N"; <<#FCE4D6>>
+:<b>render_sidebar</b>
+Header and count, constant controls, chips, the panel; <<#E2EFDA>>
+:<b>render_find</b>
+The box's count and ghost hint, and the hit overlay; <<#FFF2CC>>
+:<b>render_status</b>
+Stage chip, reason or notice, budget, message; <<#EDEDED>>
+:Window title: the page title, then " — F1R3Gaze"; <<#EDEDED>>
+stop
+@enduml
