@@ -644,6 +644,14 @@ After: [`47-flash-shown`](../screenshots/ui/after/47-flash-shown.png),
 - **The sidebar header** shows the panel's title, a count, and Hide.
 - **The controls bar** under the header is constant per panel. Switching panels
   or reopening the sidebar starts with an empty search (ledger L5 and S9).
+- **At startup** every window opens with the sidebar collapsed, whatever the
+  last window left. The panel is still restored from `workspace.json`, so
+  Ctrl+B or the toolbar's sidebar button reopens the panel last shown, and a
+  rail button opens its own. `restore_sidebar = true` in `settings.conf`
+  reopens the sidebar as the last window left it. The snapshot harness sets
+  it, because every scene seeds its own sidebar
+  (`ChromeDocument::new`; tests `the_sidebar_starts_collapsed`,
+  `restore_sidebar_reopens_it`).
 
 After: [`45-rail-hover`](../screenshots/ui/after/45-rail-hover.png),
 [`19-collapsed-dark`](../screenshots/ui/after/19-collapsed-dark.png),

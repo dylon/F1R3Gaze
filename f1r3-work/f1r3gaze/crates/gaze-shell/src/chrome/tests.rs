@@ -70,6 +70,8 @@ fn lay_out_chrome(chrome: &mut ChromeDocument) {
 
 /// A chrome on `page` with the given workspace state saved first.
 fn chrome_with(profile: &ScratchProfile, state: UiState, url: &str) -> ChromeDocument {
+    // The seeded state is restored as saved, the sidebar included.
+    profile.restore_sidebar();
     state.save(profile.path()).expect("save the workspace");
     ChromeDocument::new(Engine::new(profile.path().to_path_buf()), url)
 }
@@ -987,6 +989,7 @@ fn the_tab_menu_toggles_and_closes_after_an_action() {
 #[test]
 fn a_reviewed_transfer_is_refused_when_the_paying_wallet_changed() {
     let profile = ScratchProfile::new("payer");
+    profile.restore_sidebar();
     let url = profile.page("notes.html", NOTES);
     let engine = Engine::new(profile.path().to_path_buf());
     let first = engine
@@ -1210,6 +1213,7 @@ fn find_input_follows_real_key_events() {
 #[test]
 fn theme_switch_leaves_no_stale_label_colours() {
     let profile = ScratchProfile::new("theme-stale");
+    profile.restore_sidebar();
     let url = profile.page("notes.html", NOTES);
     let engine = Engine::new(profile.path().to_path_buf());
     // A fixed test key that is never funded, so the wallet panel lists a
@@ -1942,4 +1946,59 @@ fn built_in_buttons_show_the_hand() {
         "a hand over the lamp's label; the window was asked for {:?}",
         window.cursors()
     );
+}
+
+// ── Sidebar at startup ──────────────────────────────────────────────────
+
+fn sidebar_hidden(chrome: &ChromeDocument) -> bool {
+    let sidebar = chrome.id("sidebar").expect("chrome has #sidebar");
+    chrome
+        .inner
+        .get_node(sidebar)
+        .and_then(|node| node.attr(LocalName::from("class")))
+        .is_some_and(|class| class.split_whitespace().any(|c| c == "hidden"))
+}
+
+/// A window starts with the sidebar collapsed even when the last one closed
+/// with it open, and Ctrl+B then reopens the panel last shown.
+#[test]
+fn the_sidebar_starts_collapsed() {
+    let profile = ScratchProfile::new("sidebar-start");
+    let url = profile.page("notes.html", NOTES);
+    UiState {
+        sidebar_open: true,
+        panel: "appearance".into(),
+        ..UiState::default()
+    }
+    .save(profile.path())
+    .expect("save the workspace");
+    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    attach(&mut chrome, 0);
+    chrome.poll(None);
+    assert!(!chrome.ui.sidebar_open && sidebar_hidden(&chrome), "collapsed at start");
+    chrome.act(Action::SidebarToggle);
+    chrome.poll(None);
+    assert!(chrome.ui.sidebar_open && !sidebar_hidden(&chrome), "Ctrl+B opens it");
+    assert_eq!(chrome.panel, "appearance", "on the panel last shown");
+}
+
+/// With `restore_sidebar = true`, a window reopens the sidebar as the last
+/// one left it.
+#[test]
+fn restore_sidebar_reopens_it() {
+    let profile = ScratchProfile::new("sidebar-restore");
+    profile.restore_sidebar();
+    let url = profile.page("notes.html", NOTES);
+    UiState {
+        sidebar_open: true,
+        panel: "appearance".into(),
+        ..UiState::default()
+    }
+    .save(profile.path())
+    .expect("save the workspace");
+    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    attach(&mut chrome, 0);
+    chrome.poll(None);
+    assert!(chrome.ui.sidebar_open && !sidebar_hidden(&chrome), "open as it was left");
+    assert_eq!(chrome.panel, "appearance");
 }

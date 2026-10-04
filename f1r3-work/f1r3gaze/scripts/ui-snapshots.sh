@@ -515,14 +515,16 @@ std_visits() {
 }
 
 # new_profile NAME → path. Seeds settings.conf (no shard observers, so no
-# event thread dials localhost; Embers only when asked).
+# event thread dials localhost; Embers only when asked). Scenes seed the
+# sidebar's state in workspace.json, so the window restores it as seeded
+# (`restore_sidebar`; by default every window starts collapsed).
 PROFILE=""
 new_profile() {
     PROFILE="$WORK/profiles/$1"
     guard_profile "$PROFILE"
     rm -rf -- "$PROFILE"
     mkdir -p -- "$PROFILE"
-    printf 'observers =\n' >"$PROFILE/settings.conf"
+    printf 'observers =\nrestore_sidebar = true\n' >"$PROFILE/settings.conf"
 }
 with_embers() { printf 'embers_api = %s\n' "$EMBERS_URL" >>"$PROFILE/settings.conf"; }
 with_wallet() {

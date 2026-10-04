@@ -2293,7 +2293,13 @@ fn page_is_laid_out(page: &RhoDocument) -> bool {
 
 impl ChromeDocument {
     pub fn new(eng: Rc<Engine>, url: &str) -> ChromeDocument {
-        let ui = UiState::load(&eng.dir);
+        let mut ui = UiState::load(&eng.dir);
+        // Every window starts with the sidebar collapsed, unless the profile
+        // asks to reopen it as it was left (`restore_sidebar`). The panel is
+        // still restored, so Ctrl+B reopens the one last shown.
+        if !eng.settings.restore_sidebar {
+            ui.sidebar_open = false;
+        }
         let panel = ui.panel.clone();
         let custom = theme::custom_palette(&eng.dir).ok();
         let css = chrome_css(&ui.theme, custom.as_ref());

@@ -34,6 +34,10 @@ pub struct Settings {
     pub embers_api: Option<String>,
     /// Upper bound on a transfer contract's `phlo_price × phlo_limit`.
     pub max_fee: i64,
+    /// Reopen the sidebar at start when it was open as the last window
+    /// closed. By default every window starts with it collapsed; the panel
+    /// last shown is remembered either way (Ctrl+B reopens it).
+    pub restore_sidebar: bool,
 }
 
 impl Default for Settings {
@@ -47,6 +51,7 @@ impl Default for Settings {
             https_only: false,
             embers_api: None,
             max_fee: 10_000_000,
+            restore_sidebar: false,
         }
     }
 }
@@ -62,6 +67,8 @@ pub const TEMPLATE: &str = "# F1R3Gaze settings. Lists are comma-separated.
 # Wallet balances, history and transfers (the Embers service F1R3Sky uses):
 # embers_api = https://embers.example
 # max_fee = 10000000
+# Reopen the sidebar at start if it was open when the window closed:
+# restore_sidebar = false
 ";
 
 impl Settings {
@@ -88,6 +95,7 @@ impl Settings {
                 "https_only" => s.https_only = v == "true",
                 "embers_api" => s.embers_api = Some(v.to_string()).filter(|v| !v.is_empty()),
                 "max_fee" => s.max_fee = v.parse().unwrap_or(s.max_fee),
+                "restore_sidebar" => s.restore_sidebar = v == "true",
                 _ => {}
             }
         }
@@ -137,5 +145,8 @@ mod tests {
         assert_eq!(s.shard.quorum, 3);
         assert_eq!(s.home, "gaze://newtab");
         assert!(s.https_only);
+        assert!(!s.restore_sidebar, "the sidebar starts collapsed by default");
+        assert!(Settings::parse("restore_sidebar = true").restore_sidebar);
+        assert!(!Settings::parse("restore_sidebar = no").restore_sidebar);
     }
 }

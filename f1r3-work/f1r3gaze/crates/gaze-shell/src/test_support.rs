@@ -23,6 +23,16 @@ impl ScratchProfile {
         &self.0
     }
 
+    /// Ask windows on this profile to reopen the sidebar as the workspace
+    /// left it (`restore_sidebar`), for tests that start on a panel. Call it
+    /// before the profile's `Engine` is created, which reads the settings.
+    pub fn restore_sidebar(&self) {
+        let path = self.0.join("settings.conf");
+        let mut settings = std::fs::read_to_string(&path).expect("read settings.conf");
+        settings.push_str("restore_sidebar = true\n");
+        std::fs::write(&path, settings).expect("write settings.conf");
+    }
+
     /// Write a static page (no f1r3lang) and return its `file://` URL.
     pub fn page(&self, file: &str, body: &str) -> String {
         self.document(

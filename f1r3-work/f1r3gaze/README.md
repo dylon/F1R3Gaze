@@ -57,8 +57,9 @@ built-in `gaze://newtab` and `gaze://about`.
 Settings live in `settings.conf` in the profile directory
 (`~/Library/Application Support/F1R3Gaze`, `%APPDATA%\F1R3Gaze`,
 `$XDG_DATA_HOME/f1r3gaze`): shard observers, the validator, the shard id,
-the quorum, blob mirrors, `https_only`, and for the wallet `embers_api` and
-`max_fee`.
+the quorum, blob mirrors, `https_only`, for the wallet `embers_api` and
+`max_fee`, and `restore_sidebar` for a window to reopen the sidebar as the
+last one left it.
 
 ### Browser controls
 
@@ -76,7 +77,8 @@ The design of every control is in [`docs/ui/README.md`](docs/ui/README.md).
     text highlighted. ↓/↑ choose, Enter opens, and Esc puts the address back.
 - **Rail.** Opens Tabs, History, Site data, Permissions, Wallet, Console, and
   Appearance. Each button names itself on hover; clicking the open panel's
-  button hides the sidebar.
+  button hides the sidebar. A window opens with the sidebar hidden, and
+  `Ctrl+B` brings back the panel last shown.
 - **Tabs panel.**
   - Search covers titles and addresses, including small typing errors (through
     the native Rust `liblevenshtein` library), and shows the text that matched.
@@ -233,7 +235,7 @@ Three defects in the existing code were found and fixed on the way:
 
 ## Tests
 
-140 tests in this workspace, all passing (CampF1R3 carries its own 181):
+156 tests in this workspace, all passing (CampF1R3 carries its own 181):
 
 | crate | tests | what they establish |
 | --- | --- | --- |
@@ -245,7 +247,7 @@ Three defects in the existing code were found and fixed on the way:
 | `gaze-shard` | 11 | the deploy preimage matches `prost`; signatures verify; against mock nodes: a lying observer is outvoted, a split is an error, a rollback is stale, nothing is deployed before consent, and the body the validator receives verifies |
 | `gaze-wallet` | 5 | addresses, wallet files and signature bytes identical to the Embers SDK's own output; the contract check refuses a changed recipient, amount or note, smuggled code, hidden fields, a high fee or another shard; wallets kept, exported, switched; transfers through an honest mock Embers, and nothing signed for a dishonest one |
 | `gaze-reach` | 3 | the reach tier commits exactly the native executive's hashes for the same page and clicks; integrity; `shard` is dead |
-| `gaze-shell` | 87 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
+| `gaze-shell` | 89 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, the sidebar at startup, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
 
 End-to-end, on the real binary:
 
