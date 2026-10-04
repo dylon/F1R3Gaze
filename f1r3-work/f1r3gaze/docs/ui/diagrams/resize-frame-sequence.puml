@@ -1,0 +1,67 @@
+@startuml resize-frame-sequence
+' One step of a window resized by its frame (ledger L9). Colours: orange = the
+' compositor, red = the window (winit and blitz-shell), blue = the chrome's own
+' code, green = Blitz's layout of the chrome and its pages, yellow = the
+' cursor arbiter (crate::cursor), grey = the renderer (crate::renderer, Vello).
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #52687A
+  LifeLineBorderColor #52687A
+  ParticipantBorderColor #52687A
+  GroupBorderColor #52687A
+  GroupBackgroundColor #F5F7FA
+}
+title A window resized by its frame: one size, one frame
+
+participant "Compositor\n(KWin, AppKit, X server)" as comp #FCE4D6
+participant "Window\n(winit, blitz-shell)" as window #F8CBAD
+participant "ChromeApplication" as app #DDEBF7
+participant "ChromeDocument" as chrome #DDEBF7
+participant "Blitz resolve\n(chrome, then pages)" as blitz #E2EFDA
+participant "PageShell\n+ CursorArbiter" as arbiter #FFF2CC
+participant "CoalescingRenderer\n+ Vello" as render #EDEDED
+
+== The pointer takes the window's frame ==
+comp -> window : the mouse leaves the surface
+window -> app : PointerLeft (mouse)
+app -> window : forward (blitz-shell ignores it)
+app -> chrome : pointer_left()
+chrome -> arbiter : pointer_left(): clear_hover() on the chrome\nand on the page under the pointer (H8)
+note right of arbiter
+  no position is left to hover:
+  later layouts hover nothing
+end note
+
+== Each new size ==
+comp -> window : new size (Wayland configure,\nAppKit live-resize step, ConfigureNotify)
+window -> app : SurfaceResized
+app -> window : forward: with_viewport → set_size,\nrequest_redraw, Poll through the proxy
+window -> render : set_size(w, h): kept as pending
+app -> chrome : View::poll() at once (H7)
+chrome -> chrome : render(): the tab strip and the status bar\nare fitted to the new width
+app -> chrome : if that changed the chrome: lay_out_now()\n(input before the frame must not meet replaced nodes)
+window -> app : RedrawRequested
+app -> chrome : begin_paint(): note each page's hovered node
+app -> window : forward: View::redraw
+window -> blitz : resolve
+blitz -> blitz : lay out the chrome
+blitz -> arbiter : the page's new viewport asks for a redraw\n(queue_device_changes): set aside (H9)
+blitz -> blitz : lay out the page at once, then refresh_hover
+window -> render : paint_scene, render
+render -> render : apply the pending size (one reconfigure)\nrender, present, wait for the GPU
+render -> comp : commit: the buffer of the new size
+app -> chrome : end_paint()
+chrome -> arbiter : end_paint(): a page asked meanwhile
+chrome -> chrome : did a page's hovered node change? no:\nthe frame answered it, so no other frame
+window -> app : proxy_wake_up → Poll
+app -> chrome : poll(): nothing changed, no frame
+
+group Before L9 (90ad693): two frames for every size
+  window -> render : frame A: the chrome still fitted to the old width
+  arbiter -> arbiter : repaint: the page's viewport request,\nand its hover at the pointer's last position
+  window -> chrome : the proxy's Poll: fit to the new width, repaint
+  window -> render : frame B: no layout to do, yet a full render and present
+end
+@enduml

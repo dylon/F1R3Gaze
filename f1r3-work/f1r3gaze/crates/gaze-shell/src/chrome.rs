@@ -18,7 +18,10 @@
 //! * Labels are elements, never bare text in a flex box: Blitz never
 //!   restyles the anonymous box such text gets (`docs/ui/ledger.md`, L2).
 
+use crate::application::ChromeApplication;
 use crate::cursor::CursorArbiter;
+use crate::frame_stats;
+use crate::renderer::CoalescingRenderer;
 use crate::display::{self, LogLevel, Recency, SchemeKind, Tone};
 use crate::engine::{Engine, NavRequest, escape};
 use crate::tab::{Stage, Tab};
@@ -2241,6 +2244,9 @@ pub struct ChromeDocument {
     /// Decides the window's cursor and the pointer's hover inside pages
     /// (`crate::cursor`; docs/ui/ledger.md, L8).
     cursor: CursorArbiter,
+    /// Each tab's page's hovered node when the window began painting its
+    /// frame, in tab order (`begin_paint`; ledger L9, H9). Kept to be reused.
+    paint_hovers: Vec<Option<NodeId>>,
     wallet: Arc<Mutex<WalletView>>,
     ui: UiState,
     parents: BTreeMap<u64, Option<u64>>,
@@ -2326,6 +2332,7 @@ impl ChromeDocument {
             next_id: 0,
             pacer: Pacer::new(wake.clone()),
             cursor: CursorArbiter::new(wake.clone()),
+            paint_hovers: Vec::new(),
             wake,
             panel,
             remember: false,
@@ -4060,6 +4067,7 @@ impl ChromeDocument {
     }
 
     fn render(&mut self) -> bool {
+        let _span = frame_stats::RENDER.span();
         let scale = self.inner.viewport().scale();
         self.fitter.set_scale(scale);
         if self.flash.as_ref().is_some_and(|f| f.until <= Instant::now()) {
@@ -4152,6 +4160,66 @@ impl ChromeDocument {
     /// Bring the cursor and the pages' hover up to date (ledger L8).
     /// Returns whether the window must paint: a page's hover changed, so its
     /// `:hover` styles changed, or a page asked to be painted.
+    /// The mouse left the window: nothing in it is hovered any more, until
+    /// the pointer comes back (ledger L9, H8). blitz-shell forwards no event
+    /// for this, so the window's application handler calls it.
+    pub(crate) fn pointer_left(&mut self) {
+        self.cursor.install(&mut self.inner);
+        if self.cursor.pointer_left(&mut self.inner) {
+            self.inner.shell_provider.request_redraw();
+        }
+    }
+
+    /// The window is about to paint a frame (ledger L9, H9). Each page's
+    /// hovered node is noted, for [`Self::end_paint`].
+    pub(crate) fn begin_paint(&mut self) {
+        self.cursor.begin_paint();
+        self.paint_hovers.clear();
+        self.paint_hovers.extend(
+            self.tabs
+                .iter()
+                .map(|&(_, view)| page_hover_node(&self.inner, view)),
+        );
+    }
+
+    /// The window has painted a frame. A page that asked to be painted
+    /// meanwhile gets one more frame only if its hovered node changed during
+    /// the frame. That change came from Blitz's `refresh_hover`, which runs
+    /// after the page's layout and leaves its restyle to the next pass. The
+    /// other requests a frame brings are answered by the frame itself. Above
+    /// all, a page whose viewport changed with the window asks
+    /// (`queue_device_changes`), but Blitz resolves each sub-document right
+    /// after setting its viewport, so this frame laid the page out and painted
+    /// it.
+    pub(crate) fn end_paint(&mut self) {
+        if self.cursor.end_paint() && self.a_page_hover_changed_in_paint() {
+            self.inner.shell_provider.request_redraw();
+        }
+    }
+
+    /// Lay the window out now, as a frame would, without painting (ledger L9).
+    /// The window's application handler calls this after a poll of a resized
+    /// window changed the chrome. Blitz hit-tests with the paint tree of the
+    /// last layout, which still holds the nodes the poll replaced
+    /// (`StackingContext::hoisted_content_bbox` indexes them and panics), and
+    /// an input event can arrive before the frame. This is bracketed like a
+    /// frame, so a page's request for its new viewport is answered by the
+    /// frame that follows.
+    pub(crate) fn lay_out_now(&mut self, animation_time: f64) {
+        self.begin_paint();
+        self.inner.resolve(animation_time);
+        self.end_paint();
+    }
+
+    /// Whether a page's hovered node differs from the one noted when the
+    /// window began painting.
+    fn a_page_hover_changed_in_paint(&self) -> bool {
+        self.tabs
+            .iter()
+            .zip(&self.paint_hovers)
+            .any(|(&(_, view), &before)| page_hover_node(&self.inner, view) != before)
+    }
+
     fn settle_pointer(&mut self) -> bool {
         let mut repaint = self.cursor.take_repaint();
         if self.cursor.needs_sync() {
@@ -4159,6 +4227,12 @@ impl ChromeDocument {
         }
         repaint
     }
+}
+
+/// The node hovered in the page `view` hosts, if it hosts one.
+fn page_hover_node(doc: &BaseDocument, view: NodeId) -> Option<NodeId> {
+    doc.subdoc(view)
+        .and_then(|page| page.inner().get_hover_node_id())
 }
 
 fn rho_mut(doc: &mut BaseDocument, view: NodeId) -> Option<&mut RhoDocument> {
@@ -4176,6 +4250,7 @@ impl Document for ChromeDocument {
     }
 
     fn handle_ui_event(&mut self, event: UiEvent) {
+        let _span = frame_stats::EVENT.span();
         // Ledger L8: the window's cursor is decided once the page under the
         // pointer has seen the event, not by Blitz before it is forwarded.
         self.cursor.install(&mut self.inner);
@@ -4187,6 +4262,7 @@ impl Document for ChromeDocument {
     }
 
     fn poll(&mut self, cx: Option<TaskContext>) -> bool {
+        let _span = frame_stats::POLL.span();
         if let Some(cx) = &cx {
             self.wake.set_waker(cx.waker());
         }
@@ -4301,9 +4377,13 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
     let chrome = ChromeDocument::new(eng, url);
     app.add_window(WindowConfig::new(
         Box::new(chrome),
-        VelloWindowRenderer::new(),
+        // Resizes are coalesced into the next frame (ledger L9).
+        CoalescingRenderer::new(VelloWindowRenderer::new()),
     ));
-    event_loop.run_app(app).map_err(|e| e.to_string())
+    // A resize is painted once, with the chrome already fitted to it (L9, H7).
+    event_loop
+        .run_app(ChromeApplication::new(app))
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

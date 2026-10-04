@@ -36,8 +36,19 @@
 //!   - It tells a page where the pointer is when the page comes under a
 //!     pointer that did not move, for example a page loading or a tab
 //!     switching under a resting pointer.
+//!
+//! Two duties came with window resizing (ledger L9), both called by the
+//! window's application handler (`crate::application`):
+//!
+//! * [`CursorArbiter::pointer_left`] ends all hover when the mouse leaves the
+//!   window, which blitz-shell does not report (H8).
+//! * Between [`CursorArbiter::begin_paint`] and [`CursorArbiter::end_paint`],
+//!   a page's redraw request made on the painting thread is set aside. The
+//!   frame being painted answers it (H9).
 
+use crate::frame_stats;
 use blitz_dom::{BaseDocument, NodeId, Point};
+use std::cell::Cell;
 use blitz_traits::events::UiEvent;
 use blitz_traits::shell::{ClipboardError, FileDialogFilter, ShellProvider};
 use cursor_icon::CursorIcon;
@@ -54,7 +65,20 @@ struct CursorRouter {
     dirty: AtomicBool,
     /// A page asked to be painted.
     repaint: AtomicBool,
+    /// A page asked to be painted from inside the window's frame
+    /// ([`PAINTING`]).
+    repaint_in_paint: AtomicBool,
     wake: WakeHandle,
+}
+
+thread_local! {
+    /// Whether this thread is painting a window's frame, between
+    /// [`CursorArbiter::begin_paint`] and [`CursorArbiter::end_paint`]
+    /// (ledger L9, H9). A page's request made then comes from the frame's own
+    /// layout. A request from any other thread, such as a resource that
+    /// finished loading (Blitz's `ResourceHandler::respond`), is never set
+    /// aside: it must wake the window.
+    static PAINTING: Cell<bool> = const { Cell::new(false) };
 }
 
 impl CursorRouter {
@@ -82,12 +106,14 @@ pub struct WindowShell {
 impl WindowShell {
     /// The only way a cursor reaches the window.
     fn apply(&self, icon: Option<CursorIcon>) {
+        frame_stats::CURSOR_SET.count();
         self.window.set_cursor(icon);
     }
 }
 
 impl ShellProvider for WindowShell {
     fn request_redraw(&self) {
+        frame_stats::CHROME_REDRAW.count();
         self.window.request_redraw();
     }
     /// The chrome's hover changed. Blitz computed `icon` before the page
@@ -143,9 +169,15 @@ pub struct PageShell {
 
 impl ShellProvider for PageShell {
     /// A page's hover restyles (and its scrolls and loaded images) must be
-    /// painted, and only the window can redraw.
+    /// painted, and only the window can redraw. A request made inside the
+    /// window's frame, on the thread painting it, is set aside and weighed
+    /// when the frame is done ([`CursorArbiter::end_paint`]).
     fn request_redraw(&self) {
-        self.router.raise(&self.router.repaint);
+        frame_stats::PAGE_REDRAW.count();
+        match PAINTING.with(Cell::get) {
+            true => self.router.repaint_in_paint.store(true, Ordering::Release),
+            false => self.router.raise(&self.router.repaint),
+        }
     }
     /// The page's hover changed. Its cursor matters only while the page is
     /// under the pointer, and the arbiter checks that.
@@ -175,6 +207,7 @@ impl CursorArbiter {
         let router = Arc::new(CursorRouter {
             dirty: AtomicBool::new(false),
             repaint: AtomicBool::new(false),
+            repaint_in_paint: AtomicBool::new(false),
             wake,
         });
         CursorArbiter {
@@ -238,6 +271,20 @@ impl CursorArbiter {
         self.router.repaint.swap(false, Ordering::AcqRel)
     }
 
+    /// The window starts painting a frame on this thread (ledger L9, H9).
+    /// Until [`Self::end_paint`], a page's redraw request made on this thread
+    /// is set aside: the frame lays out and paints the pages with the chrome.
+    pub fn begin_paint(&self) {
+        PAINTING.with(|painting| painting.set(true));
+    }
+
+    /// The window has painted its frame. Returns whether a page asked to be
+    /// painted from inside it.
+    pub fn end_paint(&self) -> bool {
+        PAINTING.with(|painting| painting.set(false));
+        self.router.repaint_in_paint.swap(false, Ordering::AcqRel)
+    }
+
     /// Bring the pages' hover and the window's cursor up to date. This runs
     /// after the chrome, and any page under the pointer, have handled the
     /// event. Returns whether a page's hover changed, in which case its
@@ -299,6 +346,28 @@ impl CursorArbiter {
         if self.hovered == Some(host) {
             self.hovered = None;
         }
+    }
+
+    /// The mouse left the window (ledger L9, H8). blitz-shell forwards no
+    /// event for that, so Blitz goes on hovering wherever the pointer was
+    /// last seen, and every layout re-resolves that hover (`refresh_hover`).
+    /// While the window is resized by its frame, content keeps sliding under
+    /// that old spot, and each change of hover asks for one more frame.
+    ///
+    /// This ends the hover of the chrome and of the page that was under the
+    /// pointer, with Blitz's `clear_hover` (what Blitz does when a finger
+    /// lifts), and forgets where the pointer was. The next pointer event
+    /// hovers again. Returns whether a hover changed.
+    pub fn pointer_left(&mut self, doc: &mut BaseDocument) -> bool {
+        let mut changed = false;
+        if let Some(host) = self.hovered.take()
+            && let Some(page) = doc.subdoc_mut(host)
+        {
+            changed |= page.inner_mut().clear_hover();
+        }
+        changed |= doc.clear_hover();
+        self.pointer = None;
+        changed
     }
 }
 
@@ -475,6 +544,7 @@ mod tests {
         let router = Arc::new(CursorRouter {
             dirty: AtomicBool::new(false),
             repaint: AtomicBool::new(false),
+            repaint_in_paint: AtomicBool::new(false),
             wake: WakeHandle::default(),
         });
         let shell = WindowShell {
@@ -544,5 +614,34 @@ mod tests {
         assert!(arbiter.needs_sync(), "a hover change is reported");
         assert!(arbiter.take_repaint(), "a redraw request is reported");
         assert!(!arbiter.take_repaint(), "and taken once");
+    }
+
+    /// L9/H9: a page's redraw request made while the window paints is set
+    /// aside for `end_paint`; outside a paint it is reported as before.
+    #[test]
+    fn page_requests_during_a_paint_are_set_aside() {
+        let arbiter = CursorArbiter::new(WakeHandle::default());
+        let page = arbiter.page_shell();
+        arbiter.begin_paint();
+        page.request_redraw();
+        assert!(!arbiter.take_repaint(), "not reported as a repaint");
+        assert!(arbiter.end_paint(), "but returned by end_paint");
+        assert!(!arbiter.end_paint(), "once");
+        page.request_redraw();
+        assert!(arbiter.take_repaint(), "outside a paint it is reported");
+    }
+
+    /// L9/H9: during a paint, a page's request from another thread (a
+    /// resource that finished loading) still wakes the window.
+    #[test]
+    fn other_threads_are_never_set_aside() {
+        let arbiter = CursorArbiter::new(WakeHandle::default());
+        let page = arbiter.page_shell();
+        arbiter.begin_paint();
+        std::thread::spawn(move || page.request_redraw())
+            .join()
+            .expect("the requesting thread");
+        assert!(arbiter.take_repaint(), "reported as a repaint at once");
+        assert!(!arbiter.end_paint(), "not set aside for end_paint");
     }
 }

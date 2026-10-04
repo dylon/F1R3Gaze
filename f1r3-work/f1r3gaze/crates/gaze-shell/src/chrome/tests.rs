@@ -2002,3 +2002,178 @@ fn restore_sidebar_reopens_it() {
     assert!(chrome.ui.sidebar_open && !sidebar_hidden(&chrome), "open as it was left");
     assert_eq!(chrome.panel, "appearance");
 }
+
+// ── Ledger L9: resizing the window ──────────────────────────────────────
+
+/// A page split into two halves side by side (a flex row: Blitz does not
+/// float boxes beside each other). A window point near the middle of the
+/// view falls in a different half once the window's width changes.
+fn halves_page(title: &str) -> String {
+    format!(
+        "<html><head><title>{title}</title><style>body{{margin:0;display:flex}}\
+         #left,#right{{flex:1;height:300px}}</style></head>\
+         <body><div id=\"left\"></div><div id=\"right\"></div></body></html>"
+    )
+}
+
+/// The window point `fraction` of the way across tab `i`'s view, 100 px below
+/// its top.
+fn point_across_view(chrome: &ChromeDocument, i: usize, fraction: f64) -> (f32, f32) {
+    let view = chrome
+        .inner
+        .get_client_bounding_rect(chrome.tabs[i].1)
+        .expect("the view is laid out");
+    (
+        (view.x + view.width * fraction) as f32,
+        (view.y + 100.0) as f32,
+    )
+}
+
+/// One frame as the window paints it, without drawing the scene: the window's
+/// application handler brackets blitz-shell's redraw with `begin_paint` and
+/// `end_paint`, and the redraw lays the chrome out with its pages.
+fn paint(chrome: &mut ChromeDocument) {
+    chrome.begin_paint();
+    chrome.inner.resolve(0.0);
+    chrome.end_paint();
+}
+
+/// A new window size, as blitz-shell applies it before the frame for it
+/// (`View::with_viewport`).
+fn set_window_size(chrome: &mut ChromeDocument, width: u32, height: u32) {
+    chrome.inner.viewport_mut().window_size = (width, height);
+}
+
+/// The page's viewport width, in physical pixels (the tests' scale is 1).
+fn page_viewport_width(chrome: &mut ChromeDocument, i: usize) -> u32 {
+    let view = chrome.tabs[i].1;
+    let base = rho_mut(&mut chrome.inner, view).expect("attached").base();
+    base.borrow().viewport().window_size.0
+}
+
+/// L9/H8, the mechanism. Blitz re-resolves hover at the pointer's last
+/// position after every layout (`refresh_hover`). A window narrowed under
+/// that position hovers whatever slides under it, although the pointer has
+/// not moved.
+#[test]
+fn a_relayout_rehovers_under_the_last_pointer_position() {
+    let profile = ScratchProfile::new("hover-reflow");
+    let url = profile.document("halves.html", &halves_page("Halves"));
+    let (mut chrome, _window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "Halves");
+    let point = point_across_view(&chrome, 0, 0.45);
+    move_to(&mut chrome, point);
+    assert_eq!(page_hover(&mut chrome, 0).as_deref(), Some("left"));
+    lay_out_chrome_at(&mut chrome, 900, 800);
+    assert_eq!(
+        page_hover(&mut chrome, 0).as_deref(),
+        Some("right"),
+        "the right half slid under the pointer's last position"
+    );
+}
+
+/// L9/H8: once the mouse has left the window, nothing in it is hovered.
+/// Resizing the window then hovers nothing and asks for no frame beyond the
+/// one for each size, until the pointer comes back.
+#[test]
+fn a_window_the_mouse_left_hovers_nothing_while_it_is_resized() {
+    let profile = ScratchProfile::new("hover-left");
+    let url = profile.document("halves.html", &halves_page("Halves"));
+    let (mut chrome, window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "Halves");
+    let point = point_across_view(&chrome, 0, 0.45);
+    move_to(&mut chrome, point);
+    assert_eq!(page_hover(&mut chrome, 0).as_deref(), Some("left"));
+    chrome.pointer_left();
+    assert_eq!(page_hover(&mut chrome, 0), None, "the page's hover ended");
+    assert_eq!(chrome.inner.get_hover_node_id(), None, "and the chrome's");
+    // Ending the hover is itself painted once.
+    paint(&mut chrome);
+    chrome.cursor.take_repaint();
+    for width in [900, 1100, 1280] {
+        set_window_size(&mut chrome, width, 800);
+        let redraws = window.redraws();
+        paint(&mut chrome);
+        assert_eq!(page_hover(&mut chrome, 0), None, "nothing hovered again at {width} px");
+        assert!(
+            !chrome.cursor.take_repaint(),
+            "no page asked for another frame at {width} px"
+        );
+        assert_eq!(
+            window.redraws(),
+            redraws,
+            "no other frame was asked for at {width} px"
+        );
+    }
+    move_to(&mut chrome, point);
+    assert_eq!(
+        page_hover(&mut chrome, 0).as_deref(),
+        Some("left"),
+        "the pointer coming back hovers again"
+    );
+}
+
+/// L9/H9, the mechanism. The chrome's layout pass gives a page its new
+/// viewport, and the page asks for a frame (`queue_device_changes`), although
+/// the same pass has laid it out at the new size.
+#[test]
+fn a_page_asks_for_a_frame_when_its_viewport_changes() {
+    let profile = ScratchProfile::new("viewport-request");
+    let url = profile.document("halves.html", &halves_page("Halves"));
+    let (mut chrome, _window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "Halves");
+    chrome.cursor.take_repaint();
+    lay_out_chrome_at(&mut chrome, 900, 800);
+    assert!(chrome.cursor.take_repaint(), "the page asked for a frame");
+    let view = chrome
+        .inner
+        .get_client_bounding_rect(chrome.tabs[0].1)
+        .expect("the view is laid out");
+    assert_eq!(
+        f64::from(page_viewport_width(&mut chrome, 0)),
+        view.width,
+        "though the pass laid it out at its new width"
+    );
+}
+
+/// L9/H9: a frame answers its pages' requests for itself. A page left a
+/// restyle, by a hover that changed under a resting pointer, still gets one
+/// more frame, and only one.
+#[test]
+fn a_frame_answers_its_pages_unless_one_is_left_a_restyle() {
+    let profile = ScratchProfile::new("paint-answers");
+    let url = profile.document("halves.html", &halves_page("Halves"));
+    let (mut chrome, window) = chrome_with_window(&profile, &url);
+    show(&mut chrome, 0, "Halves");
+    chrome.cursor.take_repaint();
+    // A new size alone: the frame for it answers the page.
+    set_window_size(&mut chrome, 900, 800);
+    let redraws = window.redraws();
+    paint(&mut chrome);
+    assert!(!chrome.cursor.take_repaint(), "no repaint is left for a poll");
+    assert_eq!(window.redraws(), redraws, "and no other frame is asked for");
+    // A pointer resting over the page, and a new size that slides the other
+    // half under it.
+    set_window_size(&mut chrome, 1280, 800);
+    paint(&mut chrome);
+    let point = point_across_view(&chrome, 0, 0.45);
+    move_to(&mut chrome, point);
+    assert_eq!(page_hover(&mut chrome, 0).as_deref(), Some("left"));
+    chrome.cursor.take_repaint();
+    set_window_size(&mut chrome, 900, 800);
+    let redraws = window.redraws();
+    paint(&mut chrome);
+    assert_eq!(page_hover(&mut chrome, 0).as_deref(), Some("right"));
+    assert_eq!(
+        window.redraws(),
+        redraws + 1,
+        "one more frame, for the restyle the hover left"
+    );
+    let redraws = window.redraws();
+    paint(&mut chrome);
+    assert_eq!(
+        window.redraws(),
+        redraws,
+        "that frame asks for no further one"
+    );
+}

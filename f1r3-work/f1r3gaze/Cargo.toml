@@ -61,6 +61,12 @@ blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "674d7d21445
 blitz-shell = { git = "https://github.com/DioxusLabs/blitz", rev = "674d7d2144585baa0f7368b8ad76371c93fe1b65", default-features = false }
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "674d7d2144585baa0f7368b8ad76371c93fe1b65", default-features = false }
 anyrender_vello = "0.14.0"
+# The renderer traits anyrender_vello implements (gaze-shell wraps its window
+# renderer).
+anyrender = "0.13.0"
+# The event-loop types gaze-shell's application handler forwards to Blitz's:
+# the exact version blitz-shell pins, so both name the same crate.
+winit = { version = "=0.31.0-beta.3", default-features = false }
 
 # In-workspace.
 gaze-graded = { path = "crates/gaze-graded" }

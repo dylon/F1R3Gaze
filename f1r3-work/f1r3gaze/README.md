@@ -235,7 +235,7 @@ Three defects in the existing code were found and fixed on the way:
 
 ## Tests
 
-156 tests in this workspace, all passing (CampF1R3 carries its own 181):
+168 tests in this workspace, all passing (CampF1R3 carries its own 181):
 
 | crate | tests | what they establish |
 | --- | --- | --- |
@@ -247,7 +247,7 @@ Three defects in the existing code were found and fixed on the way:
 | `gaze-shard` | 11 | the deploy preimage matches `prost`; signatures verify; against mock nodes: a lying observer is outvoted, a split is an error, a rollback is stale, nothing is deployed before consent, and the body the validator receives verifies |
 | `gaze-wallet` | 5 | addresses, wallet files and signature bytes identical to the Embers SDK's own output; the contract check refuses a changed recipient, amount or note, smuggled code, hidden fields, a high fee or another shard; wallets kept, exported, switched; transfers through an honest mock Embers, and nothing signed for a dishonest one |
 | `gaze-reach` | 3 | the reach tier commits exactly the native executive's hashes for the same page and clicks; integrity; `shard` is dead |
-| `gaze-shell` | 89 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, the sidebar at startup, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
+| `gaze-shell` | 101 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, the sidebar at startup, a window resized by its frame painting one frame per size, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
 
 End-to-end, on the real binary:
 

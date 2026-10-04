@@ -26,6 +26,10 @@ design is in two places:
 | **Token** | A named colour variable (`--gaze-*`) of the colour scheme. |
 | **WCAG** | The W3C Web Content Accessibility Guidelines 2.1 [W3C-WCAG21]. |
 | **Contrast ratio** | The WCAG measure of how distinct two colours are, from 1:1 (identical) to 21:1 (black on white). Defined in §4.2. |
+| **winit** | The Rust windowing library under blitz-shell. It turns the platform's input and window changes into events such as `SurfaceResized`, `PointerLeft`, and `RedrawRequested`. |
+| **Compositor** | The part of the system that places windows on the screen and tells each application its size: KWin on KDE Plasma, the window server and AppKit on macOS, the X server and its window manager on X11. |
+| **Configure** | A Wayland compositor's message that gives a window its next size. The application answers with a frame of that size. |
+| **Frame** | One pass that lays the window out, paints it, and presents the image (§3.5). |
 
 ## Contents
 
@@ -322,6 +326,79 @@ over a button's label (§8.14).
 the trait's default no-op would silently swallow it. The test
 `window_shell_forwards_everything_but_the_cursor` lists them all. A Blitz
 upgrade that adds a method must add it in both places.
+
+The pointer leaving the *window*, rather than a page, is handled one level up,
+by the window's application handler (§3.5).
+
+### 3.5 Resizing: one frame per size
+
+![A window resized by its frame](diagrams/resize-frame-sequence.svg)
+
+When the user drags a window's frame, the compositor turns each pointer
+position into a new size, and the application paints the window at that size.
+If a size takes $`t`$ seconds to reach the screen, and the pointer moves at
+$`v`$ pixels per second, the border trails the pointer by about $`v \cdot t`$
+pixels. KWin 6.7.5 never waits for the application: each pointer motion
+computes the frame from the pointer's absolute position
+(`isWaitingForInteractiveResizeSync` is `false` for Wayland windows). AppKit
+paints each step of a live resize inside its own notification. Either way,
+everything rests on how quickly the application's frames come out.
+
+By the end of the chrome overhaul, the window painted most sizes twice. The
+second frame had no layout to do, yet cost a full render and present
+([ledger L9](ledger.md)). `crate::application::ChromeApplication` wraps
+Blitz's application handler, forwards every method to it, and adds three
+things:
+
+| | The cause (Blitz `674d7d2`, winit 0.31.0-beta.3) | What the chrome does |
+|---|---|---|
+| H8 | blitz-shell forwards nothing when the mouse leaves the window. Every layout re-resolves hover at the pointer's last position (`refresh_hover`). Grabbing the frame takes the pointer out of the window, the page reflows under the old spot, and each change of the hovered node asks for a redraw. | On a mouse `PointerLeft`, `ChromeDocument::pointer_left` ends the hover of the chrome and of the page under the pointer, with `clear_hover`: what Blitz does when a finger lifts. This also ends a stale `:hover` after the pointer leaves the window. |
+| H9 | The chrome's layout pass gives each page its viewport and lays the page out right away. Setting the viewport makes the page ask for a redraw (`queue_device_changes`), which the frame being painted already answers. Since L8, a page's request reaches the window (§3.4). | `begin_paint` and `end_paint` bracket every `RedrawRequested`. A page's request made in between, on the painting thread, is set aside. A request from another thread, such as a finished resource load, wakes the window as before. One more frame is granted only if a page's hovered node changed during the frame, because that restyle is the one Blitz defers to the next pass. |
+| H7 | blitz-shell polls the document through the event-loop proxy after each window event. winit-wayland delivers that wake-up at the start of the next loop iteration, after the iteration's redraw. AppKit paints a live-resize step before the run loop reaches it. The frame for a new size showed the tab strip fitted to the old width, and the poll then painted again. | After `SurfaceResized` or `ScaleFactorChanged`, the window is polled at once (`View::poll`), so the frame for a size is fitted to it. If the poll changed the chrome, the window is also laid out at once: Blitz hit-tests with the last layout, and an input event before the frame would meet the replaced nodes (§11). |
+
+**Why the hovered node, not dirty flags.** Blitz leaves a restyle for the next
+pass by setting `dirty_descendants` flags. Those flags cannot tell that a
+restyle is pending: `clear_damage_and_dirty_flags` returns early for a node
+without damage and leaves them set (`layout/damage.rs:193-203`). So a restyle
+that changes nothing visible, such as a hover over an element with no `:hover`
+rule, leaves them set for good. Comparing each page's hovered node before and
+after the frame asks the precise question.
+
+**Coalescing.** `crate::renderer::CoalescingRenderer` wraps Vello's window
+renderer. `set_size` records the size, and `render` applies the last one,
+once, just before rendering. Under X11, several resizes arrive between two
+frames. In the Xvfb sweep, coalescing cut surface reconfigurations from 16 to
+0.95 per frame, and the frame rate rose from 3 to 18 a second. Wayland and
+macOS deliver one resize per frame, so there it changes nothing. While the
+renderer is not yet active (Vello until its resume completes), sizes pass
+straight through and none counts as applied: blitz-shell sets the size again
+once the renderer is active, and that request must not be mistaken for a
+repeat (ledger L9, the regression the snapshot harness caught).
+
+**Measured** (ledger L9). This counts the frames painted without a new size,
+per frame that applied one:
+
+| Run | `main` | Before L9 | After L9 |
+|---|---|---|---|
+| Xvfb, 40 resizes at 10 a second (3 runs) | 1 per run | 39–40 per run | 1 per run |
+| Live drag on KWin/Wayland, share of sizes followed by an extra frame | 2.1–2.6 % | 40–88 % | 0.0 % |
+
+**Every platform.** Nothing here depends on a compositor. The three additions
+change when the chrome does its own work (H7–H9), and coalescing changes when
+the renderer reconfigures. The orderings they rely on were read in winit's
+sources for Wayland (`event_loop/mod.rs:354-546`) and for macOS (winit-appkit
+`view.rs:170-183`). X11 was measured under Xvfb. Windows was not tested.
+
+**What stays outside the chrome.** Vello waits for the GPU after every frame
+(`device.poll(wait_indefinitely)`). Anything else that keeps the GPU busy
+therefore slows every frame. In L9, another process's compute work held a
+resize to about 85 frames a second instead of 120 (H11). That is not worked
+around.
+
+**Maintenance.** `ChromeApplication` must forward every `ApplicationHandler`
+method. `#[deny(clippy::missing_trait_methods)]` fails the build if a winit
+upgrade adds one. Its `winit` dependency is pinned to the version blitz-shell
+pins, so both name the same crate.
 
 ---
 
@@ -1114,8 +1191,9 @@ boundary. The harness checks that every bar is exactly its width (§12.2).
 
 ## 11. Engine facts the design relies on
 
-All facts are for Blitz `674d7d2`, parley `332c1c7`, and Vello 0.10, and were
-verified in their sources.
+All facts are for Blitz `674d7d2`, parley `332c1c7`, Vello 0.10,
+anyrender_vello 0.14.0 and winit 0.31.0-beta.3, and were verified in their
+sources.
 
 | Fact | Consequence in the chrome | Source |
 |---|---|---|
@@ -1135,6 +1213,15 @@ verified in their sources.
 | Sub-documents get no enter or leave events, and nothing clears their hover. | The arbiter clears a page's hover when the pointer leaves it. | `events/mod.rs` `map_dom_event_to_ui_event` |
 | A document built without a shell provider gets `DummyShellProvider`. | Pages get `PageShell` through `Tab::config`. | `document.rs` `BaseDocument::new` |
 | `resolve` ends with `refresh_hover`, which re-resolves hover at the last pointer position. | A page told where the pointer is hovers the right element after its first layout. | `resolve.rs` |
+| blitz-shell ignores a mouse `PointerLeft`, so a document goes on hovering where the pointer left the window. | `ChromeApplication` ends the chrome's and the page's hover when the mouse leaves (§3.5, L9 H8). | `blitz-shell/src/window.rs:701-734` |
+| The parent's `resolve` sets each sub-document's viewport, then lays it out at once. Setting a viewport asks the document's provider for a redraw (`queue_device_changes`). | `begin_paint`/`end_paint`: a page's request made during a frame is answered by that frame (§3.5, L9 H9). | `resolve.rs:142-162`; `document.rs:1939-1946, 2036-2046` |
+| `clear_damage_and_dirty_flags` returns early for a node without damage, leaving its `dirty_descendants` set. | `end_paint` compares hovered nodes, not dirty flags. | `layout/damage.rs:193-203` |
+| `BaseDocument::has_changes` returns `changed_nodes.is_empty()`, the opposite of its name. | Not used. | `document.rs:1000-1002` |
+| `BlitzApplication` polls a document through the event-loop proxy after every window event. winit-wayland delivers the wake-up before the next iteration's resizes and redraw. winit-appkit redraws inside the live-resize notification. | The window is polled at once after a resize (§3.5, L9 H7). | `blitz-shell/src/application.rs:165`; winit-wayland `event_loop/mod.rs:354-546`; winit-appkit `view.rs:170-183` |
+| `View::with_viewport` calls `set_size` for every `SurfaceResized`, and Vello's `set_size` reconfigures the surface. | `CoalescingRenderer` applies the last size once per frame (§3.5, L9 H1). | `blitz-shell/src/window.rs:504-519, 607-627`; anyrender_vello `window_renderer.rs:418-422` |
+| Hit-testing uses the paint tree of the last layout, whose stacking contexts keep the ids of hoisted children and index the node tree with them unchecked. An input event between a DOM change and the next layout can panic (`invalid SlotMap key`). | After the poll that follows a resize changes the chrome, the window is laid out at once (`ChromeDocument::lay_out_now`, L9). | `blitz-dom/src/layout/paint_tree.rs:134-147` |
+| Vello ignores `set_size` until its resume completes. blitz-shell's `complete_resume` then sets the size again. | `CoalescingRenderer` counts a size as applied only if the renderer was active (L9). | `blitz-shell/src/window.rs:321-362`; anyrender_vello `window_renderer.rs:418-422` |
+| anyrender_vello blocks on `device.poll(wait_indefinitely)` after every present. | A GPU kept busy by another process slows every frame. This is not worked around (L9 H11). | anyrender_vello `window_renderer.rs:476-479` |
 
 The ledger records the defects these facts caused and the measurements that
 established them.
@@ -1149,7 +1236,7 @@ sub-document hover behind §3.4, reproduced on `main` too.
 
 ### 12.1 Tests
 
-`cargo test -p gaze-shell -p gaze-dom-blitz` runs 87 + 8 tests. By area:
+`cargo test -p gaze-shell -p gaze-dom-blitz` runs 101 + 8 tests (103 + 8 with `--features frame-times`). By area:
 
 | Area | Tests |
 |---|---|
@@ -1157,9 +1244,10 @@ sub-document hover behind §3.4, reproduced on `main` too.
 | Markup | `chrome_markup_has_stable_ids`, `removed_toolbar_buttons_stay_commented`, `labels_are_never_bare_text_in_flex_boxes` (R1), `side_controls_are_constant` (R4) |
 | Layout | `text_budgets_match_laid_out_boxes`, `the_status_bar_fits_on_one_line`, `measured_width_matches_blitz_layout` |
 | Builders | the strip, tab attention, history groups and counts, search highlights, prompts, the error page |
-| Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge |
+| Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge, the sidebar collapsed at startup and `restore_sidebar` |
 | The pointer over pages (L8) | through a recording window provider and real pointer events: a fresh page never hides the cursor; the cursor follows links and text; leaving a page ends its hover; hover changes are repainted; a page loaded, or a tab switched, under a resting pointer gets its cursor; `cursor: none`; background pages; no redundant cursor requests; built-in buttons |
-| Pure helpers | `display` (13), `text_fit` (13), `theme` (5), `ui_state` (6), `cursor` (4: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants) |
+| Resizing (L9) | through a recording window provider, with frames bracketed as the window brackets them: a relayout hovers again at the pointer's last position (the mechanism); once the mouse has left, resizing hovers nothing and asks for no extra frame; a page's new viewport asks for a frame (the mechanism); a frame answers its pages' requests unless a hover changed during it, and then asks for one more |
+| Pure helpers | `display` (13), `text_fit` (13), `theme` (5), `ui_state` (6), `cursor` (6: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants, requests set aside during a paint, and never another thread's), `application` (2: which events poll at once, which end the hover), `renderer` (4: coalescing, pass-through, delegation, a size asked for while the renderer resumes), `frame_stats` (2, with `--features frame-times`) |
 
 Each fix in the ledger has a **mutation check**: the fix is commented out, its
 test must fail, and then the fix is restored.
@@ -1262,6 +1350,71 @@ How the less obvious checks measure:
 - **`edge_artifact`** takes a band across an edge. It counts pixels that are not
   a blend of the colour outside (the band's first row) and the colour inside
   (its last row).
+
+### 12.3 Profiling the render loop
+
+**The `frame-times` feature.** It is off in normal builds. With it, the
+window's renderer prints one line per frame on stdout. Blitz's resolve phases
+(`Resolve(N): …`) and Vello's frame phases (`vello: … cmd, render, present,
+wait`) print next to it. The frame line's fields:
+
+| Field | Meaning |
+|---|---|
+| `n`, `t`, `epoch`, `interval` | the frame number; milliseconds since the window opened; the wall clock in milliseconds, to line frames up with outside logs; the time since the previous frame |
+| `size`, `resizes`, `reconfigures`, `reconfigure` | the size painted; `set_size` calls since the previous frame; how many reached Vello, and the time they took |
+| `render`, `latency` | the time in Vello's `render`; from the first resize since the previous frame to the end of this one |
+| `polls`, `poll`, `chrome_renders`, `chrome_render`, `events`, `event` | the chrome's polls, render passes, and event handling, counted and timed (`crate::frame_stats`) |
+| `page_redraws`, `chrome_redraws`, `cursor_sets` | redraws asked for by pages and by the chrome, and cursors sent to the window, counted |
+| `coalesce` | whether resizes are coalesced |
+
+In a `frame-times` build, four environment variables turn one behaviour off,
+so one binary measures before and after: `F1R3GAZE_COALESCE_RESIZE=0`,
+`F1R3GAZE_POLL_ON_RESIZE=0`, `F1R3GAZE_END_HOVER_ON_LEAVE=0`, and
+`F1R3GAZE_ANSWER_IN_PAINT=0`.
+
+```sh
+# A profiling build, kept out of the normal target directory.
+CARGO_TARGET_DIR=target/scratch/profiling CARGO_PROFILE_RELEASE_STRIP=none \
+CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+  cargo build --release -p gaze-shell --features frame-times
+
+# Xvfb: sweep 1280×800 → 900×600 → 1280×800 in 4 px steps at 120 Hz, 5 runs.
+scripts/resize-bench.sh --bin target/scratch/profiling/release/f1r3gaze
+# One resize per frame, so every extra frame shows: 20 px steps at 10 Hz.
+scripts/resize-bench.sh --bin … --rate 10 --step 20
+# A build that restores no tabs: the page on the command line.
+scripts/resize-bench.sh --bin … --single-tab
+# Fold and summarise a log taken anywhere.
+scripts/resize-bench.sh --analyze LOG
+
+# A window on your own desktop: drag a corner, then close it.
+scripts/resize-live.sh --bin … --no-perf --label NAME
+```
+
+`resize-bench.sh` writes one row per frame (`frames-N.tsv`), one row per run
+(`runs.tsv`), and medians over the runs (`summary.txt`). Among the columns,
+`resize_frames` counts the frames that applied a size and `extra_frames` those
+painted without one. Xvfb renders with software Vulkan on X11: it measures the
+CPU side and the pattern of events, not a GPU or a Wayland compositor.
+
+`resize-live.sh` records the same log while you drag. Without `--no-perf` it
+also attaches `perf record` and writes `perf-report.txt`,
+`perf-children.txt` and `flamegraph.svg`.
+
+**Comparing builds by hand.** L9's comparisons opened the builds one after
+another in a random order, kept the order hidden until the user had rated
+each window, and gave builds that look alike the same tabs. To compare
+`main`, which has no `frame-times` feature, export it and add only the frame
+log (ledger L9).
+
+**Pitfalls.**
+- **perf.** On AMD Zen 3, `perf record --call-graph lbr` fails
+  (`sys_perf_event_open() … Invalid argument`), because the CPU has no LBR.
+  Use `-e cycles:u --call-graph dwarf,16384`.
+- **Other GPU users.** Anything else that keeps the GPU busy slows every frame
+  (§3.5). Log `nvidia-smi pmon -s u -d 1` (or the platform's equivalent) next
+  to any live timing, and leave files that an indexer watches alone while it
+  runs (ledger L9, H11).
 
 ---
 
