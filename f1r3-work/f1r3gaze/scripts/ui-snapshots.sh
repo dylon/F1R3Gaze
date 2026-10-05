@@ -953,7 +953,11 @@ theme_switch() { # TARGET_COORD ACTIVE_TAB TITLE FROM_THEME
     launch && wait_title "$3" && sleep 1 && click "$1" 1 1 && pointer NEUTRAL && shot 0.8
 }
 theme_fresh() { # THEME ACTIVE_TAB TITLE SWITCHED_SCENE
-    new_profile "$SCENE"
+    # The pair shares one profile path, so the custom palette's path, which the
+    # Appearance panel shows, is the same text in both captures. With the
+    # scene's own name it differed by a letter whenever the cut kept one
+    # (ledger L10).
+    new_profile "$4"
     seed "$1" appearance true false "$2"
     launch && wait_title "$3" && sleep 1 && pointer NEUTRAL && shot 0.8 || return 1
     if [[ -f $OUT/$4.png ]]; then

@@ -582,6 +582,44 @@ mod tests {
         assert!(fitter.width(DETAIL, &short) <= 150.0);
     }
 
+    /// Ledger L10: monospace text is shaped with the bundled Fira Code, not a
+    /// face the machine happens to have, and at the stylesheet's weight 400,
+    /// set on the variable font's `wght` axis (its default instance is 300).
+    #[test]
+    fn monospace_text_is_shaped_with_the_bundled_fira_code() {
+        let bundled = blitz_dom::decode_font_bytes(include_bytes!(
+            "../assets/fira-code-latin-wght-normal.woff2"
+        ))
+        .len();
+        let mut fitter = TextFitter::new();
+        let style = DETAIL.style();
+        let mut builder = fitter
+            .layouts
+            .tree_builder(&mut fitter.fonts, 1.0, true, &style);
+        builder.push_text("0123456789");
+        let (mut layout, _) = builder.build();
+        layout.break_all_lines(None);
+        let mut runs = 0;
+        for line in layout.lines() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::GlyphRun(glyphs) = item {
+                    let font = glyphs.run().font();
+                    assert_eq!(font.font.data.len(), bundled, "shaped with the bundled face");
+                    let weight: Vec<String> = font
+                        .synthesis
+                        .variation_settings()
+                        .iter()
+                        .filter(|(tag, _)| *tag == *b"wght")
+                        .map(|(_, value)| value.to_string())
+                        .collect();
+                    assert_eq!(weight, ["400"], "weight 400 on the wght axis");
+                    runs += 1;
+                }
+            }
+        }
+        assert_eq!(runs, 1, "one run of glyphs");
+    }
+
     #[test]
     fn hosts_keep_their_registrable_end() {
         let mut fitter = TextFitter::new();

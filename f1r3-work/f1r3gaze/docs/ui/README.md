@@ -510,6 +510,12 @@ contrasts more with the palette's surface (`legible_default`).
 - Fira Code for addresses, keys, and console text.
 - Font Awesome Free 7 for icons.
 
+Each face is registered under the family name the stylesheet asks for
+(`theme::BUNDLED_FONTS`), not the one in its own name table. The vendored
+Fira Code is a variable font that names itself "Fira Code Light". Until ledger
+L10, a lookup of `'Fira Code'` never found it, and each platform drew
+monospace text in a face of its own.
+
 | Use | Face | Size |
 |---|---|---|
 | Labels, row titles, tab titles | Noto Sans 400 | 13 px |
@@ -1212,6 +1218,7 @@ sources.
 | A parent reads a host's cursor before forwarding the event, from the sub-document's previous hover. `None` hides the cursor in blitz-shell. | `WindowShell` turns the chrome's cursor requests into "recompute". | `events/driver.rs`; `document.rs` `get_cursor`; `blitz-shell/src/lib.rs` |
 | Sub-documents get no enter or leave events, and nothing clears their hover. | The arbiter clears a page's hover when the pointer leaves it. | `events/mod.rs` `map_dom_event_to_ui_event` |
 | A document built without a shell provider gets `DummyShellProvider`. | Pages get `PageShell` through `Tab::config`. | `document.rs` `BaseDocument::new` |
+| fontique registers a face under its name table's typographic family name, or else its family name. The vendored variable Fira Code names itself "Fira Code Light", after its default instance. When the requested weight differs from a variable font's `wght` default, fontique sets the axis to it. | `theme::BUNDLED_FONTS` registers each face under the stylesheet's name, and the `wght` axis gives Fira Code its weight (L10). | fontique `collection/mod.rs` `register_font_impl`; `font.rs` `FontInfo::synthesis` |
 | `resolve` ends with `refresh_hover`, which re-resolves hover at the last pointer position. | A page told where the pointer is hovers the right element after its first layout. | `resolve.rs` |
 | blitz-shell ignores a mouse `PointerLeft`, so a document goes on hovering where the pointer left the window. | `ChromeApplication` ends the chrome's and the page's hover when the mouse leaves (§3.5, L9 H8). | `blitz-shell/src/window.rs:701-734` |
 | The parent's `resolve` sets each sub-document's viewport, then lays it out at once. Setting a viewport asks the document's provider for a redraw (`queue_device_changes`). | `begin_paint`/`end_paint`: a page's request made during a frame is answered by that frame (§3.5, L9 H9). | `resolve.rs:142-162`; `document.rs:1939-1946, 2036-2046` |
@@ -1236,7 +1243,7 @@ sub-document hover behind §3.4, reproduced on `main` too.
 
 ### 12.1 Tests
 
-`cargo test -p gaze-shell -p gaze-dom-blitz` runs 101 + 8 tests (103 + 8 with `--features frame-times`). By area:
+`cargo test -p gaze-shell -p gaze-dom-blitz` runs 103 + 8 tests (105 + 8 with `--features frame-times`). By area:
 
 | Area | Tests |
 |---|---|
@@ -1247,7 +1254,7 @@ sub-document hover behind §3.4, reproduced on `main` too.
 | Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge, the sidebar collapsed at startup and `restore_sidebar` |
 | The pointer over pages (L8) | through a recording window provider and real pointer events: a fresh page never hides the cursor; the cursor follows links and text; leaving a page ends its hover; hover changes are repainted; a page loaded, or a tab switched, under a resting pointer gets its cursor; `cursor: none`; background pages; no redundant cursor requests; built-in buttons |
 | Resizing (L9) | through a recording window provider, with frames bracketed as the window brackets them: a relayout hovers again at the pointer's last position (the mechanism); once the mouse has left, resizing hovers nothing and asks for no extra frame; a page's new viewport asks for a frame (the mechanism); a frame answers its pages' requests unless a hover changed during it, and then asks for one more |
-| Pure helpers | `display` (13), `text_fit` (13), `theme` (5), `ui_state` (6), `cursor` (6: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants, requests set aside during a paint, and never another thread's), `application` (2: which events poll at once, which end the hover), `renderer` (4: coalescing, pass-through, delegation, a size asked for while the renderer resumes), `frame_stats` (2, with `--features frame-times`) |
+| Pure helpers | `display` (13), `text_fit` (14, with the shaping face), `theme` (6, with the bundled faces' names), `ui_state` (6), `cursor` (6: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants, requests set aside during a paint, and never another thread's), `application` (2: which events poll at once, which end the hover), `renderer` (4: coalescing, pass-through, delegation, a size asked for while the renderer resumes), `frame_stats` (2, with `--features frame-times`) |
 
 Each fix in the ledger has a **mutation check**: the fix is commented out, its
 test must fail, and then the fix is restored.
@@ -1346,7 +1353,9 @@ How the less obvious checks measure:
   the run.
 - **The theme checks** compare colour histograms of a screen switched to a
   scheme with one started in it. A label left in the old colour shows up even
-  if a glyph moved by a pixel.
+  if a glyph moved by a pixel. Both captures of a pair use the same profile
+  path, so the palette path the Appearance panel shows is the same text in both
+  (ledger L10).
 - **`edge_artifact`** takes a band across an edge. It counts pixels that are not
   a blend of the colour outside (the band's first row) and the colour inside
   (its last row).

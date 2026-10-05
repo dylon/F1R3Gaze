@@ -1186,3 +1186,120 @@ rendering was tuned to it.
   painted about 5 or about 50 frames in a sweep, `main` included. With
   coalescing on, all three runs were fast (15–18 frames a second). Software
   Vulkan reconfiguring under Xvfb is the likely cause. It was not investigated.
+
+---
+
+## L10 — The bundled Fira Code never loaded
+
+**Report (CI, 2026-10-04).** On the pull request, the `test (windows-latest)`
+job failed, and every other job passed:
+
+```text
+---- text_fit::tests::urls_keep_their_origin_and_a_path_tail stdout ----
+panicked at crates\gaze-shell\src\text_fit.rs:569:9:
+file://…cratchpad/site/notes.html
+```
+
+The test fits
+`file:///tmp/claude-1000/-home-dylon-Workspace/scratchpad/site/notes.html`
+to 200 px in 11 px monospace. It expects the kept path tail to start at a
+`/`: the URL cut moves the tail to the next `/` when that drops at most 8
+characters (README §10.1). On Windows the tail began inside `scratchpad`,
+too far from a `/` to move.
+
+**Hypothesis H1: Windows measured with another face.** The result had 33
+characters (`file://…` and a tail of 25), and the face is monospaced, so each
+character took at most $`200 / 33 \approx 6.06`$ px. The font sizes give:
+
+| Face | Advance | At 11 px | 33 characters |
+|---|---|---|---|
+| Fira Code | 1200 / 1950 ≈ 0.615 em | 6.77 px | 223 px (does not fit) |
+| Consolas, Windows' default monospace | 1126 / 2048 ≈ 0.550 em | 6.05 px | 200 px (fits) |
+
+So Windows measured with Consolas. fontique's Windows backend maps
+`monospace` to Consolas (`fontique/src/backend/dwrite.rs:34`).
+
+**Experiment.** fontique looks up registered families before system ones on
+every platform (`Collection::family_id`). So the bundled face had to be
+missing. A probe registered each vendored file into a collection with system
+fonts off and printed the family it landed in:
+
+| File | Decoded | Registered as |
+|---|---|---|
+| `NotoSans-Regular.otf`, `NotoSans-SemiBold.otf` | OTF as is | `Noto Sans` |
+| `fira-code-latin-wght-normal.woff2` | 36 276 B → 81 168 B TrueType | **`Fira Code Light`** |
+| `fa-solid-900.woff2` | 119 156 B → 327 308 B OTF | `Font Awesome 7 Free` |
+
+**Cause.**
+- The vendored Fira Code is a variable font, and its name table names it
+  after its default instance, "Fira Code Light".
+- fontique registers a face under its name table's typographic family name,
+  or else its family name (`register_font_impl`).
+- The stylesheet and the text fitter ask for `'Fira Code'`, so the lookup
+  never found the bundled face. It fell through to the generic `monospace`:
+  - on Linux, fontconfig's `monospace`, usually DejaVu Sans Mono
+    (≈ 0.602 em) on Ubuntu runners;
+  - on macOS, Courier (0.600 em);
+  - on Windows, Consolas (0.550 em).
+- These are fontique's generic tables (`backend/fontconfig.rs:838`,
+  `coretext.rs:29`, `dwrite.rs:34`).
+- Only Consolas was far enough from Fira Code to move this cut.
+- On the machine the chrome was built on, a system Fira Code is installed
+  (Arch's `ttf-fira-code`). So every local run, the snapshot harness
+  included, used that copy, and nothing local could fail.
+- Measurement and rendering use the same font context
+  (`theme::font_context`), so the fitting stayed exact on every platform.
+  But the face that is bundled "so the chrome looks the same everywhere"
+  (README §5) was in fact never used.
+
+**Fix.** `theme::BUNDLED_FONTS` pairs each vendored file with the family name
+the stylesheet uses. `register_bundled_fonts` registers each face under that
+name (fontique's `FontInfoOverride { family_name }`).
+- Registered families come before system ones, so the bundled Fira Code now
+  wins on every machine.
+- Its weight is unchanged: when the requested weight differs from the
+  variable font's `wght` default (300), fontique sets the axis to the
+  requested weight (`FontInfo::synthesis`).
+
+**Tests.**
+- `theme::bundled_faces_register_under_the_stylesheet_names` registers into a
+  collection with system fonts off, so no installed face can stand in. It was
+  red before the fix:
+  `left: ["Noto Sans", "Noto Sans", "Fira Code Light", "Font Awesome 7 Free"]`.
+- `text_fit::monospace_text_is_shaped_with_the_bundled_fira_code` lays out
+  monospace text and checks which font data shaped it: the bundled face
+  (81 168 B), set to `wght = 400`.
+
+**Mutation check M10.** Registering without the override, as before, turned
+both tests red:
+- the names, as above;
+- `left: 289624, right: 81168`: on this machine the text was shaped with the
+  system Fira Code.
+
+`urls_keep_their_origin_and_a_path_tail` stayed green, because this machine
+has Fira Code installed. That is why the two new tests exist.
+
+**Snapshot harness.** The fixed binary (B5, `56c385c1…`) ran the full
+harness against B4, the binary before the fix:
+- On this machine, monospace text now comes from the bundled face instead of
+  the installed copy. 42 captures differ from B4 by 200–1 800 px in how that
+  text is rasterized: the bundled variable instance at `wght` 400 against the
+  installed static Regular. Magnified crops show the same glyphs, with none
+  missing. The committed captures were not regenerated.
+- One check went red: `stale_colour_px_vs_54` = 21 px (limit 0). It was not
+  a stale colour.
+  - The Appearance panel shows the custom palette's path, cut in the middle.
+  - Each scene's profile was named after the scene, so the two paths differed
+    by a letter: `…o-dark/palette.css` against `…h-dark/palette.css`.
+  - The old face's cut had happened to hide that letter. In the light pair,
+    one letter longer, it still did.
+- **Fix.** A theme pair's fresh scene reuses its switched scene's profile name
+  (`theme_fresh`), so both captures show the same text.
+- **Result.** 68 scenes, 49 checks pass (all four theme checks at 0), no
+  panic.
+
+**Green.**
+- `cargo test --workspace --locked`: 170 passed on stable and on 1.95, and
+  105 for gaze-shell with `frame-times`.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean
+  on both.

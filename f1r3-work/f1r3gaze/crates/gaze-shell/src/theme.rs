@@ -1,6 +1,6 @@
 //! F1R3Gaze palette and bundled, offline chrome assets.
 use parley::FontContext;
-use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
+use parley::fontique::{Blob, Collection, CollectionOptions, FontInfoOverride, SourceCache};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -162,6 +162,21 @@ pub fn font_css() -> String {
     css
 }
 
+/// The vendored faces, each with the family name the stylesheet asks for.
+/// They are registered under that name rather than the one in their own name
+/// table (ledger L10). The vendored Fira Code is a variable font whose name
+/// table calls it "Fira Code Light", after its default instance. A lookup of
+/// 'Fira Code' therefore never found it, and each platform drew monospace
+/// text in a face of its own: Fira Code where it happened to be installed,
+/// DejaVu Sans Mono, Menlo, or the narrower Consolas. Its weight comes from
+/// its `wght` axis, which fontique sets to the weight asked for.
+const BUNDLED_FONTS: [(&[u8], &str); 4] = [
+    (include_bytes!("../assets/NotoSans-Regular.otf"), "Noto Sans"),
+    (include_bytes!("../assets/NotoSans-SemiBold.otf"), "Noto Sans"),
+    (include_bytes!("../assets/fira-code-latin-wght-normal.woff2"), "Fira Code"),
+    (include_bytes!("../assets/fa-solid-900.woff2"), "Font Awesome 7 Free"),
+];
+
 /// Register the vendored faces directly with Parley. The chrome can use them
 /// before any CSS resource request completes, including in offline builds.
 pub fn font_context() -> FontContext {
@@ -169,16 +184,27 @@ pub fn font_context() -> FontContext {
         source_cache: SourceCache::new_shared(),
         collection: Collection::new(CollectionOptions { shared: false, system_fonts: true }),
     };
-    for bytes in [
-        include_bytes!("../assets/NotoSans-Regular.otf").as_slice(),
-        include_bytes!("../assets/NotoSans-SemiBold.otf").as_slice(),
-        include_bytes!("../assets/fira-code-latin-wght-normal.woff2").as_slice(),
-        include_bytes!("../assets/fa-solid-900.woff2").as_slice(),
-    ] {
-        let decoded = blitz_dom::decode_font_bytes(bytes).into_owned();
-        ctx.collection.register_fonts(Blob::new(Arc::new(decoded) as _), None);
-    }
+    register_bundled_fonts(&mut ctx.collection);
     ctx
+}
+
+/// Register the vendored faces with `collection` under the stylesheet's family
+/// names. Returns the family names they were registered under, in order.
+fn register_bundled_fonts(collection: &mut Collection) -> Vec<String> {
+    let mut names = Vec::with_capacity(BUNDLED_FONTS.len());
+    for (bytes, family) in BUNDLED_FONTS {
+        let decoded = blitz_dom::decode_font_bytes(bytes).into_owned();
+        let named = FontInfoOverride {
+            family_name: Some(family),
+            ..FontInfoOverride::default()
+        };
+        for (id, _) in collection.register_fonts(Blob::new(Arc::new(decoded) as _), Some(named)) {
+            if let Some(name) = collection.family_name(id) {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names
 }
 
 pub fn builtin_css(name: &str, custom: Option<&BTreeMap<String, String>>) -> String {
@@ -266,5 +292,26 @@ mod tests {
         let error = parse_palette("--gaze-danger: #2a3040;\n").expect_err("illegible danger");
         assert!(error.contains("--gaze-danger"), "{error}");
         assert!(parse_palette("--gaze-success: #7ddc9a;\n").is_ok());
+    }
+
+    /// Ledger L10: every vendored face is registered under the family name
+    /// the stylesheet asks for, so no platform falls back to a face of its
+    /// own. System fonts are left out, so a face installed on the machine
+    /// cannot stand in for a missing one.
+    #[test]
+    fn bundled_faces_register_under_the_stylesheet_names() {
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        });
+        let names = register_bundled_fonts(&mut collection);
+        let wanted: Vec<&str> = BUNDLED_FONTS.iter().map(|&(_, family)| family).collect();
+        assert_eq!(names, wanted);
+        for family in ["Noto Sans", "Fira Code", "Font Awesome 7 Free"] {
+            assert!(
+                collection.family_id(family).is_some(),
+                "{family} is not registered"
+            );
+        }
     }
 }
