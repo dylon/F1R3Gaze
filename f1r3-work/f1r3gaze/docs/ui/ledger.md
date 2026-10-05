@@ -1303,3 +1303,236 @@ harness against B4, the binary before the fix:
   105 for gaze-shell with `frame-times`.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean
   on both.
+
+---
+
+## L11 — The new-tab page's lamp does not light
+
+**Report (user, 2026-10-04).** "Nothing seems to happen when I click the
+"lamp" button, what should it do?"
+
+**What the lamp should do.** `gaze://newtab` (`pages.rs`) runs a f1r3lang
+program whose one capability is the document:
+
+```rholang
+new found, sub, clicks, on, off in {
+  doc!("query1", "#lamp", *found) |
+  for (@("ok", *lamp) <- found) {
+    lamp!("listen", "click", *clicks, {}, *sub) |
+    off!(Nil) |
+    for (_ <= clicks & _ <- off) { lamp!("classAdd", "lit") | on!(Nil) } |
+    for (_ <= clicks & _ <- on)  { lamp!("classRemove", "lit") | off!(Nil) }
+  }
+}
+```
+
+1. `query1` asks the document for `#lamp`. The answer on `found` is a name
+   for the button.
+2. `listen` sends each click on the button to `clicks` (`docs/events.md`).
+3. A single token, on `off` or on `on`, holds the lamp's state. Each click
+   joins with whichever token is present:
+   - with `off`, the first `for` adds the class `lit` and leaves a token on
+     `on`;
+   - with `on`, the second removes the class and leaves a token on `off`.
+4. The page's style sheet paints `button.lit` yellow (`#ffcf3f`) with an
+   amber edge (`#c79a00`).
+
+So each click should switch the lamp between unlit and lit (yellow).
+
+**H1: the program never sees the click.**
+- **Prediction.** `#lamp`'s class stays empty after a click.
+- **Experiment.** A throwaway test (`zz_lamp_probe`) built a chrome on
+  `gaze://newtab` and clicked the lamp twice through real pointer events. It
+  printed the class and the computed background after each click.
+  `chrome/tests.rs` was then restored byte for byte.
+- **Raw result.**
+
+  ```text
+  start: class="" bg=rgb(32, 39, 53) themed=true
+  after click 1: class="lit" bg=rgb(32, 39, 53)
+  after click 2: class="" bg=rgb(32, 39, 53)
+  ```
+
+- **Verdict: refuted.** The program toggles the class on every click.
+
+**H2: the lit state is styled away.** The background stayed
+`rgb(32, 39, 53)`, the dark scheme's `--gaze-surface`, while the class was
+`lit`.
+- **Prediction.** A rule of the host theme beats the page's `button.lit`.
+- **Mechanism (sources).**
+  - The chrome themes built-in pages with `theme::builtin_css`.
+    `RhoDocument::set_host_theme` installs it through Blitz's
+    `add_user_agent_stylesheet`, as a user-agent-origin sheet
+    (`blitz-dom/src/document.rs:1149-1153`).
+  - That sheet contains
+    `button{background:var(--gaze-surface)!important;color:var(--gaze-text)!important;border-color:var(--gaze-border)!important}`.
+  - The cascade compares origin and importance before specificity, and for
+    important declarations it reverses the order of the origins. An important
+    user-agent declaration therefore beats every author declaration (CSS
+    Cascade 4, §6.1, in [README §13](README.md#13-references); Stylo 0.21.0
+    `rule_tree/level.rs:144-165`).
+  - The page's `button.lit` is a normal author declaration, so it never
+    applied, whatever its specificity.
+- **Verdict: confirmed** by the red test below. With the class `lit`, the
+  fill, label and edge were the scheme's unlit button colours.
+
+**A regression from `main`.**
+- `main` has no host theme: its built-in pages are styled by their own sheet
+  only, so the lamp lit there.
+- The theme came with the UIX overhaul (`bd76af6`), which recoloured built-in
+  pages through `builtin_css` and its important rules (L2).
+
+**Why no check caught it.**
+- CI's headless smoke test clicks `#lamp`, then greps the serialized DOM for
+  `class="lit"` (`.github/workflows/ci.yml`). It checks the class, which was
+  always right, and headless mode installs no host theme.
+- No snapshot scene clicked the lamp. Scene 58 measures only the unlit
+  label's contrast.
+- No test read the lit lamp's computed style.
+
+**Fix.** `theme::builtin_css` also styles the lit state:
+
+```css
+button.lit{background:#ffcf3f!important;color:#1d2330!important;border-color:#a37f00!important}
+```
+
+Both this rule and `button` are now important user-agent declarations, so
+specificity decides between them: `button.lit` (0,1,1) beats `button`
+(0,0,1). `builtin_css`'s doc comment records the general rule. A page state
+that changes a property the theme sets shows only if the theme styles that
+state too.
+
+**The colours.** The lit lamp keeps the page's yellow in both schemes. Its
+label and edge were chosen by contrast ratio (README §4.2, WCAG 2.1):
+
+| Pair | Ratio | Requirement |
+|---|---|---|
+| label `#1d2330` on the fill `#ffcf3f` | 10.67 | ≥ 4.5 (1.4.3, text) |
+| the theme's dark-scheme text `#eaf0f7` on the fill (the label, had only the fill been set) | 1.28 | fails |
+| the fill on the dark background `#161b26` | 11.69 | — |
+| the fill on the light background `#f5f7fa` | 1.37 | — (does not outline the lamp) |
+| edge `#a37f00` on the dark background | 4.59 | ≥ 3 (1.4.11, a control's state) |
+| edge `#a37f00` on the light background | 3.50 | ≥ 3 |
+| the page's own edge `#c79a00` on the light background | 2.43 | fails |
+
+- **The edge.** `#a37f00` is the page's amber at nearly the same hue (46.7°
+  against 46.4°), darkened from 0.39 to 0.32 lightness (HSL).
+- **Source of the ratios.**
+  `target/scratch/session-28795e59/lamp/contrast.txt`, computed with the
+  formula that `theme::contrast` implements.
+
+**Tests.**
+- `chrome::tests::the_lamp_lights_and_goes_out_in_both_schemes`. For each
+  scheme it builds a chrome on `gaze://newtab` and waits until the page's
+  program listens for clicks (`TabExec::dom.has_listener("click")`). It then
+  clicks the lamp twice through real pointer events. After each click it
+  waits for the class, and compares the lamp's computed fill, label colour
+  and edge colour with the expected ones:
+  - unlit, the scheme's `--gaze-surface`, `--gaze-text` and `--gaze-border`;
+  - lit, `theme::LAMP_LIT_FILL`, `LAMP_LIT_LABEL` and `LAMP_LIT_EDGE`.
+- `theme::tests::the_lit_lamp_is_legible_in_both_schemes`. The label on the
+  fill is at least 4.5:1, and the edge at least 3:1 against both schemes'
+  backgrounds.
+
+**A test that clicked too early.**
+- **Symptom.** The first version of the chrome test clicked as soon as the
+  page's title appeared, and failed with the class still `""` after 10 s.
+- **Cause.** When the page's title appears, its program is not listening yet.
+  A throwaway probe (`zz_listener_probe`, removed afterwards) measured it in
+  three runs:
+
+  ```text
+  PROBE title shown after 203.194566ms; listening=false
+  PROBE listening after 4 more polls, 23.032203ms
+  ```
+
+  The other two runs gave the same: 4 polls, about 23 ms with the test's
+  5 ms sleeps. A click before that reaches no listener, as on the web before
+  a page's script has run. The first probe had waited at least 0.6 s before
+  clicking, so it never met this.
+- **Fix.** The test waits for the listener
+  (`TabExec::dom.has_listener("click")`) instead of sleeping. A user clicks
+  long after that point.
+
+**Red (before the fix).**
+
+```text
+assertion `left == right` failed: dark: lit after one click
+  left: LampLook { class: "lit", fill: "rgb(32, 39, 53)", label: "rgb(234, 240, 247)", edge: "rgb(58, 70, 89)" }
+ right: LampLook { class: "lit", fill: "rgb(255, 207, 63)", label: "rgb(29, 35, 48)", edge: "rgb(163, 127, 0)" }
+```
+
+**Mutation checks.** Each mutation was undone by copying the fixed file
+back and comparing it byte for byte (`cmp`).
+
+| ID | Mutation | Result |
+|---|---|---|
+| M11 | the `button.lit` rule commented out | the chrome test red, as above |
+| M11b | the rule without its label colour | the chrome test red: `label: "rgb(234, 240, 247)"`, the theme's text on the yellow (1.28:1) |
+| M11c | the page's own edge, `#c79a00` | the theme test red: `lit edge on #f5f7fa: 2.43` |
+
+**Snapshot harness.** Three new scenes, run in after mode only, click the
+lamp in scene 58's layout, where `CROP_LAMP` is calibrated:
+- 69: dark, one click;
+- 70: light, one click;
+- 71: dark, two clicks.
+
+Each captures the unlit lamp as a reference before clicking. The binaries
+compared are B5 (`56c385c1…`, built from `d2bfc05`, before the fix) and L11
+(`d4d10cae…`, with it):
+
+| Check | Scene | B5 | L11 | Limit |
+|---|---|---|---|---|
+| `lamp_lit_px` (the click changed the lamp) | 69, 70 | 0, 0 | 584.6, 319.0 | ≥ 1 |
+| `lit_fill_px` (`#FFCF3F` pixels in the 52 × 22 crop) | 69, 70 | 0, 0 | 926, 926 | ≥ 500 |
+| `lit_label_contrast` | 69, 70 | 13.05, 15.23 | 10.67, 10.67 | ≥ 4.5 |
+| `out_fill_px`, `out_px_vs_unlit` | 71 | 0, 0 | 0, 0 | = 0, ≤ 0 |
+
+- **B5.** A click changed no pixel of the lamp, which is the user's report.
+  Its label contrasts are those of the unlit lamp: the scheme's text on its
+  surface.
+- **L11.** With the fix, 926 of the crop's 1 144 pixels are yellow. The
+  label and its antialiasing take the rest.
+- **The limit of 500** is about half the crop. It fails whenever the yellow
+  is missing or only a sliver.
+- **Scene 71** passes on both binaries, as predicted. It guards the way back,
+  which B5 never left.
+- **Captures.** Magnified crops of both runs are in
+  `target/scratch/session-28795e59/snap/lamp-compare.png`.
+
+**Full run.** The fixed binary ran all 71 scenes in 314 s, with no panic.
+- 0 scenes failed, and all 57 checks passed: the 49 that existed before and
+  the 8 new ones.
+- Scenes 01–68 are pixel-identical to B5b, the previous full run (68
+  identical). Only the contact sheet differs, because it has three more
+  tiles.
+- The two full runs before it (B5 and B5b) differed only where intended, so
+  the captures are deterministic.
+- So the fix changes nothing but the lit lamp, as predicted: the new rule
+  matches only `button.lit`, and no other scene shows it.
+
+**What `lamp_lit_px` measures.** It is ImageMagick 7.1.2's AE metric, which
+is not a count of differing pixels.
+- All 1 144 pixels of the crop changed in both scenes.
+- On these RGB captures, AE equals the sum over pixels of the mean absolute
+  channel difference, each between 0 and 1. Recomputed that way, the sums are
+  584.588 and 319.01, matching AE exactly.
+- A controlled test agrees. With true-colour images, one pixel turning from
+  black to red gives 0.333, and from black to white gives 1. (A first attempt
+  gave 1 for red too, because ImageMagick had saved the black image as
+  grayscale.)
+- So the light scene's smaller value means a smaller change of colour (white
+  to yellow), not fewer pixels.
+- Checks with the limit `le 0` still mean "identical".
+- The harness's comment on `ae` called it the number of differing pixels. It
+  now says what AE measures.
+
+**Also corrected.** L10's comment on `BUNDLED_FONTS` named Menlo as macOS's
+monospace fallback. fontique's CoreText backend maps `monospace` to Courier
+(`coretext.rs:29`), as the L10 entry above says, and the comment now does too.
+
+**Green.**
+- `cargo test --workspace --locked`: 172 passed on stable and on 1.95
+  (gaze-shell 105), and 107 for gaze-shell with `frame-times`.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean
+  on both, and with `frame-times`.

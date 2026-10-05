@@ -235,7 +235,7 @@ Three defects in the existing code were found and fixed on the way:
 
 ## Tests
 
-170 tests in this workspace, all passing (CampF1R3 carries its own 181):
+172 tests in this workspace, all passing (CampF1R3 carries its own 181):
 
 | crate | tests | what they establish |
 | --- | --- | --- |
@@ -247,11 +247,12 @@ Three defects in the existing code were found and fixed on the way:
 | `gaze-shard` | 11 | the deploy preimage matches `prost`; signatures verify; against mock nodes: a lying observer is outvoted, a split is an error, a rollback is stale, nothing is deployed before consent, and the body the validator receives verifies |
 | `gaze-wallet` | 5 | addresses, wallet files and signature bytes identical to the Embers SDK's own output; the contract check refuses a changed recipient, amount or note, smuggled code, hidden fields, a high fee or another shard; wallets kept, exported, switched; transfers through an honest mock Embers, and nothing signed for a dishonest one |
 | `gaze-reach` | 3 | the reach tier commits exactly the native executive's hashes for the same page and clicks; integrity; `shard` is dead |
-| `gaze-shell` | 103 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, the sidebar at startup, a window resized by its frame painting one frame per size, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
+| `gaze-shell` | 105 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, the sidebar at startup, a window resized by its frame painting one frame per size, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
 
 End-to-end, on the real binary:
 
-- the new-tab page's f1r3lang lamp toggles on a click;
+- the new-tab page's f1r3lang lamp toggles on a click. In the window it lights
+  in both schemes, and goes out on a second click (snapshot scenes 69–71);
 - a site's `.knf` is fetched by `src`, integrity-checked, fetches over `net`,
   writes and reads `store`, logs, and saves a replay log; a tampered copy is
   refused with "integrity mismatch";
@@ -271,7 +272,7 @@ End-to-end, on the real binary:
 CI also runs `cargo clippy --workspace --all-targets --locked -- -D warnings`
 (the `lint` job in `.github/workflows/ci.yml`).
 
-`scripts/ui-snapshots.sh` drives the real binary under Xvfb through 68 scenes
+`scripts/ui-snapshots.sh` drives the real binary under Xvfb through 71 scenes
 of the chrome. It writes the screenshots and their pixel checks (no page
 reflow, no stale colours, legible labels, exact bars) to
 `docs/screenshots/ui/{before,after}/`. The eight cursor scenes read the X

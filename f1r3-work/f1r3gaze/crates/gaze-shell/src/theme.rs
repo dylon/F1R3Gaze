@@ -168,7 +168,7 @@ pub fn font_css() -> String {
 /// table calls it "Fira Code Light", after its default instance. A lookup of
 /// 'Fira Code' therefore never found it, and each platform drew monospace
 /// text in a face of its own: Fira Code where it happened to be installed,
-/// DejaVu Sans Mono, Menlo, or the narrower Consolas. Its weight comes from
+/// DejaVu Sans Mono, Courier, or the narrower Consolas. Its weight comes from
 /// its `wght` axis, which fontique sets to the weight asked for.
 const BUNDLED_FONTS: [(&[u8], &str); 4] = [
     (include_bytes!("../assets/NotoSans-Regular.otf"), "Noto Sans"),
@@ -207,11 +207,34 @@ fn register_bundled_fonts(collection: &mut Collection) -> Vec<String> {
     names
 }
 
+/// The new-tab page's lamp while it is lit (`button.lit` in `pages.rs`). The
+/// colours are the same in both schemes: the page's own yellow, a dark label,
+/// and an edge in a darker shade of the page's amber. The yellow is close to
+/// the light scheme's background, so on the light page the edge outlines the
+/// lit lamp. It reaches 3:1 against both schemes' backgrounds (ledger L11).
+pub(crate) const LAMP_LIT_FILL: &str = "#ffcf3f";
+pub(crate) const LAMP_LIT_LABEL: &str = "#1d2330";
+pub(crate) const LAMP_LIT_EDGE: &str = "#a37f00";
+
+/// The host theme of the built-in pages (`gaze://…`) and the error page. The
+/// chrome installs it as a user-agent style sheet
+/// (`RhoDocument::set_host_theme`), and its declarations are `!important`.
+/// An important user-agent declaration beats every author declaration,
+/// whatever the selectors' specificity (CSS Cascade 4, §6.1). So these rules
+/// override the pages' own rules. A page state that changes a property they
+/// set, such as the lamp's `button.lit`, shows only if this sheet styles that
+/// state too (ledger L11).
 pub fn builtin_css(name: &str, custom: Option<&BTreeMap<String, String>>) -> String {
-    format!(
+    let mut css = format!(
         "{}body{{background:var(--gaze-bg)!important;color:var(--gaze-text)!important}}h1{{color:var(--gaze-text)!important}}code{{background:var(--gaze-raised)!important;color:var(--gaze-text)!important}}button{{background:var(--gaze-surface)!important;color:var(--gaze-text)!important;border-color:var(--gaze-border)!important}}a{{color:var(--gaze-accent)!important}}a.btn{{background:var(--gaze-surface)!important;color:var(--gaze-text)!important;border-color:var(--gaze-border)!important}}summary,.muted{{color:var(--gaze-muted)!important}}",
         variables(name, custom)
-    )
+    );
+    // The lit lamp. Both rules are important user-agent rules, so the more
+    // specific `button.lit` wins over `button` above.
+    css.push_str(&format!(
+        "button.lit{{background:{LAMP_LIT_FILL}!important;color:{LAMP_LIT_LABEL}!important;border-color:{LAMP_LIT_EDGE}!important}}"
+    ));
+    css
 }
 
 #[cfg(test)]
@@ -285,6 +308,21 @@ mod tests {
         let colors = palette("custom", Some(&parsed));
         assert_eq!(colors["--gaze-danger"], LIGHT[DANGER]);
         assert_eq!(colors["--gaze-success"], LIGHT[SUCCESS]);
+    }
+
+    /// Ledger L11: the lit lamp's label reads at 4.5:1 on its yellow (WCAG
+    /// 2.1, 1.4.3). The lit state's edge reaches 3:1 against both schemes'
+    /// backgrounds (1.4.11): the yellow itself barely differs from the light
+    /// one.
+    #[test]
+    fn the_lit_lamp_is_legible_in_both_schemes() {
+        let ratio = |fg: &str, bg: &str| contrast(fg, bg).expect("the lamp's colours are #RRGGBB");
+        let label = ratio(LAMP_LIT_LABEL, LAMP_LIT_FILL);
+        assert!(label >= 4.5, "label on the lit fill: {label:.2}");
+        for p in [DARK, LIGHT] {
+            let edge = ratio(LAMP_LIT_EDGE, p[BG]);
+            assert!(edge >= 3.0, "lit edge on {}: {edge:.2}", p[BG]);
+        }
     }
 
     #[test]

@@ -103,14 +103,17 @@ SCENES=(
     60-theme-wallet-to-light
     61-cursor-back 62-cursor-rail 63-cursor-tab-row 64-cursor-link
     65-cursor-text 66-cursor-hover-style 67-cursor-resting 68-cursor-css-none
+    69-lamp-lit-dark 70-lamp-lit-light 71-lamp-out-dark
 )
 # Scene 60 used to be before-only (it needed the removed palette button); it now
 # reaches the same state through Appearance in after mode. The cursor scenes
-# (L8) came after the before capture and use only the after coordinates.
+# (L8) and the lamp scenes (L11) came after the before capture and use only the
+# after coordinates.
 declare -A ONLY_IN=(
     [61-cursor-back]=after [62-cursor-rail]=after [63-cursor-tab-row]=after
     [64-cursor-link]=after [65-cursor-text]=after [66-cursor-hover-style]=after
     [67-cursor-resting]=after [68-cursor-css-none]=after
+    [69-lamp-lit-dark]=after [70-lamp-lit-light]=after [71-lamp-out-dark]=after
 )
 
 if ((LIST)); then
@@ -179,6 +182,8 @@ coordinates_before() {
     AT[PAGE_TEXT]=""
     AT[PAGE_NOCURSOR]=""
     AT[CROP_GO]=""
+    # The lamp scenes run in after mode only.
+    AT[LAMP]=""
 }
 coordinates_after() {
     AT[TAB1]="60 20"
@@ -236,6 +241,8 @@ coordinates_after() {
     AT[PAGE_TEXT]="270 424"               # over the first word of the text
     AT[PAGE_NOCURSOR]="402 544"
     AT[CROP_GO]="300x60+252+274"          # inside the link's box
+    # Lamp scenes (L11): the centre of CROP_LAMP, with the sidebar open.
+    AT[LAMP]="507 350"
 }
 
 # ── Setup ────────────────────────────────────────────────────────────────
@@ -580,7 +587,10 @@ wait_title() {
     done
 }
 
-# ae A B [CROP] → number of differing pixels.
+# ae A B [CROP] → ImageMagick's AE metric. Under ImageMagick 7.1.2 it is not a
+# count of differing pixels: on these RGB captures it is the sum, over pixels,
+# of the mean absolute channel difference (0 to 1 each). It is 0 only for
+# identical images, and a pixel that changes completely counts 1 (ledger L11).
 ae() {
     local a=$1 b=$2 crop=${3:-}
     if [[ -n $crop ]]; then
@@ -1133,6 +1143,44 @@ scene_68_cursor_css_none() {
     check "$SCENE" hidden_opaque_px "$C_OPAQUE" eq 0
     pointer PAGE_PLAIN && shot 0.5 || return 1
     cursor_visible_arrow back
+}
+
+# ── Lamp scenes (docs/ui/ledger.md, L11) ─────────────────────────────────
+# The new-tab page's f1r3lang program toggles the lamp's class `lit` on each
+# click. The host theme overrode the page's `button.lit` rule, so the class
+# changed and the lamp did not. These scenes click it in the layout of scene
+# 58 (sidebar open), whose CROP_LAMP is calibrated. Each waits a second after
+# the page loads, so its program is listening, and parks the pointer before
+# every capture.
+LAMP_YELLOW='#FFCF3F'
+# lamp_scene THEME CLICKS: capture the unlit lamp as the reference `unlit`,
+# then click it CLICKS times.
+lamp_scene() {
+    new_profile "$SCENE"
+    seed "$1" appearance true false 4
+    launch && wait_title "New tab" && sleep 1 && pointer NEUTRAL && ref unlit || return 1
+    local n
+    for ((n = 0; n < $2; n++)); do
+        click LAMP 1 0.8 || return 1
+    done
+    pointer NEUTRAL && shot 0.8
+}
+# lamp_lit_checks: the click changed the lamp, it shows the page's yellow,
+# and its label reads on it.
+lamp_lit_checks() {
+    effect lamp_lit_px unlit CROP_LAMP
+    check "$SCENE" lit_fill_px "$(count_color_in "$OUT/$SCENE.png" "${AT[CROP_LAMP]}" "$LAMP_YELLOW")" ge 500
+    check "$SCENE" lit_label_contrast "$(max_contrast "$OUT/$SCENE.png" "${AT[CROP_LAMP]}")" ge 4.5
+}
+scene_69_lamp_lit_dark() { lamp_scene dark 1 && lamp_lit_checks; }
+scene_70_lamp_lit_light() { lamp_scene light 1 && lamp_lit_checks; }
+# A second click puts the lamp out: no yellow is left, and the lamp looks
+# exactly as it did before the first click. Blitz outlines only focused
+# inputs and text areas, so the clicked button has no focus ring.
+scene_71_lamp_out_dark() {
+    lamp_scene dark 2 || return 1
+    check "$SCENE" out_fill_px "$(count_color_in "$OUT/$SCENE.png" "${AT[CROP_LAMP]}" "$LAMP_YELLOW")" eq 0
+    check "$SCENE" out_px_vs_unlit "$(ae "$WORK/refs/$SCENE.unlit.png" "$OUT/$SCENE.png" "${AT[CROP_LAMP]}")" le 0
 }
 
 # ── Calibration ──────────────────────────────────────────────────────────

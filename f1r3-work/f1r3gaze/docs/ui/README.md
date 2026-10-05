@@ -425,7 +425,14 @@ built-in schemes:
 | `--gaze-danger` | errors, destructive actions | `#ff8a80` | `#b42318` |
 
 Built-in pages (`gaze://newtab`, `gaze://about`, error pages) use the same
-tokens through `theme::builtin_css`.
+tokens through `theme::builtin_css`. The chrome installs that sheet as a
+user-agent style sheet whose rules are `!important`, so it overrides the
+pages' own rules whatever their specificity (§11). A page state that changes a
+colour the sheet sets must therefore be styled in the sheet too. The one such
+state is the new-tab page's lit lamp (`button.lit`, §8.14). Its colours are
+the same in both schemes: the page's yellow `#ffcf3f`, a `#1d2330` label, and
+a `#a37f00` edge (`theme::LAMP_LIT_FILL`, `LAMP_LIT_LABEL`, `LAMP_LIT_EDGE`;
+ledger L11).
 
 ### 4.2 Contrast
 
@@ -477,6 +484,17 @@ where 3:1 suffices. Two pairings used on accent or danger backgrounds:
 - `--gaze-accent-text` on accent: 8.91 (dark), 4.78 (light).
 - `--gaze-bg` on danger, for the primary danger button: 7.55 (dark), 6.13
   (light).
+
+The lit lamp (§8.14) keeps its own colours in both schemes:
+- Its label on its yellow: 10.67. The scheme's dark-mode text would give 1.28
+  there, so the lit rule sets the label too.
+- Its edge on the page background: 4.59 (dark), 3.50 (light). The yellow
+  itself is only 1.37:1 against the light background, so on the light page
+  the edge outlines the lit lamp (WCAG 1.4.11). The page's own amber edge,
+  `#c79a00`, gives 2.43 there.
+
+The test `the_lit_lamp_is_legible_in_both_schemes` asserts the label at
+4.5:1 or more, and the edge at 3:1 or more against both backgrounds.
 
 The test `palettes_are_legible` asserts, for both schemes:
 - text and muted text on the surface, at least 4.5:1;
@@ -864,7 +882,17 @@ After: [`15-appearance-dark`](../screenshots/ui/after/15-appearance-dark.png),
 ### 8.14 Built-in pages
 
 **New tab.** The address box is empty, with its hint. The page explains the
-address forms and runs the f1r3lang lamp.
+address forms and runs a f1r3lang program, the lamp, whose one capability is
+the document:
+1. It asks the document for `#lamp` and listens for the button's clicks.
+2. A single token, on `off` or on `on`, holds the lamp's state.
+3. Each click adds the class `lit` and moves the token to `on`, or removes the
+   class and moves it back to `off`.
+
+So each click switches the lamp between unlit, in the scheme's button colours,
+and lit, in yellow. The host theme styles both states (§4.1). Before ledger
+L11 it styled only the unlit one, so the class changed and the lamp did not.
+Snapshot scenes 69–71 click it (§12.2).
 
 **Error page.** It is themed like the chrome. It shows:
 - "Can't open this page";
@@ -1205,6 +1233,7 @@ sources.
 |---|---|---|
 | No rendering of `placeholder`, `text-overflow`, `title` tooltips, `:focus-within`, `content: attr()`. A `<label for>` click does not focus the input. | Ghost hints, exact fitting (R5), `.tip` labels, `#urlwrap.focus` set from Rust. | Blitz source review |
 | Bare text in a flex box becomes an anonymous block that is never restyled. | R1 (ledger L2). | `blitz-dom/src/layout/construct.rs`; `stylo.rs` |
+| `add_user_agent_stylesheet` adds a sheet of the user-agent origin. Stylo compares importance and origin before specificity, and reverses the origin order for important declarations: an important user-agent declaration beats every author declaration ([CSS-Cascade-4] §6.1). | `builtin_css` overrides the built-in pages' own rules, so it styles their states too: `button.lit` (L11). | `blitz-dom/src/document.rs:1149-1153`; stylo 0.21.0 `rule_tree/level.rs:144-165` |
 | Only a positioned element with z-index ≠ 0 is hoisted, above sub-documents, hit-tested first, unclipped. | R2 and the layer table. | `blitz-paint` `paint_tree.rs` |
 | `visibility:hidden` skips paint and hit-testing. | R3 toggles. | `blitz-paint` |
 | Click is dispatched before the Blur its default action causes. | Suggestions commit on Click; dismiss on Blur is safe. | `blitz-dom/src/events/pointer.rs` |
@@ -1243,7 +1272,7 @@ sub-document hover behind §3.4, reproduced on `main` too.
 
 ### 12.1 Tests
 
-`cargo test -p gaze-shell -p gaze-dom-blitz` runs 103 + 8 tests (105 + 8 with `--features frame-times`). By area:
+`cargo test -p gaze-shell -p gaze-dom-blitz` runs 105 + 8 tests (107 + 8 with `--features frame-times`). By area:
 
 | Area | Tests |
 |---|---|
@@ -1251,10 +1280,10 @@ sub-document hover behind §3.4, reproduced on `main` too.
 | Markup | `chrome_markup_has_stable_ids`, `removed_toolbar_buttons_stay_commented`, `labels_are_never_bare_text_in_flex_boxes` (R1), `side_controls_are_constant` (R4) |
 | Layout | `text_budgets_match_laid_out_boxes`, `the_status_bar_fits_on_one_line`, `measured_width_matches_blitz_layout` |
 | Builders | the strip, tab attention, history groups and counts, search highlights, prompts, the error page |
-| Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge, the sidebar collapsed at startup and `restore_sidebar` |
+| Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge, the sidebar collapsed at startup and `restore_sidebar`, the new-tab page's lamp lighting and going out in both schemes (L11) |
 | The pointer over pages (L8) | through a recording window provider and real pointer events: a fresh page never hides the cursor; the cursor follows links and text; leaving a page ends its hover; hover changes are repainted; a page loaded, or a tab switched, under a resting pointer gets its cursor; `cursor: none`; background pages; no redundant cursor requests; built-in buttons |
 | Resizing (L9) | through a recording window provider, with frames bracketed as the window brackets them: a relayout hovers again at the pointer's last position (the mechanism); once the mouse has left, resizing hovers nothing and asks for no extra frame; a page's new viewport asks for a frame (the mechanism); a frame answers its pages' requests unless a hover changed during it, and then asks for one more |
-| Pure helpers | `display` (13), `text_fit` (14, with the shaping face), `theme` (6, with the bundled faces' names), `ui_state` (6), `cursor` (6: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants, requests set aside during a paint, and never another thread's), `application` (2: which events poll at once, which end the hover), `renderer` (4: coalescing, pass-through, delegation, a size asked for while the renderer resumes), `frame_stats` (2, with `--features frame-times`) |
+| Pure helpers | `display` (13), `text_fit` (14, with the shaping face), `theme` (7, with the bundled faces' names and the lit lamp's contrast), `ui_state` (6), `cursor` (6: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants, requests set aside during a paint, and never another thread's), `application` (2: which events poll at once, which end the hover), `renderer` (4: coalescing, pass-through, delegation, a size asked for while the renderer resumes), `frame_stats` (2, with `--features frame-times`) |
 
 Each fix in the ledger has a **mutation check**: the fix is commented out, its
 test must fail, and then the fix is restored.
@@ -1269,7 +1298,7 @@ CI (`.github/workflows/ci.yml`) runs:
 
 `scripts/ui-snapshots.sh` drives the real binary under a virtual X server
 (Xvfb). It uses `xdotool` for keys and pointer, and ImageMagick 7 for captures
-and measurements. Every one of the 68 scenes starts from a seeded throwaway
+and measurements. Every one of the 71 scenes starts from a seeded throwaway
 profile, with the pointer parked on the status bar before the window opens,
 so no scene depends on where the previous one left it.
 
@@ -1287,6 +1316,16 @@ The checks then compare hashes, so they do not depend on the cursor theme. The
 sprites are saved in `cursors/`. The pages are `site/cursor.html` and
 `site/cursor-next.html`: large boxes at fixed places, the second with its link
 where the first has a plain block.
+
+**Lamp scenes (69–71, ledger L11).** They click the new-tab page's lamp in
+scene 58's layout (the sidebar open), where `CROP_LAMP` is calibrated. Each
+waits a second after the page loads, so that its program is listening, and
+captures the unlit lamp as a reference before the first click.
+- Scenes 69 (dark) and 70 (light) click once. The lamp must change, show the
+  page's yellow, and keep a legible label.
+- Scene 71 clicks twice. No yellow may be left, and the lamp must match the
+  reference pixel for pixel. Blitz outlines only focused inputs and text
+  areas, so the clicked button has no focus ring.
 
 ```sh
 scripts/ui-snapshots.sh --after                  # all scenes → docs/screenshots/ui/after/
@@ -1342,15 +1381,29 @@ for `--after`. Every check names a crop of the screen and a limit:
 | `hover_fill_px`, `left_fill_px`: the link's `:hover` fill while hovered, and after the pointer leaves the page | 66 | 0, 18 000 | 18 000, 0 | ≥ 15 000, = 0 |
 | `resting_is_hand`: a page loaded under the resting pointer | 67 | 0 (arrow) | 1 | = 1 |
 | `hidden_opaque_px`, `back_opaque_px`, `back_is_arrow`: `cursor: none`, then off it | 68 | 0, 0, 0 | 0, 272, 1 | = 0, ≥ 1, = 1 |
+| `lamp_lit_px`, `lit_fill_px` (pixels of `#FFCF3F` in the 52 × 22 `CROP_LAMP`), `lit_label_contrast`: the lamp after one click, in dark / in light | 69, 70 | 0, 0, 13.05 / 0, 0, 15.23 | 584.6, 926, 10.67 / 319.0, 926, 10.67 | ≥ 1, ≥ 500, ≥ 4.5 |
+| `out_fill_px`, `out_px_vs_unlit`: the lamp after two clicks | 71 | 0, 0 | 0, 0 | = 0, ≤ 0 |
 
 The "Before" column of the cursor rows is the release binary from before the
 L8 fix (`635ed212…`), run with `--out` in a scratch directory, not the
-`before/` capture.
+`before/` capture. That of the lamp rows is likewise the binary from before the
+L11 fix (`56c385c1…`, built from `d2bfc05`). With it a click changed no pixel
+of the lamp, and its label contrasts are those of the unlit lamp. The limit of
+500 yellow pixels is about half the crop: the lit lamp fills 926, and the
+label takes the rest.
 
 How the less obvious checks measure:
 - **Effect checks** (`≥ 1`) compare a capture taken just before an interaction
   with one after it. A click that misses its target changes nothing and fails
   the run.
+- **Pixel differences** (`ae`) are ImageMagick's AE metric. The effect checks
+  use them, and so do the reflow checks and the comparisons with another scene
+  or a reference (`sidebar_px_vs_03`, `sidebar_px_vs_12`, `out_px_vs_unlit`).
+  Under ImageMagick 7.1.2 the metric is not a count of differing pixels. It
+  is the sum over pixels of the mean absolute channel difference, each between
+  0 and 1. A pixel that changes completely counts 1, so the value is
+  fractional and can be smaller than the number of pixels that changed. It is
+  0 only for identical crops (ledger L11).
 - **The theme checks** compare colour histograms of a screen switched to a
   scheme with one started in it. A label left in the old colour shows up even
   if a glyph moved by a pixel. Both captures of a pair use the same profile
@@ -1434,6 +1487,11 @@ log (ledger L9).
   relative luminance and contrast ratio; success criteria 1.4.3 and 1.4.11.
 - **[CSS21-E]** W3C. *CSS 2.1, Appendix E: Elaborate description of stacking
   contexts.* <https://www.w3.org/TR/CSS21/zindex.html>.
+- **[CSS-Cascade-4]** W3C. *CSS Cascading and Inheritance Level 4.* W3C
+  Candidate Recommendation Snapshot, 13 January 2022.
+  <https://www.w3.org/TR/css-cascade-4/>. §6.1 Cascade Sorting Order: origin
+  and importance, from transitions and important user-agent declarations down
+  to normal user-agent declarations.
 - **[CSS-Images-3]** W3C. *CSS Images Module Level 3*, linear gradients and
   colour-stop fix-up. <https://www.w3.org/TR/css-images-3/>.
 - **[Knuth 1984]** D. E. Knuth. "Literate Programming." *The Computer Journal*

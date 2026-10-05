@@ -1948,6 +1948,136 @@ fn built_in_buttons_show_the_hand() {
     );
 }
 
+// ── Ledger L11: the lamp lights ─────────────────────────────────────────
+
+/// A `#rrggbb` colour as computed styles report it: `rgb(r, g, b)`.
+fn css_rgb(hex: &str) -> String {
+    let channel = |at: usize| {
+        u8::from_str_radix(&hex[at..at + 2], 16).unwrap_or_else(|_| panic!("{hex} is not #rrggbb"))
+    };
+    format!("rgb({}, {}, {})", channel(1), channel(3), channel(5))
+}
+
+/// What the lamp on tab 0's new-tab page shows: its class, and the computed
+/// colours of its fill, its label and its edge.
+#[derive(Debug, PartialEq)]
+struct LampLook {
+    class: String,
+    fill: String,
+    label: String,
+    edge: String,
+}
+
+impl LampLook {
+    fn of(chrome: &mut ChromeDocument) -> LampLook {
+        let class = {
+            let view = chrome.tabs[0].1;
+            let base = rho_mut(&mut chrome.inner, view).expect("attached").base();
+            let doc = base.borrow();
+            let lamp = doc
+                .query_selector("#lamp")
+                .expect("a valid selector")
+                .expect("the new-tab page has #lamp");
+            doc.get_node(lamp)
+                .and_then(|node| node.attr(LocalName::from("class")))
+                .unwrap_or_default()
+                .to_string()
+        };
+        LampLook {
+            class,
+            fill: page_style(chrome, 0, "#lamp", "background-color"),
+            label: page_style(chrome, 0, "#lamp span", "color"),
+            edge: page_style(chrome, 0, "#lamp", "border-top-color"),
+        }
+    }
+
+    /// The look `class` should have in `scheme`: lit in the lamp's own
+    /// colours, unlit in the scheme's button colours.
+    fn expected(scheme: &str, class: &str) -> LampLook {
+        let colors = theme::palette(scheme, None);
+        let [fill, label, edge] = match class {
+            "lit" => [theme::LAMP_LIT_FILL, theme::LAMP_LIT_LABEL, theme::LAMP_LIT_EDGE],
+            _ => ["--gaze-surface", "--gaze-text", "--gaze-border"].map(|token| colors[token].as_str()),
+        };
+        LampLook {
+            class: class.to_string(),
+            fill: css_rgb(fill),
+            label: css_rgb(label),
+            edge: css_rgb(edge),
+        }
+    }
+}
+
+/// Poll until tab 0's f1r3lang program listens for clicks (bounded). When the
+/// page's title appears, the program is not listening yet: it registers its
+/// listener a few polls later (four, measured in ledger L11). A click before
+/// that reaches no listener, as on the web before a page's script has run.
+fn wait_until_listening(chrome: &mut ChromeDocument) {
+    let view = chrome.tabs[0].1;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !rho_mut(&mut chrome.inner, view)
+        .and_then(|page| page.tab())
+        .is_some_and(|program| program.dom.has_listener("click"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the page's program did not listen for clicks within 10 s"
+        );
+        chrome.poll(None);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    lay_out_chrome(chrome);
+}
+
+/// Click the lamp, then poll until its f1r3lang program has set its class
+/// to `class` (bounded), and lay the window out so the page is restyled.
+fn click_lamp(chrome: &mut ChromeDocument, class: &str) {
+    let point = point_in_page(chrome, 0, "#lamp");
+    click_at(chrome, point);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        chrome.poll(None);
+        lay_out_chrome(chrome);
+        let now = LampLook::of(chrome).class;
+        if now == class {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the lamp's class stayed {now:?} for 10 s, not {class:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// L11: each click on the new-tab page's lamp switches it between lit and
+/// unlit, in both schemes. The host theme's `button` rule is an important
+/// user-agent declaration, which beat the page's own `button.lit`: the class
+/// changed and the lamp looked the same.
+#[test]
+fn the_lamp_lights_and_goes_out_in_both_schemes() {
+    for scheme in ["dark", "light"] {
+        let profile = ScratchProfile::new(&format!("lamp-{scheme}"));
+        UiState {
+            theme: scheme.into(),
+            ..UiState::default()
+        }
+        .save(profile.path())
+        .expect("save the workspace");
+        let (mut chrome, _window) = chrome_with_window(&profile, "gaze://newtab");
+        show(&mut chrome, 0, "New tab");
+        wait_until_listening(&mut chrome);
+        let unlit = LampLook::expected(scheme, "");
+        let lit = LampLook::expected(scheme, "lit");
+        assert_ne!(lit.fill, unlit.fill, "{scheme}: the lit lamp has a fill of its own");
+        assert_eq!(LampLook::of(&mut chrome), unlit, "{scheme}: unlit before any click");
+        click_lamp(&mut chrome, "lit");
+        assert_eq!(LampLook::of(&mut chrome), lit, "{scheme}: lit after one click");
+        click_lamp(&mut chrome, "");
+        assert_eq!(LampLook::of(&mut chrome), unlit, "{scheme}: out again after two");
+    }
+}
+
 // ── Sidebar at startup ──────────────────────────────────────────────────
 
 fn sidebar_hidden(chrome: &ChromeDocument) -> bool {
