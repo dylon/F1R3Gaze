@@ -1,6 +1,7 @@
 //! Host-owned workspace and visit history. Only URLs, titles and layout choices
 //! are persisted; capabilities, keys, documents and running sessions are not.
 
+use gaze_fs::{Perm, StdFs};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::path::Path;
@@ -51,7 +52,7 @@ pub fn match_span(query: &str, text: &str) -> Option<Range<usize>> {
 /// The first occurrence of `needle` (already lowercase) in `text` ignoring
 /// case: the byte range of `text` covering every character the match
 /// touches. Agrees exactly with `text.to_lowercase().contains(needle)`,
-/// which [`exact_score`] uses.
+/// which `exact_score` uses.
 pub fn find_ignoring_case(text: &str, needle: &str) -> Option<Range<usize>> {
     if needle.is_empty() {
         return None;
@@ -201,102 +202,396 @@ impl UiState {
     }
 
     pub fn save(&self, dir: &Path) -> Result<(), String> {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let path = dir.join("workspace.json");
-        let temp = dir.join("workspace.json.part");
+        gaze_fs::create_dir_durably(&StdFs, dir).map_err(|e| e.to_string())?;
         let bytes = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
-        std::fs::rename(temp, path).map_err(|e| e.to_string())
+        gaze_fs::write_atomic(&StdFs, &dir.join("workspace.json"), &bytes, Perm::Private)
+            .map_err(|e| e.to_string())
     }
 
     pub fn visit(&mut self, url: &str, title: &str) {
-        if url.starts_with("gaze://") || url.is_empty() {
-            return;
-        }
-        let at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        // Preserve visits but collapse rapid redirects/reloads of the same page.
-        if let Some(last) = self.visits.first_mut()
-            && last.url == url
-            && at.saturating_sub(last.at) < 10
-        {
-            last.title = title.to_string();
-            last.at = at;
-            return;
-        }
-        self.visits.insert(
-            0,
-            Visit {
-                url: url.into(),
-                title: title.into(),
-                at,
-            },
-        );
-        self.visits.truncate(HISTORY_LIMIT);
+        record_visit(&mut self.visits, url, title, now_seconds());
     }
 
     /// Remove every visit of `url` from history; returns how many there were.
     pub fn forget(&mut self, url: &str) -> usize {
-        let before = self.visits.len();
-        self.visits.retain(|visit| visit.url != url);
-        before - self.visits.len()
+        forget_visits(&mut self.visits, url)
     }
 
     pub fn suggestions(&self, query: &str, open: &[SavedTab]) -> Vec<SavedTab> {
-        let q = query.trim().to_lowercase();
-        if q.is_empty() {
-            return Vec::new();
+        suggest(&self.visits, query, open)
+    }
+
+    /// The legacy `workspace.json` as this version keeps it: the session,
+    /// the history, and the theme name, which belongs to `settings.toml`
+    /// now (profile/migrate.rs folds it in).
+    pub fn split(self) -> (SessionState, History, String) {
+        let session = SessionState {
+            version: SESSION_VERSION,
+            sidebar_open: self.sidebar_open,
+            panel: self.panel,
+            tree_tabs: self.tree_tabs,
+            tabs: self.tabs,
+            active: self.active,
+        };
+        let history = History {
+            version: HISTORY_VERSION,
+            visits: self.visits,
+        };
+        (session.sanitized(), history.sanitized(), self.theme)
+    }
+}
+
+fn now_seconds() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+/// Records a visit at `at`, newest first, keeping at most [`HISTORY_LIMIT`].
+/// Built-in pages are not recorded; a page visited again within 10 seconds
+/// (a redirect, a reload) updates its last visit instead of adding one.
+fn record_visit(visits: &mut Vec<Visit>, url: &str, title: &str, at: u64) {
+    if url.starts_with("gaze://") || url.is_empty() {
+        return;
+    }
+    if let Some(last) = visits.first_mut()
+        && last.url == url
+        && at.saturating_sub(last.at) < 10
+    {
+        last.title = title.to_string();
+        last.at = at;
+        return;
+    }
+    visits.insert(
+        0,
+        Visit {
+            url: url.into(),
+            title: title.into(),
+            at,
+        },
+    );
+    visits.truncate(HISTORY_LIMIT);
+}
+
+/// Removes every visit of `url`; returns how many there were.
+fn forget_visits(visits: &mut Vec<Visit>, url: &str) -> usize {
+    let before = visits.len();
+    visits.retain(|visit| visit.url != url);
+    before - visits.len()
+}
+
+/// At most eight open tabs and visits matching `query`: exact matches
+/// first, then matches with a typo among the open tabs and the 200 most
+/// recent visits.
+fn suggest(visits: &[Visit], query: &str, open: &[SavedTab]) -> Vec<SavedTab> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for t in open
+        .iter()
+        .cloned()
+        .chain(visits.iter().map(|v| SavedTab {
+            url: v.url.clone(),
+            title: v.title.clone(),
+            parent: None,
+        }))
+    {
+        if exact_score(&q, &t.title, &t.url).is_some()
+            && !out.iter().any(|x: &SavedTab| x.url == t.url)
+        {
+            out.push(t.clone());
         }
-        let mut out = Vec::new();
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    if out.len() < 8 {
+        // Fuzzy suggestions consider open tabs and recent visits. Older
+        // visits remain reachable through exact history search.
         for t in open
             .iter()
             .cloned()
-            .chain(self.visits.iter().map(|v| SavedTab {
+            .chain(visits.iter().take(200).map(|v| SavedTab {
                 url: v.url.clone(),
                 title: v.title.clone(),
                 parent: None,
             }))
         {
-            if exact_score(&q, &t.title, &t.url).is_some()
-                && !out.iter().any(|x: &SavedTab| x.url == t.url)
+            if search_score(&q, &t.title, &t.url).is_some()
+                && !out.iter().any(|x| x.url == t.url)
             {
-                out.push(t.clone());
+                out.push(t);
             }
             if out.len() >= 8 {
                 break;
             }
         }
-        if out.len() < 8 {
-            // Fuzzy suggestions consider open tabs and recent visits. Older
-            // visits remain reachable through exact history search.
-            for t in open
-                .iter()
-                .cloned()
-                .chain(self.visits.iter().take(200).map(|v| SavedTab {
-                    url: v.url.clone(),
-                    title: v.title.clone(),
-                    parent: None,
-                }))
-            {
-                if search_score(&q, &t.title, &t.url).is_some()
-                    && !out.iter().any(|x| x.url == t.url)
-                {
-                    out.push(t);
-                }
-                if out.len() >= 8 {
-                    break;
-                }
+    }
+    out
+}
+
+/// The version of `session.json` and of `history.json` this build writes.
+pub const SESSION_VERSION: u32 = 1;
+pub const HISTORY_VERSION: u32 = 1;
+
+/// The panels the sidebar can show.
+pub const PANELS: [&str; 7] = ["tabs", "history", "sites", "grants", "wallet", "console", "appearance"];
+
+/// Why a state file cannot be used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StateError {
+    /// It is not JSON of the file's shape.
+    Corrupt(String),
+    /// A newer F1R3Gaze wrote it, in a format this one does not know. It is
+    /// left as it is.
+    Newer { version: u32, known: u32 },
+}
+
+impl std::fmt::Display for StateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StateError::Corrupt(why) => write!(f, "not a state file of this kind: {why}"),
+            StateError::Newer { version, known } => {
+                write!(f, "written by a newer F1R3Gaze (format {version}; this one knows {known})")
             }
         }
-        out
+    }
+}
+
+/// The `version` of a state file, read on its own so that a newer format
+/// is recognised even when its other fields have changed shape.
+#[derive(Deserialize)]
+struct Versioned {
+    #[serde(default)]
+    version: u32,
+}
+
+/// Reads a state file of type `T`, written at most at version `known`.
+pub(crate) fn read_state<T: serde::de::DeserializeOwned>(bytes: &[u8], known: u32) -> Result<T, StateError> {
+    let versioned: Versioned = serde_json::from_slice(bytes).map_err(|e| StateError::Corrupt(e.to_string()))?;
+    match versioned.version > known {
+        true => Err(StateError::Newer {
+            version: versioned.version,
+            known,
+        }),
+        false => serde_json::from_slice(bytes).map_err(|e| StateError::Corrupt(e.to_string())),
+    }
+}
+
+/// A state file's bytes: indented JSON ending in a line break.
+pub(crate) fn state_bytes<T: Serialize>(state: &T) -> Vec<u8> {
+    let mut bytes = serde_json::to_vec_pretty(state).expect("state types serialize: plain fields and strings");
+    bytes.push(b'\n');
+    bytes
+}
+
+/// `state/session.json`: the open tabs and the sidebar's layout.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SessionState {
+    pub version: u32,
+    pub sidebar_open: bool,
+    pub panel: String,
+    pub tree_tabs: bool,
+    pub tabs: Vec<SavedTab>,
+    pub active: usize,
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        SessionState {
+            version: SESSION_VERSION,
+            sidebar_open: false,
+            panel: "tabs".into(),
+            tree_tabs: false,
+            tabs: Vec::new(),
+            active: 0,
+        }
+    }
+}
+
+impl SessionState {
+    /// Reads `session.json`, keeping what can be shown.
+    pub fn read(bytes: &[u8]) -> Result<SessionState, StateError> {
+        read_state::<SessionState>(bytes, SESSION_VERSION).map(SessionState::sanitized)
+    }
+
+    /// At most 100 tabs, an active tab that exists, a panel that exists,
+    /// and this build's version.
+    pub fn sanitized(mut self) -> SessionState {
+        self.version = SESSION_VERSION;
+        self.tabs.truncate(TAB_LIMIT);
+        if self.active >= self.tabs.len() {
+            self.active = 0;
+        }
+        if !PANELS.contains(&self.panel.as_str()) {
+            self.panel = "tabs".into();
+        }
+        self
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        state_bytes(self)
+    }
+}
+
+/// `state/history.json`: the pages visited, newest first.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct History {
+    pub version: u32,
+    pub visits: Vec<Visit>,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        History {
+            version: HISTORY_VERSION,
+            visits: Vec::new(),
+        }
+    }
+}
+
+impl History {
+    /// Reads `history.json`, keeping the newest [`HISTORY_LIMIT`] visits.
+    pub fn read(bytes: &[u8]) -> Result<History, StateError> {
+        read_state::<History>(bytes, HISTORY_VERSION).map(History::sanitized)
+    }
+
+    pub fn sanitized(mut self) -> History {
+        self.version = HISTORY_VERSION;
+        self.visits.truncate(HISTORY_LIMIT);
+        self
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        state_bytes(self)
+    }
+
+    pub fn visit(&mut self, url: &str, title: &str) {
+        record_visit(&mut self.visits, url, title, now_seconds());
+    }
+
+    /// Remove every visit of `url`; returns how many there were.
+    pub fn forget(&mut self, url: &str) -> usize {
+        forget_visits(&mut self.visits, url)
+    }
+
+    pub fn suggestions(&self, query: &str, open: &[SavedTab]) -> Vec<SavedTab> {
+        suggest(&self.visits, query, open)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tab(url: &str, parent: Option<usize>) -> SavedTab {
+        SavedTab {
+            url: url.into(),
+            title: url.into(),
+            parent,
+        }
+    }
+
+    #[test]
+    fn a_session_round_trips_and_is_kept_in_bounds() {
+        let session = SessionState {
+            sidebar_open: true,
+            panel: "wallet".into(),
+            tree_tabs: true,
+            tabs: vec![tab("https://a.example/", None), tab("https://b.example/", Some(0))],
+            active: 1,
+            ..SessionState::default()
+        };
+        assert_eq!(SessionState::read(&session.to_bytes()), Ok(session.clone()));
+        assert!(session.to_bytes().ends_with(b"}\n"));
+        let wild = br#"{"panel": "nowhere", "active": 7, "tabs": [{"url": "u", "title": "t"}], "later": 1}"#;
+        let read = SessionState::read(wild).expect("unknown fields are ignored");
+        assert_eq!((read.panel.as_str(), read.active, read.tabs.len()), ("tabs", 0, 1));
+        let many: Vec<SavedTab> = (0..150).map(|i| tab(&format!("https://{i}.example/"), None)).collect();
+        let crowded = SessionState { tabs: many, ..SessionState::default() };
+        assert_eq!(SessionState::read(&crowded.to_bytes()).expect("read").tabs.len(), TAB_LIMIT);
+        assert_eq!(SessionState::read(b"{}"), Ok(SessionState::default()), "missing fields take their defaults");
+    }
+
+    #[test]
+    fn a_newer_state_file_is_recognised_whatever_its_shape() {
+        assert_eq!(
+            SessionState::read(br#"{"version": 2, "tabs": "a format to come"}"#),
+            Err(StateError::Newer { version: 2, known: SESSION_VERSION })
+        );
+        assert_eq!(
+            History::read(br#"{"version": 9}"#),
+            Err(StateError::Newer { version: 9, known: HISTORY_VERSION })
+        );
+        for corrupt in [&b"[1, 2]"[..], b"{\"tabs\": 3}", b"{\"visits\": [{\"url\": 1}]}", b"not json", b"", b"{\"version\": -1}"] {
+            assert!(
+                matches!(SessionState::read(corrupt), Err(StateError::Corrupt(_)))
+                    || matches!(History::read(corrupt), Err(StateError::Corrupt(_))),
+                "{}",
+                String::from_utf8_lossy(corrupt)
+            );
+        }
+        assert!(matches!(History::read(b"{\"visits\": 5}"), Err(StateError::Corrupt(_))));
+    }
+
+    #[test]
+    fn history_round_trips_newest_first_and_bounded() {
+        let mut history = History::default();
+        for i in 0..(HISTORY_LIMIT + 2) {
+            history.visits.insert(
+                0,
+                Visit {
+                    url: format!("https://example.org/{i}"),
+                    title: "Example".into(),
+                    at: i as u64,
+                },
+            );
+        }
+        let read = History::read(&history.to_bytes()).expect("read");
+        assert_eq!(read.visits.len(), HISTORY_LIMIT);
+        assert_eq!(read.visits[0].url, format!("https://example.org/{}", HISTORY_LIMIT + 1));
+        let mut h = History::default();
+        h.visit("https://a.example/", "A");
+        h.visit("https://a.example/", "A again");
+        h.visit("gaze://newtab", "never kept");
+        assert_eq!(h.visits.len(), 1, "a reload within ten seconds updates the visit");
+        assert_eq!(h.visits[0].title, "A again");
+        assert_eq!(h.suggestions("a.exa", &[]).len(), 1);
+        assert_eq!(h.forget("https://a.example/"), 1);
+    }
+
+    #[test]
+    fn a_legacy_workspace_splits_into_session_history_and_theme() {
+        let legacy = UiState {
+            theme: "light".into(),
+            sidebar_open: true,
+            panel: "history".into(),
+            tree_tabs: true,
+            tabs: vec![tab("https://a.example/", None)],
+            active: 0,
+            visits: vec![Visit {
+                url: "https://a.example/".into(),
+                title: "A".into(),
+                at: 5,
+            }],
+        };
+        let (session, history, theme) = legacy.clone().split();
+        assert_eq!(theme, "light");
+        assert_eq!(
+            session,
+            SessionState {
+                version: SESSION_VERSION,
+                sidebar_open: true,
+                panel: "history".into(),
+                tree_tabs: true,
+                tabs: legacy.tabs.clone(),
+                active: 0,
+            }
+        );
+        assert_eq!(history, History { version: HISTORY_VERSION, visits: legacy.visits.clone() });
+    }
 
     #[test]
     fn history_is_bounded_and_suggests_unique_urls() {

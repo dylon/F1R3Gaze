@@ -1,0 +1,385 @@
+[
+ {
+  "id": "M14l",
+  "what": "a read-only freshness log saves anyway (read_only ignored)",
+  "file": "crates/gaze-shard/src/fresh.rs",
+  "package": "gaze-shard",
+  "old": "        self.blocked.get_or_insert_with(|| why.to_string());\n        self\n    }\n\n    /// Why the records cannot be saved, if so.",
+  "new": "        let _ = why;\n        self\n    }\n\n    /// Why the records cannot be saved, if so.",
+  "test": "a_read_only_log_enforces_and_never_writes"
+ },
+ {
+  "id": "M14l2",
+  "what": "the same save failure reported after every new block",
+  "file": "crates/gaze-shard/src/bridge.rs",
+  "package": "gaze-shard",
+  "old": "            Err(e) if self.last.as_ref() == Some(&e) => {}\n",
+  "new": "",
+  "test": "a_repeated_save_failure_is_reported_once",
+  "target": [
+   "--test",
+   "mock_node"
+  ]
+ },
+ {
+  "id": "M14aa",
+  "what": "the lock's folders made through StdFs, whatever start-up runs on",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "            match take_patiently_in(fs, &path, patience) {",
+  "new": "            match take_patiently_in(&StdFs, &path, patience) {",
+  "test": "the_lock_goes_through_the_file_system_it_is_given"
+ },
+ {
+  "id": "M14aa2",
+  "what": "the holder's instance.pid written through StdFs",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "gaze_fs::write_atomic(fs, &beside, info.as_bytes(), Perm::Private)",
+  "new": "gaze_fs::write_atomic(&StdFs, &beside, info.as_bytes(), Perm::Private)",
+  "test": "the_lock_goes_through_the_file_system_it_is_given"
+ },
+ {
+  "id": "M14aa3",
+  "what": "another holder read through StdFs",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "                    let holder = read_holder_in(fs, &path);",
+  "new": "                    let holder = read_holder_in(&StdFs, &path);",
+  "test": "the_lock_goes_through_the_file_system_it_is_given"
+ },
+ {
+  "id": "M14a",
+  "what": "a writer opens read-only while another F1R3Gaze holds the profile",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "Err(e @ LockError::Held { .. }) if matches!(locking, Locking::Exclusive(_)) => {",
+  "new": "Err(e @ LockError::Held { .. }) if false => {",
+  "test": "the_lock_policy_decides_access"
+ },
+ {
+  "id": "M14b",
+  "what": "a reader is refused while another F1R3Gaze holds the profile",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "Err(e @ LockError::Held { .. }) if matches!(locking, Locking::Exclusive(_)) => {",
+  "new": "Err(e @ LockError::Held { .. }) if matches!(locking, Locking::Exclusive(_) | Locking::IfFree(_)) => {",
+  "test": "the_lock_policy_decides_access"
+ },
+ {
+  "id": "M14c",
+  "what": "paths opens the profile first",
+  "file": "crates/gaze-shell/src/main.rs",
+  "package": "gaze-shell",
+  "old": "    if command == Command::Paths {",
+  "new": "    if false && command == Command::Paths {",
+  "test": "paths_names_the_roots_and_creates_nothing",
+  "target": [
+   "--test",
+   "cli"
+  ]
+ },
+ {
+  "id": "M14d",
+  "what": "profile check runs a writing start",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "        access: Access::ReadOnly {\n            why: \"profile check only looks\".into(),\n        },",
+  "new": "        access: Access::Write,",
+  "test": "profile_check_reports_what_start_up_would_do"
+ },
+ {
+  "id": "M14e",
+  "what": "the busy flag removed after a move that stopped",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "        if let Some(why) = stopped {\n            access = Access::ReadOnly { why };\n            flagged = false;\n        }",
+  "new": "        if let Some(why) = stopped {\n            access = Access::ReadOnly { why };\n        }",
+  "test": "a_stopped_migration_leaves_the_session_read_only_and_unfinished"
+ },
+ {
+  "id": "M14f",
+  "what": "no busy flag at start",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "        match migrate::begin(l, fs) {",
+  "new": "        match Ok::<migrate::Begun, std::io::Error>(migrate::Begun::Clean) {",
+  "test": "a_steady_open_writes_only_its_busy_flag"
+ },
+ {
+  "id": "M14g",
+  "what": "a newer profile not seen before the busy flag",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "        && let Some(version) = migrate::newer_layout(l, fs)",
+  "new": "        && let Some(version) = None::<u32>",
+  "test": "a_newer_profile_is_opened_read_only_without_a_busy_flag"
+ },
+ {
+  "id": "M14h",
+  "what": "blocked wallets opened writable",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "            Some(why) => wallets.read_only(why),",
+  "new": "            Some(_) => wallets,",
+  "test": "blocked_wallets_refuse_changes"
+ },
+ {
+  "id": "M14i",
+  "what": "blocked grants opened writable",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "            Some(why) => grants.read_only(why),",
+  "new": "            Some(_) => grants,",
+  "test": "blocked_grants_are_never_saved"
+ },
+ {
+  "id": "M14j",
+  "what": "a site index start-up could not read saved anyway",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "        if self.profile.blocked.why(Managed::SiteIndex).is_some() {\n            return;\n        }\n",
+  "new": "",
+  "test": "an_unreadable_site_index_is_never_replaced"
+ },
+ {
+  "id": "M14k",
+  "what": "no observer counts as this machine's",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "            name == \"localhost\" || name.ends_with(\".localhost\")",
+  "new": "            let _ = name;\n            false",
+  "test": "observers_are_loopback_only_on_this_machine"
+ },
+ {
+  "id": "M14m",
+  "what": "site stores opened in a session that only reads",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "        if let Some(why) = self.profile.read_only_reason() {\n            return Err(format!(\"site data is not opened: {why}\"));\n        }\n",
+  "new": "",
+  "test": "site_data_is_not_opened_read_only"
+ },
+ {
+  "id": "M14n",
+  "what": "a damaged store cut back without a backup",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "OriginStore::open(path, self.settings.store_quota, &salvage)",
+  "new": "OriginStore::open(path, self.settings.store_quota, { let _ = &salvage; &gaze_store::Discard })",
+  "test": "a_damaged_store_is_backed_up_when_it_opens"
+ },
+ {
+  "id": "M14o",
+  "what": "the engine makes a user id of its own",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "        shard_cfg.user = profile.user_id().to_string();",
+  "new": "        shard_cfg.user = crate::profile::new_user_id();",
+  "test": "the_engine_uses_the_reconciled_user_id"
+ },
+ {
+  "id": "M14p",
+  "what": "the history written at every visit",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                self.history_due.get_or_insert(now + HISTORY_SAVE_DELAY);",
+  "new": "                self.history_due = Some(now);",
+  "test": "history_is_written_once_per_delay"
+ },
+ {
+  "id": "M14q",
+  "what": "a tab switch rewrites the history",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        // Ledger L1/H6: find re-runs on the incoming tab.\n        self.refresh_find();\n        self.session_dirty = true;",
+  "new": "        // Ledger L1/H6: find re-runs on the incoming tab.\n        self.refresh_find();\n        self.session_dirty = true;\n        self.history_changed(true);",
+  "test": "a_tab_switch_never_rewrites_history"
+ },
+ {
+  "id": "M14r",
+  "what": "a closing window saves nothing",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "    fn drop(&mut self) {\n        self.flush_state();\n    }",
+  "new": "    fn drop(&mut self) {}",
+  "test": "closing_the_window_saves_pending_history"
+ },
+ {
+  "id": "M14s",
+  "what": "Clear history keeps the history's backups",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                    None => self.eng.profile.forget_history_backups().map(drop),",
+  "new": "                    None => Ok(()),",
+  "test": "clearing_history_removes_its_backups"
+ },
+ {
+  "id": "M14t",
+  "what": "a theme that cannot be saved is not used either",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "        self.theme.replace(choice.clone());\n",
+  "new": "",
+  "test": "set_theme_changes_the_session_first"
+ },
+ {
+  "id": "M14u",
+  "what": "Create palette file replaces a theme file",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            .and_then(|_| gaze_fs::write_new(profile.fs(), &path, css.as_bytes(), Perm::Private));",
+  "new": "            .and_then(|_| gaze_fs::write_atomic(profile.fs(), &path, css.as_bytes(), Perm::Private));",
+  "test": "create_palette_never_replaces_a_theme_file",
+  "retired": "Create palette file became New theme in step 10 (ledger S12, part 3); M12ad guards New theme's write_new"
+ },
+ {
+  "id": "M14v",
+  "what": "System resolved without the system's preference",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        let preference = preference_of(&self.system.known());\n        self.applied_preference = preference;",
+  "new": "        let preference = preference_of(&self.system.known());\n        self.applied_preference = preference;\n        let preference = None;",
+  "test": "system_follows_the_os"
+ },
+ {
+  "id": "M14w",
+  "what": "a built-in choice follows the system",
+  "file": "crates/gaze-shell/src/theme.rs",
+  "package": "gaze-shell",
+  "old": "        ThemeChoice::BuiltIn(scheme) => builtin(*scheme, None),",
+  "new": "        ThemeChoice::BuiltIn(_) => builtin(fallback, None),",
+  "test": "an_explicit_choice_ignores_the_os"
+ },
+ {
+  "id": "M14x",
+  "what": "the window's reports used under F1R3GAZE_SYSTEM_THEME",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        if self.system_source == Source::Window {\n            self.system.set(preference);",
+  "new": "        if true {\n            self.system.set(preference);",
+  "test": "the_override_ignores_window_reports"
+ },
+ {
+  "id": "M14y",
+  "what": "start-up's events never shown",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        let mut events = profile.report.take_unshown();",
+  "new": "        let mut events: Vec<Event> = Vec::new();",
+  "test": "start_up_notices_are_shown_once"
+ },
+ {
+  "id": "M14z",
+  "what": "the custom palette laid over a built-in scheme again (L14)",
+  "file": "crates/gaze-shell/src/theme.rs",
+  "package": "gaze-shell",
+  "old": "        ThemeChoice::BuiltIn(scheme) => builtin(*scheme, None),",
+  "new": "        ThemeChoice::BuiltIn(scheme) => match find_theme(fs, dirs, \"custom\") {\n            Some(ThemeFile { colours: Ok(declared), .. }) => {\n                let mut colours = builtin_palette(*scheme);\n                colours.extend(declared);\n                Resolved { colours, scheme: *scheme, file: None, problem: None }\n            }\n            _ => builtin(*scheme, None),\n        },",
+  "test": "a_builtin_scheme_ignores_the_custom_theme"
+ },
+ {
+  "id": "M14ab",
+  "what": "a test profile that is an old single-folder one",
+  "file": "crates/gaze-shell/src/test_support.rs",
+  "package": "gaze-shell",
+  "old": "        std::fs::write(layout.settings_file(), \"[shard]\\nobservers = []\\n\").expect(\"write settings.toml\");",
+  "new": "        std::fs::write(root.join(\"settings.conf\"), \"observers =\\n\").expect(\"write settings.conf\");",
+  "test": "a_scratch_profile_is_never_an_old_one"
+ },
+ {
+  "id": "M14ac",
+  "what": "the folders a move emptied left behind",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        let _ = fs.remove_dir(&dir);",
+  "new": "        let _ = &dir;",
+  "test": "emptied_folders_of_the_old_profile_go_too"
+ },
+ {
+  "id": "M14ad",
+  "what": "the emptied folders' removal never synced",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    if removed && let Err(e) = fs.sync_dir(&legacy) {",
+  "new": "    if false && removed && let Err(e) = fs.sync_dir(&legacy) {",
+  "test": "emptied_folders_of_the_old_profile_go_too",
+  "retired": "the mutation stayed green: M7's atomic write of the note syncs the same folder, so the sync was redundant, and was removed (ledger S14)"
+ },
+ {
+  "id": "M14ae",
+  "what": "a session that only reads names no temporary file to sweep",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "            true => gaze_fs::stale_temps(fs, &dir).map(|stale| stale.len()),",
+  "new": "            true => Ok(0),",
+  "test": "the_sweep_removes_only_dead_writers_temps"
+ },
+ {
+  "id": "M14af",
+  "what": "something in the way of a folder not reported in a session that only reads",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "                Ok(Kind::Dir) => {}\n                Ok(Kind::Symlink) if fs.list(&dir).is_ok() => {}",
+  "new": "                Ok(_) => {}",
+  "test": "a_read_only_run_names_a_file_in_the_way_of_a_folder"
+ },
+ {
+  "id": "M14ag",
+  "what": "a read-only content cache stores a fetched blob",
+  "file": "crates/gaze-blob/src/lib.rs",
+  "package": "gaze-blob",
+  "old": "        if let Some(why) = &self.read_only {\n            return Err(format!(\"the content cache only reads: {why}\"));\n        }\n",
+  "new": "",
+  "test": "a_read_only_cache_reads_and_never_writes"
+ },
+ {
+  "id": "M14ah",
+  "what": "a read-only session's content cache opened writable",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "            Some(why) => cache.read_only(why),",
+  "new": "            Some(_) => cache,",
+  "test": "a_read_only_engine_never_fills_the_content_cache"
+ },
+ {
+  "id": "M14ai",
+  "what": "profile check counts nothing made as a change",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "                EventKind::Created\n                | EventKind::Refreshed",
+  "new": "                EventKind::Refreshed",
+  "test": "profile_check_reports_what_start_up_would_do"
+ },
+ {
+  "id": "M14aj",
+  "what": "profile check exits 0 when a start would change something",
+  "file": "crates/gaze-shell/src/main.rs",
+  "package": "gaze-shell",
+  "old": "    i32::from(!changes.is_empty())",
+  "new": "    i32::from(changes.is_empty() && false)",
+  "test": "profile_check_writes_nothing",
+  "target": [
+   "--test",
+   "cli"
+  ]
+ },
+ {
+  "id": "M14ak",
+  "what": "a blocked freshness file written anyway",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "                Some(why) => records.read_only(why),",
+  "new": "                Some(_) => records,",
+  "test": "freshness_records_are_kept_where_the_shard_says"
+ },
+ {
+  "id": "M14al",
+  "what": "the freshness records of a shard on this machine written to the file",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "        true => Arc::new(MemFreshness::default()),",
+  "new": "        true => Arc::new(FileFreshness::open(profile.layout.trust_file(), &shard.shard_id)),",
+  "test": "freshness_records_are_kept_where_the_shard_says"
+ }
+]

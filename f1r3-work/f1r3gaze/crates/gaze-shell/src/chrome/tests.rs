@@ -68,12 +68,12 @@ fn lay_out_chrome(chrome: &mut ChromeDocument) {
     lay_out_chrome_at(chrome, 1280, 800);
 }
 
-/// A chrome on `page` with the given workspace state saved first.
-fn chrome_with(profile: &ScratchProfile, state: UiState, url: &str) -> ChromeDocument {
-    // The seeded state is restored as saved, the sidebar included.
+/// A chrome on `page` with the given session saved first.
+fn chrome_with(profile: &ScratchProfile, session: SessionState, url: &str) -> ChromeDocument {
+    // The seeded session is restored as saved, the sidebar included.
     profile.restore_sidebar();
-    state.save(profile.path()).expect("save the workspace");
-    ChromeDocument::new(Engine::new(profile.path().to_path_buf()), url)
+    profile.seed(&session);
+    ChromeDocument::new(profile.engine(), url)
 }
 
 fn key_down(key: Key) -> UiEvent {
@@ -166,6 +166,34 @@ fn data_actions(doc: &BaseDocument) -> Vec<String> {
         .iter()
         .filter_map(|(id, _)| attr_of(doc, id, "data-action"))
         .collect()
+}
+
+/// Three theme files, as `theme::list_themes` sorts them: one that cannot
+/// be used, a user's dark one, and a light one installed for everyone.
+fn sample_themes() -> Vec<ThemeFile> {
+    vec![
+        ThemeFile {
+            name: "broken".into(),
+            path: "/home/u/.config/f1r3fly-io/f1r3gaze/themes/broken.css".into(),
+            packaged: false,
+            colours: Err("line 2: expected a --gaze-* colour; a theme file holds only these, optionally inside :root { }".into()),
+        },
+        ThemeFile {
+            name: "nord".into(),
+            path: "/home/u/.config/f1r3fly-io/f1r3gaze/themes/nord.css".into(),
+            packaged: false,
+            colours: Ok(BTreeMap::from([("--gaze-accent".to_string(), "#88c0d0".to_string())])),
+        },
+        ThemeFile {
+            name: "solar".into(),
+            path: "/usr/share/f1r3fly-io/f1r3gaze/themes/solar.css".into(),
+            packaged: true,
+            colours: Ok(BTreeMap::from([
+                ("--gaze-bg".to_string(), "#fdf6e3".to_string()),
+                ("--gaze-text".to_string(), "#073642".to_string()),
+            ])),
+        },
+    ]
 }
 
 /// Representative output of every builder, with the region it renders into.
@@ -262,6 +290,7 @@ fn sample_fragments() -> Vec<(&'static str, String)> {
         }],
     };
     let colors = theme::palette("dark", None);
+    let themes = sample_themes();
     let wallet = WalletRow {
         address: "11112eMWq1fS7F8iUcujR3zktD1woWR6ZALP4mW5acQq9xyz".into(),
         label: "Snapshot wallet".into(),
@@ -347,22 +376,69 @@ fn sample_fragments() -> Vec<(&'static str, String)> {
             .html,
         ),
         ("panel", console_html(&[]).html),
+        // Was three samples of the step-9 panel: Dark, Light and Custom
+        // with the custom file valid, missing and invalid.
         (
             "panel",
-            appearance_html(&mut fit, "dark", &colors, "/tmp/profile/palette.css", &PaletteStatus::Valid).html,
-        ),
-        (
-            "panel",
-            appearance_html(&mut fit, "light", &colors, "/tmp/profile/palette.css", &PaletteStatus::Missing).html,
+            appearance_html(
+                &mut fit,
+                &AppearanceView {
+                    choice: &ThemeChoice::System,
+                    system: &Known::Answered(Some(Scheme::Light)),
+                    colours: &colors,
+                    shown: Scheme::Light,
+                    problem: None,
+                    themes: &themes,
+                    folder: "/home/u/.config/f1r3fly-io/f1r3gaze/themes",
+                },
+            )
+            .html,
         ),
         (
             "panel",
             appearance_html(
                 &mut fit,
-                "dark",
-                &colors,
-                "/tmp/profile/palette.css",
-                &PaletteStatus::Invalid("invalid palette color: x".into()),
+                &AppearanceView {
+                    choice: &ThemeChoice::Named("nord".into()),
+                    system: &Known::Unknown(None),
+                    colours: &colors,
+                    shown: Scheme::Dark,
+                    problem: None,
+                    themes: &themes,
+                    folder: "/home/u/.config/f1r3fly-io/f1r3gaze/themes",
+                },
+            )
+            .html,
+        ),
+        (
+            "panel",
+            appearance_html(
+                &mut fit,
+                &AppearanceView {
+                    choice: &ThemeChoice::Named("gone".into()),
+                    system: &Known::Answered(None),
+                    colours: &colors,
+                    shown: Scheme::Dark,
+                    problem: Some("there is no theme \"gone\": no gone.css in /home/u/.config/f1r3fly-io/f1r3gaze/themes"),
+                    themes: &themes,
+                    folder: "/home/u/.config/f1r3fly-io/f1r3gaze/themes",
+                },
+            )
+            .html,
+        ),
+        (
+            "panel",
+            appearance_html(
+                &mut fit,
+                &AppearanceView {
+                    choice: &ThemeChoice::BuiltIn(Scheme::Dark),
+                    system: &Known::Answered(Some(Scheme::Light)),
+                    colours: &colors,
+                    shown: Scheme::Dark,
+                    problem: None,
+                    themes: &[],
+                    folder: "/home/u/.config/f1r3fly-io/f1r3gaze/themes",
+                },
             )
             .html,
         ),
@@ -493,6 +569,33 @@ fn actions_parse() {
         Action::parse("site:session:7:label"),
         Some(Action::SiteOp("session".into(), "7:label".into()))
     );
+    for (text, op) in [
+        ("theme:system", ThemeOp::System),
+        ("theme:dark", ThemeOp::Dark),
+        ("theme:light", ThemeOp::Light),
+        ("theme:new", ThemeOp::New),
+        ("theme:reload", ThemeOp::Reload),
+        ("theme:use:nord", ThemeOp::Use("nord".into())),
+    ] {
+        assert_eq!(Action::parse(text), Some(Action::Theme(op)), "{text}");
+    }
+    // The step-9 strings, and anything that is not a theme's name, are
+    // refused (ledger S12, part 3).
+    for text in [
+        "theme:next",
+        "theme:template",
+        "theme:custom",
+        "theme:",
+        "theme",
+        "theme:use:",
+        "theme:use:system",
+        "theme:use:../x",
+        "theme:use:a:b",
+        "theme:Dark",
+        "theme:dark:x",
+    ] {
+        assert_eq!(Action::parse(text), None, "{text}");
+    }
     // Unknown sub-verbs are refused rather than guessed.
     assert_eq!(Action::parse("side:bogus"), None);
     assert_eq!(Action::parse("sidebar:x"), None);
@@ -550,30 +653,106 @@ fn removed_toolbar_buttons_stay_commented() {
 #[test]
 fn browser_shortcuts_select_tabs_even_when_page_has_focus() {
     let tabs = [11, 22, 33];
+    let other = KeyPlatform::Other;
     assert_eq!(
-        global_shortcut(&Key::Tab, Modifiers::CONTROL, &tabs, 1),
+        global_shortcut(&Key::Tab, Modifiers::CONTROL, &tabs, 1, other),
         Some(Action::Select(33))
     );
     assert_eq!(
-        global_shortcut(&Key::Tab, Modifiers::CONTROL | Modifiers::SHIFT, &tabs, 0),
+        global_shortcut(&Key::Tab, Modifiers::CONTROL | Modifiers::SHIFT, &tabs, 0, other),
         Some(Action::Select(33))
     );
     assert_eq!(
-        global_shortcut(&Key::Character("9".into()), Modifiers::CONTROL, &tabs, 0),
+        global_shortcut(&Key::Character("9".into()), Modifiers::CONTROL, &tabs, 0, other),
         Some(Action::Select(33))
     );
     assert_eq!(
-        global_shortcut(&Key::Character("F".into()), Modifiers::CONTROL, &tabs, 0),
+        global_shortcut(&Key::Character("F".into()), Modifiers::CONTROL, &tabs, 0, other),
         Some(Action::Find(String::new()))
     );
     assert_eq!(
-        global_shortcut(&Key::Character("b".into()), Modifiers::CONTROL, &tabs, 0),
+        global_shortcut(&Key::Character("b".into()), Modifiers::CONTROL, &tabs, 0, other),
         Some(Action::SidebarToggle)
     );
     assert_eq!(
-        global_shortcut(&Key::Tab, Modifiers::empty(), &tabs, 0),
+        global_shortcut(&Key::Tab, Modifiers::empty(), &tabs, 0, other),
         None
     );
+}
+
+/// Ledger L12: Blitz reports Cmd as `SUPER`, so on macOS the shortcuts take
+/// `SUPER` (or `META`) as the command key, and Ctrl+Tab still cycles tabs.
+/// Elsewhere the command key is Ctrl, and the system's Super key binds
+/// nothing.
+#[test]
+fn cmd_shortcuts_fire_with_the_command_key() {
+    let tabs = [11, 22, 33];
+    let t = || Key::Character("t".into());
+    let mac = KeyPlatform::MacOs;
+    assert_eq!(global_shortcut(&t(), Modifiers::SUPER, &tabs, 0, mac), Some(Action::NewTab));
+    assert_eq!(global_shortcut(&t(), Modifiers::META, &tabs, 0, mac), Some(Action::NewTab));
+    assert_eq!(
+        global_shortcut(&Key::Character("2".into()), Modifiers::SUPER, &tabs, 0, mac),
+        Some(Action::Select(22))
+    );
+    assert_eq!(global_shortcut(&t(), Modifiers::CONTROL, &tabs, 0, mac), None);
+    assert_eq!(
+        global_shortcut(&Key::Tab, Modifiers::CONTROL, &tabs, 0, mac),
+        Some(Action::Select(22))
+    );
+    let other = KeyPlatform::Other;
+    assert_eq!(global_shortcut(&t(), Modifiers::CONTROL, &tabs, 0, other), Some(Action::NewTab));
+    assert_eq!(global_shortcut(&t(), Modifiers::SUPER, &tabs, 0, other), None);
+}
+
+/// L17: every hover tip and tag names a key that does what it says, on each
+/// platform. (They named Ctrl on macOS, whose command key is Cmd.)
+#[test]
+fn every_key_label_names_a_key_that_does_what_it_says() {
+    let does = [
+        ("{key:newtab}", Action::NewTab),
+        ("{key:sidebar}", Action::SidebarToggle),
+        ("{key:reload}", Action::Reload),
+        ("{key:find}", Action::Find(String::new())),
+        ("{key:history}", Action::Panel("history".into())),
+        ("{key:reopen}", Action::TabOp("restore".into(), 0)),
+    ];
+    assert_eq!(does.len(), KEY_LABELS.len(), "every label is checked");
+    for platform in [KeyPlatform::Other, KeyPlatform::MacOs] {
+        for (token, action) in &does {
+            let label = key_label(token, platform);
+            let mut parts: Vec<&str> = label.split('+').collect();
+            let key = Key::Character(parts.pop().expect("a key").to_lowercase());
+            let modifiers = parts.iter().fold(Modifiers::empty(), |all, part| {
+                all | match *part {
+                    "Ctrl" => Modifiers::CONTROL,
+                    "Cmd" => Modifiers::SUPER,
+                    "Shift" => Modifiers::SHIFT,
+                    other => panic!("{label}: no modifier {other}"),
+                }
+            });
+            assert_eq!(global_shortcut(&key, modifiers, &[1], 0, platform).as_ref(), Some(action), "{platform:?}: {label}");
+        }
+    }
+    let shell = shell_html(&chrome_css("dark", None), true);
+    assert!(!shell.contains("{key:"), "no token is left in the markup");
+    assert!(shell.contains(key_label("{key:history}", KeyPlatform::CURRENT)));
+}
+
+/// L16: on macOS, winit's default menu takes Cmd+H for Hide before any view
+/// sees the key (winit-appkit `menu.rs:38-45`), so History is Cmd+Y there, as
+/// in Safari and Chrome. Elsewhere it stays Ctrl+H.
+#[test]
+fn history_is_cmd_y_on_macos_and_ctrl_h_elsewhere() {
+    let tabs = [11];
+    let key = |c: &str| Key::Character(c.into());
+    let history = Some(Action::Panel("history".into()));
+    let mac = KeyPlatform::MacOs;
+    assert_eq!(global_shortcut(&key("y"), Modifiers::SUPER, &tabs, 0, mac), history);
+    assert_eq!(global_shortcut(&key("h"), Modifiers::SUPER, &tabs, 0, mac), None, "Cmd+H hides the application");
+    let other = KeyPlatform::Other;
+    assert_eq!(global_shortcut(&key("h"), Modifiers::CONTROL, &tabs, 0, other), history);
+    assert_eq!(global_shortcut(&key("y"), Modifiers::CONTROL, &tabs, 0, other), None);
 }
 
 #[test]
@@ -681,10 +860,10 @@ fn side_controls_are_constant() {
     }
     let profile = ScratchProfile::new("controls");
     let url = profile.page("notes.html", NOTES);
-    let state = UiState {
+    let state = SessionState {
         sidebar_open: true,
         panel: "tabs".into(),
-        ..UiState::default()
+        ..SessionState::default()
     };
     let mut chrome = chrome_with(&profile, state, &url);
     attach(&mut chrome, 0);
@@ -701,11 +880,13 @@ fn text_budgets_match_laid_out_boxes() {
     use geometry::*;
     let profile = ScratchProfile::new("budgets");
     let url = profile.page("alpha.html", NOTES);
-    let state = UiState {
+    let state = SessionState {
         sidebar_open: true,
         panel: "tabs".into(),
-        ..UiState::default()
+        ..SessionState::default()
     };
+    // A theme file, so Appearance lists a row with its tag.
+    profile.theme_file("nord", "--gaze-accent: #88c0d0;\n");
     let mut chrome = chrome_with(&profile, state, &url);
     chrome
         .eng
@@ -762,10 +943,40 @@ fn text_budgets_match_laid_out_boxes() {
             card_inner(),
         );
 
+        // Appearance: a theme file's row with its tag, the Theme files card,
+        // and the labels of the scheme control's three segments.
+        chrome.act(Action::ShowPanel("appearance".into()));
+        chrome.poll(None);
+        lay_out_chrome_at(&mut chrome, width, height);
+        let doc = &chrome.inner;
+        let tag = width_of(doc, "#panel .row .tag");
+        assert_close(
+            "theme row: text, gap and tag",
+            width_of(doc, "#panel .row .row-text") + ROW_GAP + tag,
+            row_text(),
+        );
+        let mut fit = TextFitter::new();
+        let budget = fit.width(TAG, "Dark") + TAG_PAD;
+        assert!((tag - budget).abs() <= 1.0, "the tag is {tag} px; its budget {budget} px");
+        let card = width_of(doc, "#panel .card");
+        assert_close(
+            "Theme files card content",
+            card - 2.0 * CARD_BORDER - 2.0 * CARD_PAD_X,
+            card_inner(),
+        );
+        for n in 1..=3 {
+            let segment = width_of(doc, &format!("#panel .segment:nth-child({n})"));
+            let label = width_of(doc, &format!("#panel .segment:nth-child({n}) span"));
+            assert!(
+                label + 18.0 <= segment - 2.0,
+                "segment {n}: a {label} px label with its icon does not fit a {segment} px segment"
+            );
+        }
+
         // A suggestion row in the address box's dropdown.
         chrome.act(Action::FocusUrl);
         chrome.act(Action::Input("url".into(), "alpha".into()));
-        chrome.ui.visit("https://alpha.example/", "Alpha example");
+        chrome.history.visit("https://alpha.example/", "Alpha example");
         chrome.poll(None);
         lay_out_chrome_at(&mut chrome, width, height);
         let row = width_of(&chrome.inner, "#suggestions .suggestion");
@@ -913,7 +1124,7 @@ fn small_pure_helpers() {
 fn reopening_closed_tabs_starts_with_the_most_recent() {
     let profile = ScratchProfile::new("closed");
     let first = profile.page("first.html", "<p>first</p>");
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &first);
+    let mut chrome = ChromeDocument::new(profile.engine(), &first);
     for n in 0..25 {
         let url = profile.page(&format!("p{n:02}.html"), "<p>x</p>");
         chrome.open_tab(&url);
@@ -933,7 +1144,7 @@ fn reopening_closed_tabs_starts_with_the_most_recent() {
 fn remember_applies_to_one_answer() {
     let profile = ScratchProfile::new("remember");
     let url = profile.page("notes.html", NOTES);
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     chrome.act(Action::Remember);
     assert!(chrome.remember);
     let tab = chrome.tabs[0].0.id;
@@ -945,10 +1156,10 @@ fn remember_applies_to_one_answer() {
 fn switching_panels_or_reopening_the_sidebar_starts_a_fresh_search() {
     let profile = ScratchProfile::new("side-search");
     let url = profile.page("notes.html", NOTES);
-    let state = UiState {
+    let state = SessionState {
         sidebar_open: true,
         panel: "tabs".into(),
-        ..UiState::default()
+        ..SessionState::default()
     };
     let mut chrome = chrome_with(&profile, state, &url);
     attach(&mut chrome, 0);
@@ -970,7 +1181,7 @@ fn switching_panels_or_reopening_the_sidebar_starts_a_fresh_search() {
 fn the_tab_menu_toggles_and_closes_after_an_action() {
     let profile = ScratchProfile::new("menu");
     let url = profile.page("notes.html", NOTES);
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     let id = chrome.tabs[0].0.id;
     chrome.act(Action::TabOp("menu".into(), id));
     assert_eq!(chrome.menu_tab, Some(id));
@@ -981,7 +1192,7 @@ fn the_tab_menu_toggles_and_closes_after_an_action() {
     assert_eq!(chrome.menu_tab, None, "an action closes it");
     chrome.act(Action::TabOp("menu-open".into(), id));
     assert_eq!(chrome.menu_tab, Some(id));
-    assert!(chrome.ui.sidebar_open && chrome.panel == "tabs", "a right-click shows it");
+    assert!(chrome.session.sidebar_open && chrome.panel == "tabs", "a right-click shows it");
     chrome.act(Action::Dismiss);
     assert_eq!(chrome.menu_tab, None, "Escape closes it");
 }
@@ -991,7 +1202,7 @@ fn a_reviewed_transfer_is_refused_when_the_paying_wallet_changed() {
     let profile = ScratchProfile::new("payer");
     profile.restore_sidebar();
     let url = profile.page("notes.html", NOTES);
-    let engine = Engine::new(profile.path().to_path_buf());
+    let engine = profile.engine();
     let first = engine
         .wallets
         .import(&"11".repeat(32), "First")
@@ -1001,13 +1212,11 @@ fn a_reviewed_transfer_is_refused_when_the_paying_wallet_changed() {
         .import(&"22".repeat(32), "Second")
         .expect("import the second test key");
     engine.wallets.set_active(&first).expect("the first pays");
-    UiState {
+    profile.seed(&SessionState {
         sidebar_open: true,
         panel: "wallet".into(),
-        ..UiState::default()
-    }
-    .save(profile.path())
-    .expect("save the workspace");
+        ..SessionState::default()
+    });
     let mut chrome = ChromeDocument::new(Rc::clone(&engine), &url);
     attach(&mut chrome, 0);
     chrome.poll(None);
@@ -1038,7 +1247,7 @@ fn clicking_a_suggestion_switches_to_its_tab_then_dismisses() {
     let profile = ScratchProfile::new("suggest-click");
     let url_a = profile.page("first.html", NOTES);
     let url_b = profile.page("bee.html", "<p>bee</p>");
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url_a);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url_a);
     attach(&mut chrome, 0);
     chrome.open_tab(&url_b);
     attach(&mut chrome, 1);
@@ -1082,7 +1291,7 @@ fn clicking_a_suggestion_switches_to_its_tab_then_dismisses() {
 fn find_clears_selection_when_query_is_emptied() {
     let profile = ScratchProfile::new("find-empty");
     let url = profile.page("notes.html", NOTES);
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     let view = attach(&mut chrome, 0);
     chrome.act(Action::Find(String::new()));
     chrome.act(Action::Input("find".into(), "a".into()));
@@ -1116,7 +1325,7 @@ fn find_selection_follows_the_active_tab() {
     let profile = ScratchProfile::new("find-tabs");
     let url_a = profile.page("a.html", NOTES);
     let url_b = profile.page("b.html", "<p>beta alpha beta</p>");
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url_a);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url_a);
     let view_a = attach(&mut chrome, 0);
     chrome.open_tab(&url_b);
     let view_b = attach(&mut chrome, 1);
@@ -1145,7 +1354,7 @@ fn find_searches_a_new_page_once_it_is_laid_out() {
     let profile = ScratchProfile::new("find-attach");
     let url_a = profile.page("a.html", NOTES);
     let url_b = profile.page("b.html", "<p>beta alpha beta</p>");
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url_a);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url_a);
     attach(&mut chrome, 0);
     chrome.act(Action::Find(String::new()));
     chrome.act(Action::Input("find".into(), "alpha".into()));
@@ -1168,7 +1377,7 @@ fn find_searches_a_new_page_once_it_is_laid_out() {
 fn find_keeps_a_selection_it_did_not_make() {
     let profile = ScratchProfile::new("find-own");
     let url = profile.page("notes.html", NOTES);
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     let view = attach(&mut chrome, 0);
     {
         let page = rho_mut(&mut chrome.inner, view).expect("attached");
@@ -1195,7 +1404,7 @@ fn find_keeps_a_selection_it_did_not_make() {
 fn find_input_follows_real_key_events() {
     let profile = ScratchProfile::new("find-keys");
     let url = profile.page("notes.html", NOTES);
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     attach(&mut chrome, 0);
     chrome.act(Action::Find(String::new()));
     chrome.poll(None);
@@ -1214,8 +1423,10 @@ fn find_input_follows_real_key_events() {
 fn theme_switch_leaves_no_stale_label_colours() {
     let profile = ScratchProfile::new("theme-stale");
     profile.restore_sidebar();
+    // A theme file, so Appearance lists a row.
+    profile.theme_file("nord", "--gaze-accent: #88c0d0;\n");
     let url = profile.page("notes.html", NOTES);
-    let engine = Engine::new(profile.path().to_path_buf());
+    let engine = profile.engine();
     // A fixed test key that is never funded, so the wallet panel lists a
     // wallet with its buttons.
     engine
@@ -1224,15 +1435,16 @@ fn theme_switch_leaves_no_stale_label_colours() {
         .expect("import the test key");
     let mut failures = Vec::new();
     for (panel, _, _) in PANELS {
-        for (from, to) in [("dark", "light"), ("light", "dark")] {
-            UiState {
-                theme: from.into(),
+        for (from, to, op) in [("dark", "light", ThemeOp::Light), ("light", "dark", ThemeOp::Dark)] {
+            profile.seed(&SessionState {
                 sidebar_open: true,
                 panel: panel.into(),
-                ..UiState::default()
-            }
-            .save(profile.path())
-            .expect("save the workspace");
+                ..SessionState::default()
+            });
+            engine
+                .profile
+                .set_theme(ThemeChoice::parse(from).expect("a scheme"))
+                .expect("save the theme");
             let mut chrome = ChromeDocument::new(Rc::clone(&engine), &url);
             attach(&mut chrome, 0);
             if matches!(panel, "tabs" | "history") {
@@ -1241,7 +1453,7 @@ fn theme_switch_leaves_no_stale_label_colours() {
             }
             chrome.poll(None);
             lay_out_chrome(&mut chrome);
-            chrome.act(Action::Theme(to.into()));
+            chrome.act(Action::Theme(op));
             chrome.poll(None);
             lay_out_chrome(&mut chrome);
             let stale = stale_text_colours(&chrome.inner);
@@ -1416,7 +1628,7 @@ fn search_results_show_why_they_matched() {
 fn focusing_or_reverting_a_field_selects_its_text() {
     let profile = ScratchProfile::new("select-whole");
     let url = profile.page("notes.html", NOTES);
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     attach(&mut chrome, 0);
     chrome.poll(None);
     lay_out_chrome(&mut chrome);
@@ -1457,7 +1669,7 @@ fn focusing_or_reverting_a_field_selects_its_text() {
 fn the_badge_turns_into_a_magnifier_when_the_address_is_edited() {
     let profile = ScratchProfile::new("badge");
     let url = profile.page("notes.html", NOTES);
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     attach(&mut chrome, 0);
     chrome.poll(None);
     lay_out_chrome(&mut chrome);
@@ -1553,7 +1765,7 @@ fn cursor_page(title: &str, link_first: bool) -> String {
 /// after the document is built, as blitz-shell's `View::init` installs its
 /// own provider.
 fn chrome_with_window(profile: &ScratchProfile, url: &str) -> (ChromeDocument, Arc<WindowLog>) {
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), url);
+    let mut chrome = ChromeDocument::new(profile.engine(), url);
     let window = Arc::new(WindowLog::default());
     chrome.inner.set_shell_provider(window.clone());
     (chrome, window)
@@ -2058,12 +2270,7 @@ fn click_lamp(chrome: &mut ChromeDocument, class: &str) {
 fn the_lamp_lights_and_goes_out_in_both_schemes() {
     for scheme in ["dark", "light"] {
         let profile = ScratchProfile::new(&format!("lamp-{scheme}"));
-        UiState {
-            theme: scheme.into(),
-            ..UiState::default()
-        }
-        .save(profile.path())
-        .expect("save the workspace");
+        profile.set_theme(scheme);
         let (mut chrome, _window) = chrome_with_window(&profile, "gaze://newtab");
         show(&mut chrome, 0, "New tab");
         wait_until_listening(&mut chrome);
@@ -2095,20 +2302,18 @@ fn sidebar_hidden(chrome: &ChromeDocument) -> bool {
 fn the_sidebar_starts_collapsed() {
     let profile = ScratchProfile::new("sidebar-start");
     let url = profile.page("notes.html", NOTES);
-    UiState {
+    profile.seed(&SessionState {
         sidebar_open: true,
         panel: "appearance".into(),
-        ..UiState::default()
-    }
-    .save(profile.path())
-    .expect("save the workspace");
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+        ..SessionState::default()
+    });
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     attach(&mut chrome, 0);
     chrome.poll(None);
-    assert!(!chrome.ui.sidebar_open && sidebar_hidden(&chrome), "collapsed at start");
+    assert!(!chrome.session.sidebar_open && sidebar_hidden(&chrome), "collapsed at start");
     chrome.act(Action::SidebarToggle);
     chrome.poll(None);
-    assert!(chrome.ui.sidebar_open && !sidebar_hidden(&chrome), "Ctrl+B opens it");
+    assert!(chrome.session.sidebar_open && !sidebar_hidden(&chrome), "Ctrl+B opens it");
     assert_eq!(chrome.panel, "appearance", "on the panel last shown");
 }
 
@@ -2119,17 +2324,15 @@ fn restore_sidebar_reopens_it() {
     let profile = ScratchProfile::new("sidebar-restore");
     profile.restore_sidebar();
     let url = profile.page("notes.html", NOTES);
-    UiState {
+    profile.seed(&SessionState {
         sidebar_open: true,
         panel: "appearance".into(),
-        ..UiState::default()
-    }
-    .save(profile.path())
-    .expect("save the workspace");
-    let mut chrome = ChromeDocument::new(Engine::new(profile.path().to_path_buf()), &url);
+        ..SessionState::default()
+    });
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
     attach(&mut chrome, 0);
     chrome.poll(None);
-    assert!(chrome.ui.sidebar_open && !sidebar_hidden(&chrome), "open as it was left");
+    assert!(chrome.session.sidebar_open && !sidebar_hidden(&chrome), "open as it was left");
     assert_eq!(chrome.panel, "appearance");
 }
 
@@ -2306,4 +2509,1012 @@ fn a_frame_answers_its_pages_unless_one_is_left_a_restyle() {
         redraws,
         "that frame asks for no further one"
     );
+}
+
+// ── Ledger L14: a built-in scheme draws its own colours ──────────────────
+
+/// The body's background, which the chrome draws in `--gaze-bg`.
+fn chrome_background(chrome: &mut ChromeDocument) -> String {
+    chrome.poll(None);
+    lay_out_chrome(chrome);
+    let body = chrome.inner.query_selector("body").expect("a valid selector").expect("the chrome has a body");
+    chrome.inner.resolved_style_value(body, "background-color")
+}
+
+/// L14: with a usable custom palette on disk, Dark and Light are still drawn
+/// in their own colours. (The palette was laid over whichever scheme was
+/// chosen, so Dark looked like Custom and Light took the palette's dark
+/// background.)
+#[test]
+fn a_builtin_scheme_ignores_the_custom_theme() {
+    let profile = ScratchProfile::new("builtin-ignores-custom");
+    profile.theme_file("custom", ":root { --gaze-bg: #203040; }\n");
+    let url = profile.page("notes.html", NOTES);
+    let mut drawn = Vec::new();
+    for (name, scheme) in [("dark", theme::Scheme::Dark), ("light", theme::Scheme::Light)] {
+        profile.set_theme(name);
+        let mut chrome = ChromeDocument::new(profile.engine(), &url);
+        let want = css_rgb(&theme::builtin_palette(scheme)["--gaze-bg"]);
+        drawn.push((name, chrome_background(&mut chrome), want));
+    }
+    let wrong: Vec<_> = drawn.iter().filter(|(_, got, want)| got != want).collect();
+    assert!(wrong.is_empty(), "drawn in the palette's colours: {wrong:?}");
+    // Custom itself is drawn in the palette's colours.
+    profile.set_theme("custom");
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    assert_eq!(chrome_background(&mut chrome), css_rgb("#203040"));
+}
+
+// ── Storage ledger S14: the session, the history and the theme ──────────
+
+/// A file's bytes, if it exists.
+fn bytes_of(path: &std::path::Path) -> Option<Vec<u8>> {
+    std::fs::read(path).ok()
+}
+
+/// Whether `trace` published `path` (`write_atomic` renames its temporary
+/// file over it).
+fn wrote(trace: &gaze_fs::TraceFs, path: &std::path::Path) -> usize {
+    trace
+        .log()
+        .iter()
+        .filter(|t| t.op == "rename" && t.error.is_none() && t.to.as_deref() == Some(path))
+        .count()
+}
+
+/// A window following `known`, which comes from `source`.
+fn chrome_following(engine: Rc<Engine>, url: &str, source: Source, known: Known) -> ChromeDocument {
+    ChromeDocument::with_system_scheme(engine, url, SystemScheme::fixed(known), source, WakeHandle::default())
+}
+
+/// The built-in `--gaze-bg` of `scheme`, as computed styles report it.
+fn background_of(scheme: Scheme) -> String {
+    css_rgb(&theme::builtin_palette(scheme)["--gaze-bg"])
+}
+
+/// The status bar's message, if one is showing.
+fn flashed(chrome: &ChromeDocument) -> Option<String> {
+    chrome.flash.as_ref().map(|f| f.text.clone())
+}
+
+#[test]
+fn the_session_and_history_go_to_their_own_files() {
+    let profile = ScratchProfile::new("state-files");
+    let url = profile.page("notes.html", NOTES);
+    let l = profile.layout().clone();
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    show(&mut chrome, 0, "notes.html");
+    let session = SessionState::read(&bytes_of(&l.session_file()).expect("session.json")).expect("a session");
+    assert_eq!(session.tabs.iter().map(|t| t.url.as_str()).collect::<Vec<_>>(), [url.as_str()]);
+    chrome.save_state(Instant::now() + HISTORY_SAVE_DELAY);
+    let history = History::read(&bytes_of(&l.history_file()).expect("history.json")).expect("a history");
+    assert!(history.visits.iter().any(|v| v.url == url), "{history:?}");
+    assert!(!profile.path().join("workspace.json").exists(), "no single workspace file");
+}
+
+#[test]
+fn a_tab_switch_never_rewrites_history() {
+    let profile = ScratchProfile::new("tab-switch-history");
+    let a = profile.page("a.html", NOTES);
+    let b = profile.page("b.html", NOTES);
+    let l = profile.layout().clone();
+    let (engine, trace) = profile.traced_engine();
+    let mut chrome = ChromeDocument::new(engine, &a);
+    show(&mut chrome, 0, "a.html");
+    chrome.open_tab(&b);
+    show(&mut chrome, 1, "b.html");
+    chrome.save_state(Instant::now() + HISTORY_SAVE_DELAY);
+    trace.clear();
+    let first = chrome.tabs[0].0.id;
+    chrome.act(Action::Select(first));
+    chrome.poll(None);
+    chrome.save_state(Instant::now() + 2 * HISTORY_SAVE_DELAY);
+    assert_eq!(wrote(&trace, &l.session_file()), 1, "the session is saved");
+    assert_eq!(wrote(&trace, &l.history_file()), 0, "the history is not");
+}
+
+#[test]
+fn history_is_written_once_per_delay() {
+    let profile = ScratchProfile::new("history-delay");
+    let url = profile.page("notes.html", NOTES);
+    let l = profile.layout().clone();
+    let (engine, trace) = profile.traced_engine();
+    let mut chrome = ChromeDocument::new(engine, &url);
+    show(&mut chrome, 0, "notes.html");
+    chrome.save_state(Instant::now() + HISTORY_SAVE_DELAY);
+    trace.clear();
+    chrome.history.visit("https://a.example/", "A");
+    chrome.history_changed(false);
+    chrome.history.visit("https://b.example/", "B");
+    chrome.history_changed(false);
+    // Just after both visits, the delay is not over: nothing is written.
+    // (Was a save at a time taken before the visits, which a history due at
+    // once passed too: the mutation check M14p.)
+    let after_visits = Instant::now();
+    chrome.save_state(after_visits);
+    assert_eq!(wrote(&trace, &l.history_file()), 0, "not before the delay is over");
+    chrome.save_state(after_visits + 2 * HISTORY_SAVE_DELAY);
+    chrome.save_state(after_visits + 3 * HISTORY_SAVE_DELAY);
+    assert_eq!(wrote(&trace, &l.history_file()), 1, "both visits in one write");
+    let history = History::read(&bytes_of(&l.history_file()).expect("history.json")).expect("a history");
+    for url in ["https://a.example/", "https://b.example/"] {
+        assert!(history.visits.iter().any(|v| v.url == url), "{url}");
+    }
+}
+
+#[test]
+fn closing_the_window_saves_pending_history() {
+    let profile = ScratchProfile::new("history-on-close");
+    let url = profile.page("notes.html", NOTES);
+    let l = profile.layout().clone();
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    show(&mut chrome, 0, "notes.html");
+    chrome.history.visit("https://late.example/", "Late");
+    chrome.history_changed(false);
+    drop(chrome);
+    let history = History::read(&bytes_of(&l.history_file()).expect("history.json")).expect("a history");
+    assert!(history.visits.iter().any(|v| v.url == "https://late.example/"), "{history:?}");
+}
+
+#[test]
+fn clearing_history_removes_its_backups() {
+    let profile = ScratchProfile::new("history-clear");
+    let url = profile.page("notes.html", NOTES);
+    let l = profile.layout().clone();
+    drop(profile.engine());
+    let kept = l
+        .backups(crate::profile::layout::Class::State)
+        .join("2026-10-01T00-00-00Z/history.json");
+    std::fs::create_dir_all(kept.parent().expect("a session")).expect("a backup session");
+    std::fs::write(&kept, r#"{"visits":[{"url":"https://secret.example/","title":"S","at":1}]}"#).expect("a backup");
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    show(&mut chrome, 0, "notes.html");
+    chrome.act(Action::HistoryOp("clear".into(), 0));
+    chrome.poll(None);
+    assert_eq!(flashed(&chrome).as_deref(), Some("History cleared"));
+    assert!(!kept.exists(), "the backup of the history went too");
+    let history = History::read(&bytes_of(&l.history_file()).expect("history.json")).expect("a history");
+    assert!(history.visits.is_empty(), "{history:?}");
+}
+
+#[test]
+fn system_follows_the_os() {
+    let profile = ScratchProfile::new("system-follows");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = chrome_following(profile.engine(), &url, Source::Window, Known::Unknown(None));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Dark), "nothing known yet: dark");
+    chrome.window_reported_scheme(Some(Scheme::Light));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light));
+    chrome.window_reported_scheme(Some(Scheme::Dark));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Dark));
+}
+
+#[test]
+fn an_explicit_choice_ignores_the_os() {
+    let profile = ScratchProfile::new("explicit-scheme");
+    profile.set_theme("light");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = chrome_following(profile.engine(), &url, Source::Window, Known::Answered(Some(Scheme::Dark)));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light));
+    chrome.window_reported_scheme(Some(Scheme::Dark));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light), "the choice stands");
+}
+
+#[test]
+fn no_preference_means_dark() {
+    let profile = ScratchProfile::new("no-preference");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = chrome_following(profile.engine(), &url, Source::Window, Known::Answered(Some(Scheme::Light)));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light));
+    chrome.window_reported_scheme(None);
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Dark));
+}
+
+#[test]
+fn the_override_ignores_window_reports() {
+    let profile = ScratchProfile::new("override-scheme");
+    let url = profile.page("notes.html", NOTES);
+    let fixed = Source::Fixed(Some(Scheme::Light));
+    let mut chrome = chrome_following(profile.engine(), &url, fixed, Known::Answered(Some(Scheme::Light)));
+    chrome.window_reported_scheme(Some(Scheme::Dark));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light), "F1R3GAZE_SYSTEM_THEME wins");
+}
+
+#[test]
+fn a_portal_answer_applies_on_the_next_poll() {
+    use std::sync::Condvar;
+    let profile = ScratchProfile::new("portal-answer");
+    let url = profile.page("notes.html", NOTES);
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let opened = Arc::clone(&gate);
+    let runner: crate::system_theme::Runner = Arc::new(move || {
+        let (open, changed) = &*opened;
+        let mut open = open.lock().expect("the gate");
+        while !*open {
+            open = changed.wait(open).expect("the gate");
+        }
+        crate::system_theme::Outcome::Answered(Some(Scheme::Light))
+    });
+    let system = SystemScheme::with_runner(runner, None, Instant::now());
+    let portal = Source::Portal(std::path::PathBuf::from("dbus-send"));
+    let mut chrome = ChromeDocument::with_system_scheme(profile.engine(), &url, system.clone(), portal, WakeHandle::default());
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Dark), "no answer yet");
+    {
+        let (open, changed) = &*gate;
+        *open.lock().expect("the gate") = true;
+        changed.notify_all();
+    }
+    assert_eq!(system.wait(Duration::from_secs(5)), Known::Answered(Some(Scheme::Light)));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light), "applied on the next poll");
+}
+
+/// The system's scheme changing under each panel leaves no label in the old
+/// colours (L2's check, for a change the user did not make).
+#[test]
+fn an_os_change_leaves_no_stale_label_colours() {
+    let profile = ScratchProfile::new("system-stale");
+    profile.restore_sidebar();
+    // A theme file, so Appearance lists a row.
+    profile.theme_file("nord", "--gaze-accent: #88c0d0;\n");
+    let url = profile.page("notes.html", NOTES);
+    let engine = profile.engine();
+    engine.wallets.import(&"11".repeat(32), "Snapshot").expect("import the test key");
+    let mut failures = Vec::new();
+    for (panel, _, _) in PANELS {
+        for (from, to) in [(Scheme::Dark, Scheme::Light), (Scheme::Light, Scheme::Dark)] {
+            profile.seed(&SessionState {
+                sidebar_open: true,
+                panel: panel.into(),
+                ..SessionState::default()
+            });
+            let mut chrome = chrome_following(Rc::clone(&engine), &url, Source::Window, Known::Answered(Some(from)));
+            attach(&mut chrome, 0);
+            chrome.poll(None);
+            lay_out_chrome(&mut chrome);
+            chrome.window_reported_scheme(Some(to));
+            chrome.poll(None);
+            lay_out_chrome(&mut chrome);
+            let stale = stale_text_colours(&chrome.inner);
+            if !stale.is_empty() {
+                failures.push(format!("{panel} {from:?}→{to:?}: {stale:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "labels kept the previous scheme's colour:\n{}", failures.join("\n"));
+}
+
+#[test]
+fn choosing_a_scheme_writes_the_setting() {
+    let profile = ScratchProfile::new("choose-scheme");
+    let settings = profile.layout().settings_file();
+    std::fs::write(&settings, "# my settings\n[shard]\nobservers = [] # none here\n").expect("settings.toml");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.act(Action::Theme(ThemeOp::Light));
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light));
+    let text = std::fs::read_to_string(&settings).expect("settings.toml");
+    assert!(text.starts_with("# my settings\n[shard]\nobservers = [] # none here\n"), "kept as written: {text}");
+    assert!(text.contains("[appearance]\ntheme = \"default-light\""), "{text}");
+    // System is saved the same way, and the window is asked to read the
+    // system's scheme again.
+    chrome.take_window_requests();
+    chrome.act(Action::Theme(ThemeOp::System));
+    let text = std::fs::read_to_string(&settings).expect("settings.toml");
+    assert!(text.starts_with("# my settings\n[shard]\nobservers = [] # none here\n"), "kept as written: {text}");
+    assert!(text.contains("[appearance]\ntheme = \"system\""), "{text}");
+    assert!(chrome.take_window_requests().contains(&WindowRequest::FollowSystem));
+}
+
+#[test]
+fn a_theme_that_cannot_be_saved_applies_to_this_session() {
+    let profile = ScratchProfile::new("theme-read-only");
+    let settings = profile.layout().settings_file();
+    let before = std::fs::read(&settings).expect("settings.toml");
+    let url = profile.page("notes.html", NOTES);
+    let engine = Engine::open(profile.open_with(Arc::new(gaze_fs::StdFs), crate::profile::Locking::ReadOnly("only looking")));
+    let mut chrome = ChromeDocument::new(engine, &url);
+    chrome.act(Action::Theme(ThemeOp::Light));
+    assert_eq!(
+        flashed(&chrome).as_deref(),
+        Some("The theme applies to this session only: only looking")
+    );
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light));
+    assert_eq!(std::fs::read(&settings).expect("settings.toml"), before, "the file is unchanged");
+}
+
+// Disabled in step 10 (ledger S12, part 3): Custom and "Create palette file"
+// became rows of the Themes list and New theme. Replaced by
+// `a_theme_file_is_chosen_reloaded_and_dropped_when_broken` and
+// `new_theme_copies_the_current_colors`.
+// #[test]
+// fn custom_uses_themes_custom_css() {
+//     let profile = ScratchProfile::new("custom-theme");
+//     let file = profile.theme_file("custom", ":root { --gaze-bg: #203040; }\n");
+//     let url = profile.page("notes.html", NOTES);
+//     let mut chrome = ChromeDocument::new(profile.engine(), &url);
+//     chrome.act(Action::Theme("custom".into()));
+//     assert_eq!(chrome_background(&mut chrome), css_rgb("#203040"));
+//     let text = std::fs::read_to_string(profile.layout().settings_file()).expect("settings.toml");
+//     assert!(text.contains("theme = \"custom\""), "{text}");
+//     // "Reload palette" reads the file again.
+//     std::fs::write(&file, ":root { --gaze-bg: #304050; }\n").expect("edit the theme");
+//     chrome.act(Action::Theme("custom".into()));
+//     assert_eq!(chrome_background(&mut chrome), css_rgb("#304050"));
+//     // A file that cannot be used is refused, and the colours stay.
+//     std::fs::write(&file, ":root { --gaze-bg: url(x); }\n").expect("break the theme");
+//     chrome.act(Action::Theme("custom".into()));
+//     assert_eq!(
+//         flashed(&chrome).as_deref(),
+//         Some("The custom palette is missing or invalid; see Appearance")
+//     );
+//     assert_eq!(chrome_background(&mut chrome), css_rgb("#304050"));
+// }
+//
+// #[test]
+// fn create_palette_never_replaces_a_theme_file() {
+//     let profile = ScratchProfile::new("create-palette");
+//     let url = profile.page("notes.html", NOTES);
+//     let mut chrome = ChromeDocument::new(profile.engine(), &url);
+//     let file = profile.layout().themes_dir().join("custom.css");
+//     chrome.act(Action::Theme("template".into()));
+//     let made = std::fs::read_to_string(&file).expect("the palette was created");
+//     assert_eq!(made, theme::new_theme_css("custom", &theme::builtin_palette(Scheme::Dark)));
+//     assert_eq!(flashed(&chrome), Some(format!("Palette created at {}", file.display())));
+//     assert_eq!(chrome.eng.profile.theme(), ThemeChoice::System, "creating it chooses nothing");
+//     let mine = "/* mine */ :root { --gaze-bg: #203040; }\n";
+//     std::fs::write(&file, mine).expect("the user's own");
+//     chrome.flash = None;
+//     chrome.act(Action::Theme("template".into()));
+//     assert_eq!(std::fs::read_to_string(&file).expect("the palette"), mine, "never replaced");
+//     assert_eq!(flashed(&chrome), None);
+// }
+
+#[test]
+fn start_up_notices_are_shown_once() {
+    let profile = ScratchProfile::new("notices");
+    let url = profile.page("notes.html", NOTES);
+    drop(profile.engine());
+    std::fs::write(profile.layout().session_file(), "{ not json").expect("damage the session");
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.poll(None);
+    let shown = flashed(&chrome).expect("a notice");
+    assert!(shown.contains("session.json") && shown.contains("kept in"), "{shown}");
+    assert_eq!(chrome.flash.as_ref().map(|f| f.tone), Some(Tone::Warn));
+    let later = Instant::now() + 2 * FLASH_LONG;
+    chrome.take_notices();
+    assert!(!chrome.show_next_notice(later), "each notice is shown once");
+}
+
+#[test]
+fn replay_logs_and_exports_go_to_the_data_folder() {
+    let profile = ScratchProfile::new("logs-and-exports");
+    let l = profile.layout().clone();
+    let mut chrome = ChromeDocument::new(profile.engine(), "gaze://newtab");
+    show(&mut chrome, 0, "New tab");
+    chrome.act(Action::SaveLog);
+    let saved = flashed(&chrome).expect("a message");
+    let path = saved.strip_prefix("Replay log saved to ").expect("saved");
+    let path = std::path::Path::new(path);
+    assert_eq!(path.parent(), Some(l.replay_logs_dir().as_path()), "{saved}");
+    let address = chrome.eng.wallets.import(&"11".repeat(32), "Export me").expect("a wallet");
+    chrome.act(Action::Wallet(format!("export:{address}")));
+    let exported = l.exports_dir().join(format!("{address}.json"));
+    assert!(exported.exists(), "{}", exported.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for file in [path, exported.as_path()] {
+            let mode = std::fs::metadata(file).expect("stat").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", file.display());
+        }
+    }
+}
+
+#[test]
+fn a_read_only_window_saves_nothing() {
+    let profile = ScratchProfile::new("read-only-window");
+    let a = profile.page("a.html", NOTES);
+    let b = profile.page("b.html", NOTES);
+    let l = profile.layout().clone();
+    drop(profile.engine());
+    let state_before: Vec<(std::path::PathBuf, Option<Vec<u8>>)> = [l.session_file(), l.history_file(), l.settings_file()]
+        .into_iter()
+        .map(|p| (p.clone(), bytes_of(&p)))
+        .collect();
+    let engine = Engine::open(profile.open_with(Arc::new(gaze_fs::StdFs), crate::profile::Locking::ReadOnly("only looking")));
+    let mut chrome = ChromeDocument::new(engine, &a);
+    show(&mut chrome, 0, "a.html");
+    chrome.open_tab(&b);
+    show(&mut chrome, 1, "b.html");
+    chrome.act(Action::SidebarToggle);
+    chrome.act(Action::Theme(ThemeOp::Light));
+    // New theme is refused, saying why.
+    chrome.act(Action::Theme(ThemeOp::New));
+    assert_eq!(flashed(&chrome).as_deref(), Some("Could not create the theme: only looking"));
+    // A page with a replay log: the log is refused, saying why.
+    chrome.open_tab("gaze://newtab");
+    show(&mut chrome, 2, "New tab");
+    chrome.act(Action::SaveLog);
+    assert_eq!(flashed(&chrome).as_deref(), Some("The log is not saved: only looking"));
+    chrome.poll(None);
+    drop(chrome);
+    for (path, before) in state_before {
+        assert_eq!(bytes_of(&path), before, "{} is unchanged", path.display());
+    }
+    assert!(!l.replay_logs_dir().exists() || std::fs::read_dir(l.replay_logs_dir()).expect("logs").next().is_none());
+    assert_eq!(theme_files_in(&l.themes_dir()), Vec::<String>::new(), "no theme file was written");
+}
+
+/// The `.css` files in `dir`, by name (none if it cannot be listed); a
+/// folder with such a name is not one.
+fn theme_files_in(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".css"))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+// ── Ledger L13: pages see the scheme the browser shows ───────────────────
+
+/// A page with its own light and dark styles (`prefers-color-scheme`).
+const SCHEME_PAGE: &str = "<html><head><title>Scheme page</title><style>body{margin:0;background:#ffffff;color:#3c4043}@media (prefers-color-scheme: dark){body{background:#202124;color:#e8eaed}}</style></head><body><h1>Scheme page</h1></body></html>";
+/// `SCHEME_PAGE`'s backgrounds, as computed styles report them.
+const SCHEME_PAGE_DARK: &str = "rgb(32, 33, 36)";
+const SCHEME_PAGE_LIGHT: &str = "rgb(255, 255, 255)";
+
+/// L13/H1: a page's `prefers-color-scheme` is the scheme the chrome shows.
+/// (Every page was light: the chrome's own document kept Blitz's default
+/// viewport, which each layout copies into its pages.)
+#[test]
+fn pages_follow_the_chrome_scheme() {
+    let profile = ScratchProfile::new("l13-pages-follow");
+    let url = profile.document("scheme.html", SCHEME_PAGE);
+    profile.set_theme("dark");
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    show(&mut chrome, 0, "Scheme page");
+    assert_eq!(page_style(&mut chrome, 0, "body", "background-color"), SCHEME_PAGE_DARK, "a dark chrome shows its page dark");
+    assert_eq!(chrome.inner.viewport().color_scheme, blitz_traits::shell::ColorScheme::Dark);
+    chrome.act(Action::Theme(ThemeOp::Light));
+    chrome.poll(None);
+    lay_out_chrome(&mut chrome);
+    assert_eq!(page_style(&mut chrome, 0, "body", "background-color"), SCHEME_PAGE_LIGHT, "Light turns it light");
+    // A page attached later takes the scheme shown at once.
+    chrome.open_tab(&url);
+    show(&mut chrome, 1, "Scheme page");
+    assert_eq!(page_style(&mut chrome, 1, "body", "background-color"), SCHEME_PAGE_LIGHT, "a new tab");
+    // A theme file's scheme is its background's: a light file is light for
+    // pages too.
+    profile.theme_file("paper", "--gaze-bg: #fdf6e3;\n--gaze-text: #073642;\n");
+    chrome.act(Action::Theme(ThemeOp::Use("paper".into())));
+    chrome.poll(None);
+    lay_out_chrome(&mut chrome);
+    for tab in 0..2 {
+        assert_eq!(page_style(&mut chrome, tab, "body", "background-color"), SCHEME_PAGE_LIGHT, "tab {tab}, paper");
+    }
+    // Back to dark: every page, the hidden one too.
+    chrome.act(Action::Theme(ThemeOp::Dark));
+    chrome.poll(None);
+    lay_out_chrome(&mut chrome);
+    for tab in 0..2 {
+        assert_eq!(page_style(&mut chrome, tab, "body", "background-color"), SCHEME_PAGE_DARK, "tab {tab}, dark");
+    }
+}
+
+/// A page that declares no colour scheme, with a highlight: the UA sheet
+/// draws `mark` in the system colours `Mark` and `MarkText`.
+const UNAWARE_PAGE: &str = "<html><head><title>Unaware page</title></head><body><p><mark>found</mark></p></body></html>";
+/// The same page, declaring that it supports both schemes.
+const AWARE_PAGE: &str = "<html><head><title>Aware page</title><style>:root{color-scheme:light dark}</style></head><body><p><mark>found</mark></p></body></html>";
+/// Stylo's `Mark` system colour, light and dark (`device/servo.rs`).
+const MARK_LIGHT: &str = "rgb(255, 235, 59)";
+const MARK_DARK: &str = "rgb(102, 92, 0)";
+
+/// L13/H2: a page that declares no colour scheme keeps the light system
+/// colours under a dark chrome, as in Chrome and Firefox, where such a page
+/// is light. Stylo, as Blitz uses it, gives it the preferred scheme's.
+#[test]
+fn pages_keep_light_system_colours_unless_they_support_dark() {
+    let profile = ScratchProfile::new("l13-system-colours");
+    let unaware = profile.document("unaware.html", UNAWARE_PAGE);
+    let aware = profile.document("aware.html", AWARE_PAGE);
+    profile.set_theme("dark");
+    let mut chrome = ChromeDocument::new(profile.engine(), &unaware);
+    show(&mut chrome, 0, "Unaware page");
+    chrome.open_tab(&aware);
+    show(&mut chrome, 1, "Aware page");
+    assert_eq!(page_style(&mut chrome, 0, "mark", "background-color"), MARK_LIGHT, "a page that declares no scheme stays light");
+    assert_eq!(page_style(&mut chrome, 1, "mark", "background-color"), MARK_DARK, "a page that supports dark follows the chrome");
+    chrome.act(Action::Theme(ThemeOp::Light));
+    chrome.poll(None);
+    lay_out_chrome(&mut chrome);
+    for tab in 0..2 {
+        assert_eq!(page_style(&mut chrome, tab, "mark", "background-color"), MARK_LIGHT, "tab {tab}, light");
+    }
+}
+
+// ── Storage ledger S12 (part 3): the Appearance panel and the window ─────
+
+/// The chrome asks its window to show the scheme shown (its pages and its
+/// decorations): at start, at every choice and at every report from the
+/// window, keeping only the latest; choosing System also asks the window to
+/// read the system's scheme again.
+#[test]
+fn the_window_is_asked_to_show_the_scheme() {
+    let profile = ScratchProfile::new("window-requests");
+    let url = profile.page("notes.html", NOTES);
+    let scheme = |effective, follows_system| WindowRequest::Scheme { effective, follows_system };
+    let light = Known::Answered(Some(Scheme::Light));
+    let mut chrome = chrome_following(profile.engine(), &url, Source::Window, light.clone());
+    assert_eq!(chrome.take_window_requests(), [scheme(Scheme::Light, true)], "at start");
+    chrome.act(Action::Theme(ThemeOp::Dark));
+    assert_eq!(chrome.take_window_requests(), [scheme(Scheme::Dark, false)]);
+    chrome.act(Action::Theme(ThemeOp::Light));
+    chrome.act(Action::Theme(ThemeOp::Dark));
+    assert_eq!(chrome.take_window_requests(), [scheme(Scheme::Dark, false)], "only the latest");
+    chrome.act(Action::Theme(ThemeOp::System));
+    assert_eq!(chrome.take_window_requests(), [scheme(Scheme::Light, true), WindowRequest::FollowSystem]);
+    chrome.window_reported_scheme(Some(Scheme::Dark));
+    assert_eq!(chrome.take_window_requests(), [scheme(Scheme::Dark, true)], "the system turned dark");
+    // A preference that does not come from the window is ignored, and the
+    // scheme shown is asked for all the same: the window system may have
+    // changed the decorations itself.
+    let mut fixed = chrome_following(profile.engine(), &url, Source::Fixed(Some(Scheme::Light)), light.clone());
+    fixed.take_window_requests();
+    fixed.window_reported_scheme(Some(Scheme::Dark));
+    assert_eq!(fixed.take_window_requests(), [scheme(Scheme::Light, true)]);
+    // A theme file that cannot be used falls back to the system's scheme,
+    // and so follows the system.
+    profile.theme_file("broken", "--gaze-bg: url(x);\n");
+    profile.set_theme("broken");
+    let mut broken = chrome_following(profile.engine(), &url, Source::Window, light.clone());
+    assert_eq!(broken.take_window_requests(), [scheme(Scheme::Light, true)]);
+    // A usable one is its own scheme.
+    profile.theme_file("paper", "--gaze-bg: #fdf6e3;\n--gaze-text: #073642;\n");
+    profile.set_theme("paper");
+    let mut paper = chrome_following(profile.engine(), &url, Source::Window, light);
+    assert_eq!(paper.take_window_requests(), [scheme(Scheme::Light, false)]);
+}
+
+/// Choosing System asks the system again: the portal (Linux, at most every
+/// `REQUERY_INTERVAL`) and the window (`FollowSystem`; macOS reports nothing
+/// while a window has a theme of its own).
+#[test]
+fn choosing_system_asks_the_system_again() {
+    let profile = ScratchProfile::new("system-asks-again");
+    let url = profile.page("notes.html", NOTES);
+    profile.set_theme("dark");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let runner: crate::system_theme::Runner = Arc::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+        crate::system_theme::Outcome::Answered(Some(Scheme::Light))
+    });
+    let t0 = Instant::now();
+    let system = SystemScheme::with_runner(runner, None, t0);
+    system.wait(Duration::from_secs(5));
+    let mut chrome = ChromeDocument::with_system_scheme(
+        profile.engine(),
+        &url,
+        system.clone(),
+        Source::Portal("dbus-send".into()),
+        WakeHandle::default(),
+    );
+    chrome.take_window_requests();
+    chrome.theme_op(ThemeOp::System, t0 + crate::system_theme::REQUERY_INTERVAL);
+    system.wait(Duration::from_secs(5));
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "asked at start, and again when System was chosen");
+    assert_eq!(
+        chrome.take_window_requests(),
+        [WindowRequest::Scheme { effective: Scheme::Light, follows_system: true }, WindowRequest::FollowSystem]
+    );
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light));
+}
+
+/// The Appearance panel's markup for `view`, parsed.
+fn appearance_doc(view: &AppearanceView<'_>) -> BaseDocument {
+    let mut fit = TextFitter::new();
+    let html = appearance_html(&mut fit, view).html;
+    gaze_dom_blitz::parse_html(&format!("<html><body>{html}</body></html>"), DocumentConfig::default())
+}
+
+/// The first element `selector` finds in `doc`.
+fn element(doc: &BaseDocument, selector: &str) -> NodeId {
+    doc.query_selector(selector)
+        .expect("a valid selector")
+        .unwrap_or_else(|| panic!("nothing matches {selector}"))
+}
+
+/// The text of the first element `selector` finds in `doc`.
+fn text_of(doc: &BaseDocument, selector: &str) -> String {
+    doc.get_node(element(doc, selector)).expect("the matched node").text_content()
+}
+
+/// Which of System, Dark and Light is lit: (class, aria-pressed) of each.
+fn segments(doc: &BaseDocument) -> Vec<(String, String)> {
+    ["system", "dark", "light"]
+        .into_iter()
+        .map(|value| {
+            let node = element(doc, &format!(r#"[data-action="theme:{value}"]"#));
+            (
+                attr_of(doc, node, "class").expect("a class"),
+                attr_of(doc, node, "aria-pressed").expect("aria-pressed"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_appearance_panel_lists_theme_files() {
+    let colours = theme::builtin_palette(Scheme::Dark);
+    let themes = sample_themes();
+    let folder = "/home/u/.config/f1r3gaze/themes";
+    let panel = |choice: &ThemeChoice| {
+        appearance_doc(&AppearanceView {
+            choice,
+            system: &Known::Answered(Some(Scheme::Dark)),
+            colours: &colours,
+            shown: Scheme::Dark,
+            problem: None,
+            themes: &themes,
+            folder,
+        })
+    };
+    let on = |lit: [bool; 3]| -> Vec<(String, String)> {
+        lit.into_iter()
+            .map(|lit| (if lit { "segment on" } else { "segment" }.to_string(), lit.to_string()))
+            .collect()
+    };
+    let system = panel(&ThemeChoice::System);
+    assert_eq!(segments(&system), on([true, false, false]), "System");
+    assert_eq!(segments(&panel(&ThemeChoice::BuiltIn(Scheme::Light))), on([false, false, true]), "Light");
+    let nord = panel(&ThemeChoice::Named("nord".into()));
+    assert_eq!(segments(&nord), on([false, false, false]), "a theme file lights no segment");
+    assert_eq!(attr_of(&nord, element(&nord, r#"[data-action="theme:use:nord"]"#), "class").as_deref(), Some("row on"));
+    assert_eq!(attr_of(&nord, element(&nord, r#"[data-action="theme:use:solar"]"#), "class").as_deref(), Some("row"));
+    assert_eq!(
+        data_actions(&system),
+        ["theme:system", "theme:dark", "theme:light", "theme:use:nord", "theme:use:solar", "theme:new", "theme:reload"],
+        "the unusable file has no action"
+    );
+    // The file that cannot be used says why, and does nothing.
+    let broken = element(&system, ".row.static");
+    assert_eq!(attr_of(&system, broken, "data-action"), None);
+    let text = system.get_node(broken).expect("the row").text_content();
+    assert!(text.contains("broken") && text.contains("Unusable") && text.contains("line 2: expected a --gaze-* colour"), "{text}");
+    assert_eq!(text_of(&system, r#"[data-action="theme:use:nord"] .tag"#), "Dark");
+    assert_eq!(text_of(&system, r#"[data-action="theme:use:solar"] .tag"#), "Light");
+    assert_eq!(text_of(&system, ".section-head .count"), "3");
+    assert_eq!(text_of(&system, ".card .mono"), folder);
+    // No theme files: said so.
+    let empty = appearance_doc(&AppearanceView {
+        choice: &ThemeChoice::System,
+        system: &Known::Answered(Some(Scheme::Dark)),
+        colours: &colours,
+        shown: Scheme::Dark,
+        problem: None,
+        themes: &[],
+        folder,
+    });
+    assert_eq!(text_of(&empty, ".empty-state"), "No theme files yet.");
+    assert_eq!(text_of(&empty, ".section-head .count"), "0");
+}
+
+#[test]
+fn the_system_sentence_reports_the_preference() {
+    let colours = theme::builtin_palette(Scheme::Dark);
+    let note = |choice: &ThemeChoice, system: Known| {
+        let doc = appearance_doc(&AppearanceView {
+            choice,
+            system: &system,
+            colours: &colours,
+            shown: Scheme::Dark,
+            problem: None,
+            themes: &[],
+            folder: "/t",
+        });
+        text_of(&doc, ".footnote")
+    };
+    let system = ThemeChoice::System;
+    assert_eq!(
+        note(&system, Known::Answered(Some(Scheme::Dark))),
+        format!("Follows your system, which prefers dark. {SCHEME_NOTE}")
+    );
+    assert_eq!(
+        note(&system, Known::Answered(Some(Scheme::Light))),
+        format!("Follows your system, which prefers light. {SCHEME_NOTE}")
+    );
+    assert_eq!(
+        note(&system, Known::Answered(None)),
+        format!("Your system states no preference, so the dark scheme is used. {SCHEME_NOTE}")
+    );
+    for unknown in [Known::Unknown(None), Known::Unknown(Some("no session bus".into()))] {
+        assert_eq!(
+            note(&system, unknown),
+            format!("Your system's preference could not be read, so the dark scheme is used. {SCHEME_NOTE}")
+        );
+    }
+    assert_eq!(note(&ThemeChoice::BuiltIn(Scheme::Dark), Known::Answered(Some(Scheme::Light))), SCHEME_NOTE);
+}
+
+#[test]
+fn an_unusable_choice_says_which_scheme_is_shown() {
+    let colours = theme::builtin_palette(Scheme::Light);
+    let problem = "there is no theme \"gone\": no gone.css in /c/themes";
+    let view = |choice: &ThemeChoice, problem: Option<&str>| {
+        let mut fit = TextFitter::new();
+        appearance_html(
+            &mut fit,
+            &AppearanceView {
+                choice,
+                system: &Known::Answered(Some(Scheme::Light)),
+                colours: &colours,
+                shown: Scheme::Light,
+                problem,
+                themes: &[],
+                folder: "/c/themes",
+            },
+        )
+        .html
+    };
+    let html = view(&ThemeChoice::Named("gone".into()), Some(problem));
+    assert!(html.starts_with(r#"<div class="notice err">"#), "the notice comes first: {html}");
+    let doc = gaze_dom_blitz::parse_html(&format!("<html><body>{html}</body></html>"), DocumentConfig::default());
+    assert_eq!(
+        text_of(&doc, ".notice.err"),
+        format!("“gone” cannot be used: {problem}. The light scheme is shown instead.")
+    );
+    assert!(!view(&ThemeChoice::System, None).contains("notice err"), "no notice for System");
+}
+
+#[test]
+fn a_theme_file_is_chosen_reloaded_and_dropped_when_broken() {
+    let profile = ScratchProfile::new("theme-file-use");
+    profile.restore_sidebar();
+    profile.seed(&SessionState {
+        sidebar_open: true,
+        panel: "appearance".into(),
+        ..SessionState::default()
+    });
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.poll(None);
+    let file = profile.theme_file("sunrise", "--gaze-bg: #fff8e7;\n--gaze-text: #3b2f2f;\n");
+    chrome.act(Action::Theme(ThemeOp::Reload));
+    assert_eq!(flashed(&chrome).as_deref(), Some("Themes reloaded"));
+    chrome.poll(None);
+    assert!(data_actions(&chrome.inner).iter().any(|a| a == "theme:use:sunrise"), "Reload lists the new file");
+    chrome.act(Action::Theme(ThemeOp::Use("sunrise".into())));
+    assert_eq!(chrome_background(&mut chrome), css_rgb("#fff8e7"));
+    let text = std::fs::read_to_string(profile.layout().settings_file()).expect("settings.toml");
+    assert!(text.contains("theme = \"sunrise\""), "{text}");
+    // Edited, then reloaded.
+    std::fs::write(&file, "--gaze-bg: #fff0d0;\n--gaze-text: #3b2f2f;\n").expect("edit the theme");
+    chrome.act(Action::Theme(ThemeOp::Reload));
+    assert_eq!(chrome_background(&mut chrome), css_rgb("#fff0d0"));
+    // Broken, then reloaded: the system's scheme is shown (dark: no
+    // preference is known), and both the status bar and the panel say why.
+    std::fs::write(&file, "--gaze-bg: url(x);\n").expect("break the theme");
+    chrome.act(Action::Theme(ThemeOp::Reload));
+    let flash = flashed(&chrome).expect("a flash");
+    assert!(flash.starts_with("“sunrise” cannot be used:"), "{flash}");
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Dark));
+    let panel = chrome.inner.get_node(element(&chrome.inner, "#panel")).expect("#panel").text_content();
+    assert!(panel.contains("The dark scheme is shown instead."), "{panel}");
+}
+
+#[test]
+fn an_unusable_theme_cannot_be_chosen() {
+    let profile = ScratchProfile::new("theme-unusable");
+    profile.set_theme("light");
+    profile.theme_file("broken", "--gaze-bg: #000000;\nbody { }\n");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.act(Action::Theme(ThemeOp::Use("broken".into())));
+    let flash = flashed(&chrome).expect("a flash");
+    assert!(flash.starts_with("“broken” cannot be used: line 2:"), "{flash}");
+    assert_eq!(chrome.eng.profile.theme(), ThemeChoice::BuiltIn(Scheme::Light), "the choice is unchanged");
+    assert_eq!(chrome_background(&mut chrome), background_of(Scheme::Light));
+    chrome.act(Action::Theme(ThemeOp::Use("gone".into())));
+    assert_eq!(
+        flashed(&chrome),
+        Some(format!("“gone” cannot be used: there is no gone.css in {}", profile.layout().themes_dir().display()))
+    );
+    assert_eq!(chrome.eng.profile.theme(), ThemeChoice::BuiltIn(Scheme::Light));
+}
+
+#[test]
+fn new_theme_copies_the_current_colors() {
+    let profile = ScratchProfile::new("new-theme");
+    profile.theme_file("paper", "--gaze-bg: #fdf6e3;\n--gaze-text: #073642;\n");
+    profile.set_theme("paper");
+    // Something the list does not show has the first name: a folder.
+    let dir = profile.layout().themes_dir();
+    std::fs::create_dir_all(dir.join("my-theme.css")).expect("a folder in the way");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    let shown = chrome.resolved.colours.clone();
+    chrome.act(Action::Theme(ThemeOp::New));
+    let made = dir.join("my-theme-2.css");
+    let css = std::fs::read_to_string(&made).expect("the new theme");
+    assert_eq!(css, theme::new_theme_css("my-theme-2", &shown));
+    assert_eq!(theme::parse_palette(&css).expect("it can be used"), shown, "it holds the colours shown");
+    assert!(dir.join("my-theme.css").is_dir(), "the folder in the way is untouched");
+    assert_eq!(flashed(&chrome), Some(format!("Theme created at {}", made.display())));
+    assert_eq!(chrome.eng.profile.theme(), ThemeChoice::Named("my-theme-2".into()), "it is chosen");
+    let text = std::fs::read_to_string(profile.layout().settings_file()).expect("settings.toml");
+    assert!(text.contains("theme = \"my-theme-2\""), "{text}");
+    let first = std::fs::read(&made).expect("my-theme-2.css");
+    chrome.act(Action::Theme(ThemeOp::New));
+    assert!(dir.join("my-theme-3.css").is_file(), "the next name");
+    assert_eq!(std::fs::read(&made).expect("my-theme-2.css"), first, "never replaced");
+    assert_eq!(theme_files_in(&dir), ["my-theme-2.css", "my-theme-3.css", "paper.css"]);
+}
+
+#[test]
+fn new_theme_is_refused_in_a_read_only_session() {
+    let profile = ScratchProfile::new("new-theme-read-only");
+    let url = profile.page("notes.html", NOTES);
+    drop(profile.engine());
+    let engine = Engine::open(profile.open_with(Arc::new(gaze_fs::StdFs), crate::profile::Locking::ReadOnly("only looking")));
+    let mut chrome = ChromeDocument::new(engine, &url);
+    chrome.act(Action::Theme(ThemeOp::New));
+    assert_eq!(flashed(&chrome).as_deref(), Some("Could not create the theme: only looking"));
+    assert_eq!(theme_files_in(&profile.layout().themes_dir()), Vec::<String>::new());
+    assert_eq!(chrome.eng.profile.theme(), ThemeChoice::System, "nothing is chosen");
+}
+
+#[test]
+fn opening_appearance_lists_the_theme_files_again() {
+    let profile = ScratchProfile::new("themes-read-again");
+    profile.restore_sidebar();
+    profile.seed(&SessionState {
+        sidebar_open: true,
+        panel: "appearance".into(),
+        ..SessionState::default()
+    });
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.poll(None);
+    let listed = |chrome: &ChromeDocument| data_actions(&chrome.inner).iter().any(|a| a == "theme:use:late");
+    assert!(!listed(&chrome));
+    profile.theme_file("late", "--gaze-accent: #88c0d0;\n");
+    chrome.poll(None);
+    assert!(!listed(&chrome), "the folder is not read at every render");
+    chrome.act(Action::ShowPanel("tabs".into()));
+    chrome.act(Action::ShowPanel("appearance".into()));
+    chrome.poll(None);
+    assert!(listed(&chrome), "showing Appearance reads the folder again");
+    // So does reopening the sidebar on it.
+    profile.theme_file("later", "--gaze-accent: #88c0d0;\n");
+    let later = |chrome: &ChromeDocument| data_actions(&chrome.inner).iter().any(|a| a == "theme:use:later");
+    chrome.act(Action::SidebarToggle);
+    chrome.poll(None);
+    chrome.act(Action::SidebarToggle);
+    chrome.poll(None);
+    assert!(later(&chrome), "reopening the sidebar on Appearance reads the folder again");
+}
+
+#[test]
+fn installed_themes_are_listed_and_a_users_file_hides_one() {
+    let profile = ScratchProfile::with_installed_themes("themes-installed");
+    profile.installed_theme_file("solar", "--gaze-bg: #fdf6e3;\n--gaze-text: #073642;\n");
+    let installed_nord = profile.installed_theme_file("nord", "--gaze-bg: #405060;\n");
+    let users_nord = profile.theme_file("nord", "--gaze-bg: #203040;\n");
+    profile.restore_sidebar();
+    profile.seed(&SessionState {
+        sidebar_open: true,
+        panel: "appearance".into(),
+        ..SessionState::default()
+    });
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.poll(None);
+    let rows: Vec<String> = data_actions(&chrome.inner).into_iter().filter(|a| a.starts_with("theme:use:")).collect();
+    assert_eq!(rows, ["theme:use:nord", "theme:use:solar"], "one row each");
+    let listed = chrome.themes.clone().expect("the panel listed them");
+    let nord = listed.iter().find(|t| t.name == "nord").expect("nord is listed");
+    assert_eq!((nord.path.clone(), nord.packaged), (users_nord, false), "the user's file, not {}", installed_nord.display());
+    assert!(listed.iter().any(|t| t.name == "solar" && t.packaged));
+    chrome.act(Action::Theme(ThemeOp::Use("nord".into())));
+    assert_eq!(chrome_background(&mut chrome), css_rgb("#203040"));
+    chrome.act(Action::Theme(ThemeOp::Use("solar".into())));
+    assert_eq!(chrome_background(&mut chrome), css_rgb("#fdf6e3"));
+}
+
+// ── Storage ledger S13 (part 2): full screen ─────────────────────────────
+
+#[test]
+fn the_full_screen_chord_is_platform_specific() {
+    let f = |c: &str| Key::Character(c.into());
+    let other = KeyPlatform::Other;
+    assert!(full_screen_chord(&Key::F11, Modifiers::empty(), other));
+    for held in [Modifiers::CONTROL, Modifiers::SHIFT, Modifiers::SUPER, Modifiers::ALT] {
+        assert!(!full_screen_chord(&Key::F11, held, other), "{held:?}+F11");
+    }
+    assert!(!full_screen_chord(&f("f"), Modifiers::CONTROL | Modifiers::SUPER, other));
+    let mac = KeyPlatform::MacOs;
+    assert!(full_screen_chord(&f("f"), Modifiers::CONTROL | Modifiers::SUPER, mac));
+    assert!(full_screen_chord(&f("F"), Modifiers::CONTROL | Modifiers::META, mac));
+    for (key, held) in [
+        (f("f"), Modifiers::SUPER),
+        (f("f"), Modifiers::CONTROL),
+        (f("f"), Modifiers::CONTROL | Modifiers::SUPER | Modifiers::SHIFT),
+        (Key::F11, Modifiers::empty()),
+    ] {
+        assert!(!full_screen_chord(&key, held, mac), "{held:?}+{key:?}");
+    }
+}
+
+#[test]
+fn full_screen_comes_before_find_and_ignores_repeats() {
+    let f = || Key::Character("f".into());
+    let tabs = [1];
+    let mac = KeyPlatform::MacOs;
+    let chord = Modifiers::CONTROL | Modifiers::SUPER;
+    assert_eq!(browser_shortcut(&f(), chord, false, &tabs, 0, mac), Some(Some(Action::FullScreen)));
+    assert_eq!(browser_shortcut(&f(), Modifiers::SUPER, false, &tabs, 0, mac), Some(Some(Action::Find(String::new()))));
+    assert_eq!(browser_shortcut(&f(), chord, true, &tabs, 0, mac), Some(None), "a held chord is consumed");
+    let other = KeyPlatform::Other;
+    assert_eq!(browser_shortcut(&Key::F11, Modifiers::empty(), false, &tabs, 0, other), Some(Some(Action::FullScreen)));
+    assert_eq!(browser_shortcut(&Key::F11, Modifiers::empty(), true, &tabs, 0, other), Some(None));
+    assert_eq!(browser_shortcut(&f(), Modifiers::CONTROL, false, &tabs, 0, other), Some(Some(Action::Find(String::new()))));
+    assert_eq!(browser_shortcut(&Key::F11, Modifiers::SHIFT, false, &tabs, 0, other), None);
+}
+
+/// The chord through the chrome's own key handling, with this platform's
+/// keys (CI runs it on Linux, macOS and Windows).
+#[test]
+fn the_full_screen_key_asks_the_window_once() {
+    let profile = ScratchProfile::new("full-screen-key");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.take_window_requests();
+    let press = |repeating: bool| {
+        let (key, modifiers) = match KeyPlatform::CURRENT {
+            KeyPlatform::Other => (Key::F11, Modifiers::empty()),
+            KeyPlatform::MacOs => (Key::Character("f".into()), Modifiers::CONTROL | Modifiers::SUPER),
+        };
+        UiEvent::KeyDown(BlitzKeyEvent {
+            modifiers,
+            is_auto_repeating: repeating,
+            ..match key_down(key) {
+                UiEvent::KeyDown(event) => event,
+                _ => unreachable!("key_down makes a KeyDown"),
+            }
+        })
+    };
+    chrome.handle_ui_event(press(false));
+    assert_eq!(chrome.take_window_requests(), [WindowRequest::ToggleFullScreen]);
+    chrome.handle_ui_event(press(true));
+    assert_eq!(chrome.take_window_requests(), [], "a repeat asks nothing");
+    chrome.handle_ui_event(press(false));
+    chrome.handle_ui_event(press(false));
+    assert_eq!(
+        chrome.take_window_requests(),
+        [WindowRequest::ToggleFullScreen, WindowRequest::ToggleFullScreen],
+        "each press is one request"
+    );
+}
+
+#[test]
+fn full_screen_says_how_to_leave_it() {
+    let profile = ScratchProfile::new("full-screen-hint");
+    let url = profile.page("notes.html", NOTES);
+    let mut chrome = ChromeDocument::new(profile.engine(), &url);
+    chrome.flash = None;
+    chrome.full_screen_changed(true);
+    let flash = chrome.flash.as_ref().expect("a hint");
+    assert_eq!((flash.tone, flash.text.as_str()), (Tone::Info, full_screen_hint(KeyPlatform::CURRENT)));
+    chrome.full_screen_changed(false);
+    assert_eq!(flashed(&chrome), None, "leaving takes the hint away");
+    assert_eq!(full_screen_hint(KeyPlatform::Other), "Press F11 to leave full screen");
+    assert_eq!(full_screen_hint(KeyPlatform::MacOs), "Press Ctrl+Cmd+F to leave full screen");
 }

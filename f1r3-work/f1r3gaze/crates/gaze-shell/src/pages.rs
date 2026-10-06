@@ -50,9 +50,10 @@ new found, sub, clicks, on, off in {{
             r#"<html><head><title>About F1R3Gaze</title><style>{STYLE}</style></head><body>
 <h1>F1R3Gaze {}</h1>
 <p>Document engine: Blitz. Executive: CampF1R3. License: Apache-2.0.</p>
-<p>Settings live in <code>settings.conf</code> in the profile directory
-(set <code>F1R3GAZE_PROFILE</code> to move it). Shard observers, the validator,
-the quorum and blob mirrors are configured there.</p>
+<p>Settings live in <code>settings.toml</code> in F1R3Gaze's settings folder;
+<code>f1r3gaze paths</code> prints where its folders are, and <code>--profile DIR</code>
+(or <code>F1R3GAZE_PROFILE</code>) keeps them all in one folder. Shard observers,
+the validator, the quorum and blob mirrors are set there.</p>
 <p class="muted">Not in this release: graded and K2 pages (work packages U2, U5), the proof rung
 (node work package N1), legacy JavaScript tabs, devtools time travel.</p></body></html>"#,
             env!("CARGO_PKG_VERSION")

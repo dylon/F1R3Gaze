@@ -13,6 +13,7 @@ default = []
 os-keyring = ["dep:keyring"]
 
 [dependencies]
+gaze-fs.workspace = true
 gaze-net.workspace = true
 gaze-blob.workspace = true
 gaze-knf.workspace = true

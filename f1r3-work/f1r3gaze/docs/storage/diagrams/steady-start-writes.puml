@@ -1,0 +1,57 @@
+@startuml steady-start-writes
+!pragma teoz true
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+title What a start writes when nothing needs repair: 1 fsync, 2 renames, 1 unlink
+
+participant "main.rs\nProfile::open" as Main #DDEBF7
+participant "lock.rs\nInstanceLock::acquire_within" as Lock #DDEBF7
+participant "profile::start_up\n(steps 3 to 7)" as Start #DDEBF7
+participant "gaze-fs\nreplace_unsynced" as Fs #DDEBF7
+participant "the kernel\n(ext4, data=ordered)" as Kernel #E2EFDA
+
+== The instance lock (section 8) ==
+Main -> Lock : acquire
+Lock -> Kernel : open data/instance.lock (O_RDWR | O_CREAT); flock (LOCK_EX | LOCK_NB)
+Lock -> Kernel : open runtime/instance.lock; flock; fchmod 01600 (sticky, Linux)
+Lock -> Kernel : data/instance.lock: ftruncate, write (pid, mode, start time)
+Lock -> Fs : data/instance.pid (the holder, for readers on Windows)
+Fs -> Kernel : create .instance.pid.tmp-<pid>-0, write
+Fs -> Kernel : rename over instance.pid
+Lock -> Kernel : runtime/instance.lock: ftruncate, write
+Lock -> Fs : runtime/instance.pid, the same
+Fs -> Kernel : create, write; rename
+note right of Fs #EDEDED
+  not synced: a crash ends the hold
+  the record names (V1, ledger S15
+  parts 2 and 3: 4 fsyncs, 0.35 ms
+  less a start); readers never see
+  half of it
+end note
+
+== Start-up (section 9.1) ==
+Main -> Start : start_up
+Start -> Kernel : step 3: create data/.startup-busy (empty, not synced);\nthe marker is there and no flag was: no barrier
+Start -> Kernel : steps 4 to 6: the layout's marker, the skeleton,\nthe sweeps and every managed file: read only
+note right of Kernel #EDEDED
+  a profile that needs nothing
+  makes no other write
+end note
+Start -> Kernel : step 7: unlink data/.startup-busy
+Start -> Kernel : **fsync** data/: the next start needs no barrier
+note right of Kernel #FCE4D6
+  each fsync commits ext4's journal;
+  another program's flush can hold
+  a commit for up to about 50 ms (H-out'')
+end note
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code |
+  |<#E2EFDA> | the operating system |
+  |<#FCE4D6> | durability points: what an fsync costs |
+  |<#EDEDED> | reads, which write nothing |
+endlegend
+@enduml

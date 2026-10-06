@@ -7,6 +7,7 @@
 //! * [`contract`]: what the wallet will sign for a transfer, checked.
 //! * [`embers`]: balances, history and transfers through Embers.
 //! * [`wallets`]: the profile's wallets and the active one.
+//! * [`recover`]: wallets listed again from their key files.
 
 #![forbid(unsafe_code)]
 
@@ -14,9 +15,13 @@ pub mod address;
 pub mod contract;
 pub mod embers;
 pub mod file;
+pub mod recover;
 pub mod wallets;
 
 pub use address::Address;
 pub use contract::Limits;
 pub use embers::{Embers, Transfer, WalletState};
-pub use wallets::{Entry, Wallets};
+pub use recover::{KeyFile, KeyScan, RECOVERED_LABEL, recover_entries, scan_keys, wallet_of_key_file};
+pub use wallets::{
+    ACTIVE_FILE, Entry, LIST_FILE, Wallets, check_active, check_list, entry_line, parse_list, wallet_key_name,
+};

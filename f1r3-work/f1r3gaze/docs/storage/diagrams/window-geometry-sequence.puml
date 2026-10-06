@@ -1,0 +1,77 @@
+@startuml window-geometry-sequence
+!pragma teoz true
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+title The window: made where it was left, followed, and kept in window.json
+
+actor "user" as User #FFF2CC
+box "F1R3Gaze" #F4F8FC
+  participant "launch()\n(chrome.rs)" as Launch #DDEBF7
+  participant "ChromeApplication\n(application.rs)" as App #DDEBF7
+  participant "window_state.rs\nplan_restore, Keeper" as State #DDEBF7
+  participant "ChromeDocument\n(chrome.rs)" as Chrome #DDEBF7
+end box
+box "Blitz and winit" #F5FAF2
+  participant "BlitzApplication\nand View" as Blitz #E2EFDA
+  participant "the window\n(winit)" as Window #E2EFDA
+end box
+participant "<state>/window.json" as File #FCE4D6
+
+== Start ==
+Launch -> File : Profile::read_state (start-up has checked\nand, if damaged, backed it up and made it anew)
+Launch -> App : PendingWindow { chrome, renderer, saved, save }
+App -> App : can_create_surfaces: the monitors can be listed now
+App -> State : plan_restore(saved, monitors, primary, window system)
+State --> App : RestorePlan { size, position, maximized, fullscreen, zoom }:\nthe saved place if the window would be visible there,\nelse centred on its monitor or the primary one
+App -> Blitz : add_window(WindowConfig::with_attributes(size, position,\ncreation theme: none on Windows)); can_create_surfaces
+Blitz -> Window : View::init: made hidden, then shown;\nthe viewport at zoom 1, with the window's theme
+App -> Blitz : the saved zoom (Blitz's viewport)
+App -> Chrome : take_window_requests: the scheme shown\n(the theme override and the decorations)
+App -> Window : set_maximized(true), set_fullscreen(Borderless(monitor)),\nas saved: only now, since a window manager\nignores a maximize asked of a hidden window
+App -> State : Keeper::new(saved); changed(now): the first reading is\ndue in 500 ms, as no event need report the first size
+
+== Following ==
+Window -> App : SurfaceResized, Moved, ScaleFactorChanged
+App -> State : changed(now): no reading, no write on the resize path
+App -> App : about_to_wait: ControlFlow::WaitUntil(due)
+note right of App #DDEBF7
+  due = min(last change + 500 ms,
+  first change + 3 s): a long drag
+  is saved at least every 3 s
+end note
+App -> Window : at due: read the window (size, frame's corner,\nsurface's corner, maximized, full screen, monitor)
+App -> State : observe(Sample::from_platform): the size and place\nchange only while neither maximized nor full screen
+App -> File : save_with: write_atomic, only if the state changed
+User -> Window : Ctrl+= / Ctrl+− / Ctrl+0 (Blitz's keys)
+App -> Blitz : follow_zoom: a zoom out of [0.25, 5] set back (L15)
+App -> State : set_zoom: to hundredths; saved when due
+
+== Full screen ==
+User -> Chrome : F11 (Ctrl+Cmd+F on macOS), before Find;\na held key toggles once
+Chrome -> App : WindowRequest::ToggleFullScreen
+App -> Window : read first (leaving restores this); set_fullscreen
+App -> Chrome : full_screen_changed: "Press F11 to leave full screen"
+
+== Closing ==
+User -> Window : close
+Window -> App : CloseRequested
+App -> Window : read it now, for the last time
+App -> File : write it if it changed
+App -> Blitz : forward: Blitz drops the view (the chrome saves\nthe session and history), and the loop exits
+App -> File : Drop: the last reading, if still unwritten\n(macOS's Quit closes no window first)
+note over File #F8CBAD
+  A process that is killed loses at most the
+  changes of the last 500 ms (3 s during a drag).
+end note
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code |
+  |<#E2EFDA> | Blitz and winit |
+  |<#FFF2CC> | what the user does |
+  |<#FCE4D6> | the state file |
+  |<#F8CBAD> | what a crash can lose |
+endlegend
+@enduml

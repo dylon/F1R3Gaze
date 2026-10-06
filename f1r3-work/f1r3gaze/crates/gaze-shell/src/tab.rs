@@ -19,6 +19,17 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
+/// The style sheet every page gets after Blitz's own (ledger L13, H2):
+/// a page that declares no colour scheme is light, as in Chrome and
+/// Firefox. Pages see the scheme the browser shows in
+/// `prefers-color-scheme`, and Stylo gives an element whose `color-scheme`
+/// is `normal` the system colours of that scheme too (`Mark`, `Canvas`, …,
+/// which Blitz's style sheet uses for `mark`, `dialog` and popovers): a
+/// page that never asked for dark would turn dark in places. A page's own
+/// `color-scheme` (`light dark`, `dark`) overrides this one, as an author's
+/// rule overrides the browser's.
+pub(crate) const PAGE_SCHEME_CSS: &str = ":root{color-scheme:light}";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage {
     Fetching,
@@ -192,6 +203,7 @@ impl Tab {
                 wake: self.wake.clone(),
             })),
             shell_provider: self.page_shell.clone(),
+            ua_stylesheets: Some(vec![blitz_dom::DEFAULT_CSS.to_string(), PAGE_SCHEME_CSS.to_string()]),
             ..Default::default()
         }
     }

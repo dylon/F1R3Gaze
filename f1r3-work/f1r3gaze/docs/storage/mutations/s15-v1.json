@@ -1,0 +1,29 @@
+[
+ {
+  "id": "M15a",
+  "what": "the holder's record synced again (write_atomic)",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "                .and_then(|()| gaze_fs::replace_unsynced(fs, &beside, info.as_bytes(), Perm::Private));",
+  "new": "                .and_then(|()| gaze_fs::write_atomic(fs, &beside, info.as_bytes(), Perm::Private));",
+  "test": "the_holder_record_is_replaced_without_syncing"
+ },
+ {
+  "id": "M15b",
+  "what": "replace_unsynced syncs its temporary file",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "    let written = fs.create_new(&temp, bytes, mode).and_then(|()| fs.rename(&temp, &target));",
+  "new": "    let written = fs.create_new(&temp, bytes, mode).and_then(|()| fs.sync_file(&temp)).and_then(|()| fs.rename(&temp, &target));",
+  "test": "replace_unsynced_syncs_nothing"
+ },
+ {
+  "id": "M15c",
+  "what": "replace_unsynced removes the file, then writes it in place",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "    let written = fs.create_new(&temp, bytes, mode).and_then(|()| fs.rename(&temp, &target));",
+  "new": "    let _ = &temp;\n    let written = match fs.remove_file(&target) {\n        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),\n        _ => fs.create_new(&target, bytes, mode),\n    };",
+  "test": "replace_unsynced_is_atomic_for_readers"
+ }
+]

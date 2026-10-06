@@ -7,3 +7,4 @@ license.workspace = true
 
 [dependencies]
 k1ndl1ng-norm.workspace = true
+gaze-fs.workspace = true

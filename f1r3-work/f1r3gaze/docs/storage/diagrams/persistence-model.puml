@@ -1,0 +1,64 @@
+@startuml persistence-model
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam ArrowFontSize 11
+title What a crash keeps: the persistence model behind gaze-fs, MemFs and ProfileStartup.tla
+
+component "F1R3Gaze\n(writes through gaze-fs)" as App #DDEBF7
+
+rectangle "Kernel: what every process sees" as Kernel #E2EFDA {
+  component "names\n(directory entries)" as Names #E2EFDA
+  component "file data" as Data #E2EFDA
+}
+
+rectangle "Disk: what a power cut keeps" as Disk #FCE4D6 {
+  component "durable names" as DNames #FCE4D6
+  component "durable data" as DData #FCE4D6
+}
+
+queue "pending directory operations\n(create, link, rename, unlink)" as Pending #FFF2CC
+
+App --> Names : create, link, rename, unlink\n**A1**: each is atomic, seen at once
+App --> Data : write
+Names --> Pending : each directory operation\nwaits here until synced
+Pending --> DNames : **A2**: fsync(the directory)\nmakes its entries durable
+Data --> DData : **A3**: fsync(the file)\nmakes its data durable
+
+rectangle "Two kinds of crash" as Crashes #F8CBAD {
+  card "**process crash**\n(kill, panic, abort):\nthe kernel's view survives whole" as ProcessCrash #F8CBAD
+  card "**power cut**:\nthe disk's view, plus some of\nthe pending operations" as PowerCut #F8CBAD
+}
+
+Kernel ..> ProcessCrash
+Disk ..> PowerCut
+Pending ..> PowerCut : which survive
+
+note bottom of PowerCut #F8CBAD
+  Linux and macOS (ext4, XFS, btrfs, APFS): **any subset**
+  of the pending operations survives.
+  Windows (NTFS) has no directory fsync:
+  **W1**: a per-volume **prefix** of the pending operations survives;
+  **W2**: FlushFileBuffers on a file commits the volume's log,
+  so gaze-fs syncs a file after linking or renaming it.
+end note
+
+rectangle "The same model, three times" as Models #EDEDED {
+  component "gaze-fs MemFs\n(Rust tests: every crash point,\nevery surviving subset or prefix)" as MemFs #DDEBF7
+  component "ProfileStartup.tla\n(TLC: every interleaving,\nup to two crashes)" as Tla #DDEBF7
+  component "the real file system\n(crash-points kill tests in CI)" as Real #E2EFDA
+}
+
+Crashes ..> Models : every outcome these\ncrashes allow is checked
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code |
+  |<#E2EFDA> | operating system |
+  |<#FFF2CC> | changes not yet durable |
+  |<#FCE4D6> | durable state |
+  |<#F8CBAD> | crashes |
+  |<#EDEDED> | where the model is checked |
+endlegend
+@enduml

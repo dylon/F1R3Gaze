@@ -13,6 +13,7 @@
 //!               rho:serve:1:<publisher>:<project>:<version>.
 //! ```
 
+use gaze_fs::{Perm, StdFs};
 use gaze_knf::Knf;
 use gaze_net::{digest, hex};
 use gaze_shard::SiteManifest;
@@ -85,7 +86,8 @@ fn compile(mut a: std::vec::IntoIter<String>) {
         k.manifest.sync_budget = s;
     }
     let out = out.unwrap_or_else(|| Path::new(&input).with_extension("knf").to_string_lossy().into_owned());
-    std::fs::write(&out, k.encode()).unwrap_or_else(|e| die(format!("{out}: {e}")));
+    gaze_fs::write_atomic(&StdFs, Path::new(&out), &k.encode(), Perm::Shared)
+        .unwrap_or_else(|e| die(format!("{out}: {e}")));
     println!("{out}");
     println!("integrity=\"{}\"", k.integrity());
     for (i, u) in &k.manifest.imports {
@@ -142,6 +144,10 @@ fn site(mut a: std::vec::IntoIter<String>) {
     let mut files = Vec::new();
     walk(Path::new(&dir), "", &mut files);
     let blobs = out.join("blobs");
+    // A site's output, made to be published: its folders get the umask's
+    // mode, like its files (Perm::Shared), not the profile's 0700, and a
+    // build a power cut loses is simply run again.
+    #[allow(clippy::disallowed_methods)]
     std::fs::create_dir_all(&blobs).unwrap_or_else(|e| die(e));
     let mut map = BTreeMap::new();
     for (name, path) in files {
@@ -150,7 +156,8 @@ fn site(mut a: std::vec::IntoIter<String>) {
             Knf::decode(&b).unwrap_or_else(|e| die(format!("{name}: {e:?}")));
         }
         let h = digest(&b);
-        std::fs::write(blobs.join(hex(&h)), &b).unwrap_or_else(|e| die(e));
+        gaze_fs::write_atomic(&StdFs, &blobs.join(hex(&h)), &b, Perm::Shared)
+            .unwrap_or_else(|e| die(e));
         println!("{}  {name}", hex(&h));
         map.insert(name, h);
     }
@@ -168,7 +175,8 @@ fn site(mut a: std::vec::IntoIter<String>) {
         files_term.join(", "),
         mirrors_term.join(", ")
     );
-    std::fs::write(out.join("manifest.rho"), term).unwrap_or_else(|e| die(e));
+    gaze_fs::write_atomic(&StdFs, &out.join("manifest.rho"), term.as_bytes(), Perm::Shared)
+        .unwrap_or_else(|e| die(e));
     println!("wrote {}", out.display());
 }
 

@@ -1,0 +1,29 @@
+[
+ {
+  "id": "M6s1",
+  "what": "a damaged store cut back without a backup",
+  "file": "crates/gaze-shell/src/profile/backup.rs",
+  "package": "gaze-shell",
+  "old": "        let copy = self\n            .backups\n            .copy_into(damage.path, damage.bytes)\n            .map_err(|e| format!(\"{} cannot be backed up: {e}\", damage.path.display()))?;",
+  "new": "        let copy = damage.path.to_path_buf();",
+  "test": "a_real_store_keeps_its_records_and_its_damage_is_backed_up"
+ },
+ {
+  "id": "M6s2",
+  "what": "unreadable records reported as routine (Notice) like a torn tail",
+  "file": "crates/gaze-shell/src/profile/backup.rs",
+  "package": "gaze-shell",
+  "old": "            false => (Severity::Warning, \"records that cannot be read\"),",
+  "new": "            false => (Severity::Notice, \"records that cannot be read\"),",
+  "test": "a_damaged_store_is_copied_and_reported_before_it_is_cut"
+ },
+ {
+  "id": "M6s3",
+  "what": "a failed backup ignored (the store is then cut with no copy kept)",
+  "file": "crates/gaze-shell/src/profile/backup.rs",
+  "package": "gaze-shell",
+  "old": "            .map_err(|e| format!(\"{} cannot be backed up: {e}\", damage.path.display()))?;",
+  "new": "            .unwrap_or_else(|_| damage.path.to_path_buf());",
+  "test": "a_store_that_cannot_be_backed_up_is_left_alone"
+ }
+]

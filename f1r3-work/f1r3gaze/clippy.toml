@@ -1,0 +1,17 @@
+# Every file F1R3Gaze writes goes through gaze-fs (crates/gaze-fs;
+# docs/storage/README.md, "Writing a file durably"), which writes atomically,
+# syncs, never replaces what it must not, and makes profile files owner-only.
+# These standard-library calls are its non-atomic, unsynced or replacing
+# counterparts; the exceptions carry an `allow` that says why.
+disallowed-methods = [
+    { path = "std::fs::write", reason = "write with gaze_fs::write_atomic: atomic, synced, owner-only" },
+    { path = "std::fs::rename", reason = "use gaze_fs::write_atomic, publish_no_replace or move_no_replace" },
+    { path = "std::fs::copy", reason = "use gaze_fs::copy_verified" },
+    { path = "std::fs::File::create", reason = "use gaze_fs::write_atomic, or Fs::create_new for a new file" },
+    # A folder's name is durable only once its parent is synced, and a power
+    # cut takes a folder's entries with it (docs/storage/ledger.md, S6 part 2
+    # and S7).
+    { path = "std::fs::create_dir_all", reason = "use gaze_fs::create_dir_durably: each new folder synced in its parent" },
+    { path = "std::fs::create_dir", reason = "use gaze_fs::create_dir_durably, or Fs::create_dir to claim a name" },
+    { path = "gaze_fs::Fs::create_dir_all", reason = "use gaze_fs::create_dir_durably: each new folder synced in its parent" },
+]

@@ -1536,3 +1536,372 @@ monospace fallback. fontique's CoreText backend maps `monospace` to Courier
   (gaze-shell 105), and 107 for gaze-shell with `frame-times`.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean
   on both, and with `frame-times`.
+
+---
+
+## L12 — Cmd shortcuts never fire on macOS
+
+**Report.** Found while designing the full-screen chord Ctrl+Cmd+F (storage
+plan, 2026-10-05). `global_shortcut` took Ctrl or `Modifiers::META` as the
+command key, and README §9 promised "Cmd on macOS".
+
+**How Blitz reports Cmd.** blitz-shell converts winit's modifiers in
+`winit_modifiers_to_kbt_modifiers` (`convert_events.rs:151-166`):
+`meta_key()`, the Command key on macOS, becomes `Modifiers::SUPER`. In
+keyboard-types 0.7, `META` is `0x40` and `SUPER` is `0x2000`, so the two
+never overlap. Blitz and the chrome use the same keyboard-types 0.7; winit
+uses 0.8.3 internally, and Blitz converts.
+
+**H1: on macOS, Cmd+T reaches `global_shortcut` as `SUPER` and is
+ignored.**
+- **Prediction.** `global_shortcut(t, SUPER)` returns `None`.
+- **Experiment.** A throw-away test (`zz_l12_probe`) called
+  `global_shortcut` with each modifier. `chrome/tests.rs` was then restored
+  byte for byte (`cmp`).
+- **Raw result** (`target/scratch/storage/l12/probe.log`):
+
+  ```text
+  L12 probe: SUPER (Blitz's Cmd)+t -> None
+  L12 probe: META+t -> Some(NewTab)
+  L12 probe: CONTROL+t -> Some(NewTab)
+  ```
+
+- **Verdict.** Confirmed. On macOS every Cmd shortcut was dead, and only
+  Ctrl worked, which is not the macOS convention.
+
+**Fix.**
+- **`KeyPlatform`.** A new `enum KeyPlatform { MacOs, Other }`, whose
+  `CURRENT` is chosen with `cfg!(target_os = "macos")`, decides the command
+  key in `KeyPlatform::command`:
+  - on macOS, `SUPER` or `META`;
+  - elsewhere, `CONTROL` or `META`, as before. The Super key belongs to the
+    system there.
+- **Ctrl+Tab.** It cycles tabs on every platform. On macOS, Cmd+Tab is the
+  system's application switcher, so browsers use Ctrl+Tab there too.
+- **`global_shortcut`** takes the platform as a parameter, so tests can
+  check both.
+- **README §9** now says which key is the command key, and that Ctrl+Tab
+  keeps Ctrl.
+
+**Tests.**
+- `chrome::tests::cmd_shortcuts_fire_with_the_command_key`:
+  - on macOS, `SUPER`+T and `META`+T open a tab, `SUPER`+2 selects tab 2,
+    Ctrl+T does nothing, and Ctrl+Tab cycles;
+  - elsewhere, Ctrl+T opens a tab and `SUPER`+T does nothing.
+- `browser_shortcuts_select_tabs_even_when_page_has_focus` now names its
+  platform (`Other`).
+
+**Mutation checks.**
+
+| ID | Mutation | Result |
+|---|---|---|
+| M12 | macOS's command key back to `META` only | `cmd_shortcuts_fire_with_the_command_key` red at `tests.rs:589` (`SUPER`+T gave `None`) |
+
+**Green.**
+- `cargo test --workspace --locked` passes 173 tests, 0 failed, on stable and
+  on 1.95: one more than L11.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean on
+  both, with and without `frame-times`.
+- Logs: `target/scratch/storage/l12/`.
+
+---
+
+## L13 — Pages never saw the scheme the browser shows
+
+**Report.** Planned in the storage plan (§3.6: "pages' `prefers-color-scheme`
+follows the chrome"), and decided by the user on 2026-10-05: a web page's own
+light and dark styles follow the scheme the browser shows. Before, a page saw
+`prefers-color-scheme: light` on X11 and Wayland whatever the browser showed,
+and the window system's theme on macOS and Windows: never the browser's
+choice, such as Dark chosen on a light desktop.
+
+**Mechanism** (verified in the sources; README §3.6 and §11, which cite the
+lines):
+- A document's `prefers-color-scheme` is its viewport's `color_scheme`, light
+  by default.
+- The chrome's layout pass copies the chrome's viewport scheme into every
+  page's viewport, hidden tabs included (blitz-dom `resolve.rs:150`). A page's
+  own viewport is therefore never the source.
+- The chrome's document was built with Blitz's default viewport, and
+  `View::init` then set its scheme from `Window::theme()`: unknown on X11 and
+  Wayland, so light, and the window system's on macOS and Windows
+  (blitz-shell `window.rs:181`). Nothing ever set it to the browser's scheme.
+
+**H1: under a dark chrome, a page's `@media (prefers-color-scheme: dark)`
+rules do not apply.**
+- **Prediction.** The page of `pages_follow_the_chrome_scheme` (body
+  `#ffffff`, and `#202124` in its dark rule) computes `rgb(255, 255, 255)`
+  with Dark chosen.
+- **Experiment.** That test, on the step-9 code: it needs only `set_theme`
+  and `show`.
+- **Raw result** (`target/scratch/storage/s12-part3/l13-red.log`):
+
+  ```text
+  assertion `left == right` failed: a dark chrome shows its page dark
+    left: "rgb(255, 255, 255)"
+   right: "rgb(32, 33, 36)"
+  ```
+
+  In the window, harness scene 83 (a dark chrome over `site/scheme.html`)
+  with the step-9 binary (`0dc5c59c…`): `dark_page_px = 0`, FAIL
+  (`l13-red-harness/`).
+- **Verdict.** Confirmed.
+
+**Fix, part 1.** `paint_theme`, through which every theme change goes, sets
+the chrome's own viewport scheme to the scheme shown (`color_scheme_of`).
+The unit test passes (`l13-green-1.log`).
+
+**H2: with part 1 alone, a page that declares no colour scheme gets the dark
+scheme's system colours.** Found while checking the design against the
+sources: Stylo's `is_dark_color_scheme` gives an element whose `color-scheme`
+is `normal` the preferred scheme (stylo 0.22.0 `device/servo.rs:336-351`),
+where Firefox defaults such content to light (`ColorSchemeForStyle`, the
+code Stylo's comment cites) and Chrome draws it light. Blitz's style sheet
+draws `mark`, `dialog` and popovers in system colours.
+- **Prediction.** A `<mark>` in a page with no `color-scheme` computes
+  `rgb(102, 92, 0)`, Stylo's dark `Mark`, instead of `rgb(255, 235, 59)`.
+- **Experiment.** `pages_keep_light_system_colours_unless_they_support_dark`:
+  that page and one declaring `:root{color-scheme:light dark}`, under Dark.
+- **Raw result** (`l13-h2-red.log`):
+
+  ```text
+  assertion `left == right` failed: a page that declares no scheme stays light
+    left: "rgb(102, 92, 0)"
+   right: "rgb(255, 235, 59)"
+  ```
+
+- **Verdict.** Confirmed. Part 1 alone would have darkened the highlights,
+  dialogs and popovers of pages that never asked for dark.
+
+**Fix, part 2.** Every page gets one more user-agent style sheet after
+Blitz's own, `:root{color-scheme:light}` (`tab::PAGE_SCHEME_CSS`). A page's
+own `color-scheme` overrides it, as an author's rule overrides a user
+agent's. Both tests pass (`l13-h2-green.log`): the page that declares no
+scheme keeps `rgb(255, 235, 59)`, and the page that supports dark gets
+`rgb(102, 92, 0)`.
+
+**H3: in the window, `View::init` puts the scheme back to the window's
+(the step-10 design's finding 3).**
+- **Prediction.** A build whose window never sets Blitz's theme override
+  shows scene 83's page light (`dark_page_px` 0), though every unit test
+  passes: no unit test has a winit window.
+- **Experiment.** Hand mutation H-L13: `view.set_theme_override(Some(page))`
+  in `ChromeApplication::show_scheme` commented out, built into
+  `hand-mutations/target` (`5ca4cee5…`); the file restored and compared with
+  `cmp` before the run.
+- **Raw result** (`hand-mutations/h-l13-harness.log`): scene 83
+  `dark_page_px = 0`, FAIL; scene 84 passes.
+- **Verdict.** Confirmed.
+
+**Fix, part 3.** The chrome asks its window to show the scheme
+(`WindowRequest::Scheme`), and `ChromeApplication` sets Blitz's theme
+override to it after Blitz makes the window and after every change
+(README §3.6). With the full fix, scene 83 counts 392 688 pixels of
+`#202124`, and scene 84 none and 392 688 white ones.
+
+**Tests.**
+- `pages_follow_the_chrome_scheme`: Dark; Light; a tab opened after the
+  change; a light theme file; back to Dark, the hidden tab too.
+- `pages_keep_light_system_colours_unless_they_support_dark`, under Dark,
+  then Light.
+- `application::tests::a_scheme_request_changes_only_what_differs`: the
+  override is set when it differs, and only then.
+- Harness scenes 83 and 84.
+
+**Mutation checks** (storage ledger S12, part 3; `s12-chrome.json`).
+
+| ID | Mutation | Result |
+|---|---|---|
+| M12r | the viewport line removed | `pages_follow_the_chrome_scheme` red |
+| M12ap | the page style sheet removed | `pages_keep_light_system_colours_unless_they_support_dark` red |
+| M12s | the override never set | `a_scheme_request_changes_only_what_differs` red |
+| H-L13 | the override's call commented out, in a release build | scene 83 `dark_page_px = 0`, FAIL |
+
+**Not fixed here (noted).**
+- **A page that asks for dark with no background.** Blitz paints a
+  document's background only from its `html` or `body` and never `Canvas`
+  (blitz-paint `render.rs`), and Stylo's initial `color` is black. Such a
+  page stays on the chrome's white page area with black text: legible, but
+  not dark. An engine limitation.
+- **`<meta name="color-scheme">`** is not implemented by Blitz (no code in
+  blitz-dom or blitz-html reads it). A page that declares its schemes only
+  there keeps light system colours; its `prefers-color-scheme` rules still
+  follow the browser.
+- **Headless runs** have no chrome, so their pages keep Blitz's default light
+  viewport. Nothing a headless run prints (the committed document, the
+  console) depends on the scheme.
+- **Scrollbars** would follow the scheme, but blitz-paint draws them only
+  with its `scrollbars` feature, which nothing enables.
+
+**Green.** With the rest of step 10 (storage ledger S12, part 3): 478 tests
+on stable and 1.95, clippy clean in five configurations, and the full harness
+(84 scenes, 82 of 82 checks).
+
+---
+
+## L14 — Dark and Light drawn in the custom palette's colours
+
+**Report.** Found while designing the switch to the five roots (storage
+ledger S14; the design's finding 4). `theme::palette(name, custom)` laid a
+custom palette over whichever scheme was named, and `apply_theme` always
+passed the old profile's `palette.css`
+(`custom_palette(&self.eng.dir).ok()`). The built-in pages' style sheet
+did the same (`builtin_css(&ui.theme, custom)`).
+
+**H1: with a valid `palette.css`, Dark and Light show the palette's
+colours.**
+- **Prediction.** With `--gaze-bg: #203040` in `palette.css`, the chrome's
+  body background is `rgb(32, 48, 64)` under Dark and under Light, not each
+  scheme's own `--gaze-bg`.
+- **Experiment.** `chrome::tests::a_builtin_scheme_ignores_the_custom_theme`,
+  written against the single-folder chrome before the switch: a valid
+  `palette.css`, then a window under each scheme, reading the body's
+  computed `background-color` (the chrome draws it in `--gaze-bg`).
+- **Raw result** (`target/scratch/storage/s14/l14-red.log`):
+
+  ```text
+  drawn in the palette's colours: [("dark", "rgb(32, 48, 64)", "rgb(22, 27, 38)"),
+                                   ("light", "rgb(32, 48, 64)", "rgb(245, 247, 250)")]
+  ```
+
+- **Verdict.** Confirmed. Dark looked identical to Custom, and Light took
+  the palette's dark background.
+
+**Fix.** The switch-over's theme resolution (`theme::resolve`): a theme file
+is used only for a named choice, `theme = "<name>"`; Dark and Light are
+`builtin_palette(scheme)`, and System the scheme the system prefers. The
+chrome resolves once per change (`apply_theme`) and hands the same colours to
+its own variables and, as `builtin_css_of`, to every built-in page. Custom is
+the theme file `themes/custom.css`, where the move of an old profile puts its
+`palette.css`.
+
+**Tests.**
+- `a_builtin_scheme_ignores_the_custom_theme`, moved to the new profile
+  (`ScratchProfile::theme_file`, `set_theme`): Dark and Light are drawn in
+  their own `--gaze-bg`, and Custom in the palette's, `rgb(32, 48, 64)`.
+- `theme::tests::legacy_and_resolved_css_agree`: for the built-in schemes,
+  the old `palette`/`variables`/`builtin_css` and the resolved colours give
+  the same bytes.
+
+**Mutation check.** M14z re-creates the overlay inside `theme::resolve` (a
+usable `custom` theme laid over a built-in scheme):
+`a_builtin_scheme_ignores_the_custom_theme` went red, and the file was
+restored byte for byte (storage ledger S14, `s14/mutations/`).
+
+**Green.** The storage ledger's S14 checks: 465 tests on stable and 1.95,
+clippy clean in five configurations, and the harness (H1: 57 of 57 checks;
+only the scenes that show the custom theme's path changed).
+
+---
+
+## L15 — Ctrl+− zooms the window to nothing
+
+**Report.** Found while designing the window's zoom in `window.json` (storage
+ledger S13, part 2; the step-11 design's finding 5). Blitz's own keys zoom a
+window: Ctrl+= and Ctrl+− add and take a tenth, Ctrl+0 resets
+(blitz-shell `window.rs:646-666`, `Viewport::zoom_by` in blitz-traits
+`shell.rs:144-146`). Neither has a bound, and the viewport's logical size
+divides by the zoom (`shell.rs:118-124`).
+
+**H1: below a tenth, the window shows nothing.**
+- **Prediction.** Twelve presses of Ctrl+− from 100 % take the zoom to
+  −0.2: in Blitz's `f32` the ninth leaves 0.09999993 and the tenth
+  $`-7.45 \times 10^{-8}`$, already below zero (computed with NumPy's
+  `float32`). The window then draws neither its chrome nor its page.
+- **Experiment.** Harness scene 92 with the step-10 binary (`f48811d8…`):
+  twelve presses, then a capture.
+- **Raw result** (`target/scratch/storage/s13-part2/red-harness/92-window-zoom-floor.png`):
+  the window shows only its background colour; the process lives on
+  (`alive_after_zoom_out = 1`).
+- **Verdict.** Confirmed.
+
+**Fix.** After every key the window gets, `ChromeApplication::follow_zoom`
+reads the zoom and sets it back within $`[0.25, 5]`$
+(`window_state::zoom_correction`), the range `window.json` keeps; the zoom
+kept is rounded to hundredths, since Blitz's `f32` holds 1.2 as
+1.2000000476837158.
+
+**Tests.**
+- `window_state::tests::zoom_keys_stay_within_range`: 0.15 and −0.2 give
+  0.25, 5.05 gives 5, NaN gives 1; 1.2 (and its `f32`), 0.25 and 5 need no
+  correction.
+- `the_zoom_is_kept_in_range`: Blitz's `f32` 1.2 is kept as 1.2.
+- Harness scene 92: alive after twelve presses, 0.25 saved, and a window
+  restored at 25 % equal to itself after Ctrl+0 and the same twelve presses.
+
+**Mutation checks.** M13t (no correction) red in `zoom_keys_stay_within_range`;
+M13s (no rounding) red in `the_zoom_is_kept_in_range`; by hand, H-zoom
+(storage ledger S13, part 2).
+
+**Green.** Storage ledger S13 (part 2): 498 tests on stable and 1.95, clippy
+clean in five configurations, and scene 92's three checks.
+
+---
+
+## L16 — Cmd+H hides F1R3Gaze on macOS instead of opening History
+
+**Report.** Found while designing step 11 (the design's finding 8). L12 made
+Cmd the command key on macOS, so Cmd+H was to open History. But winit's
+default application menu binds Cmd+H to Hide (winit-appkit `menu.rs:38-45`:
+the item "Hide" with the key equivalent `h`), and AppKit gives menu key
+equivalents to the menu before any view sees the key. The chrome never
+receives Cmd+H on macOS.
+
+**Fix.** On macOS History is Cmd+Y, the key Safari and Chrome use for it;
+Cmd+H is left to the system. Elsewhere it stays Ctrl+H.
+
+**Tests.** `chrome::tests::history_is_cmd_y_on_macos_and_ctrl_h_elsewhere`:
+on macOS Cmd+Y opens History and Cmd+H does nothing in the chrome;
+elsewhere Ctrl+H opens it and Ctrl+Y does nothing. Red before the fix
+(`target/scratch/storage/s13-part2/l16-red.log`: `left: None`,
+`right: Some(Panel("history"))`), green after (`l16-green.log`).
+
+**Not checkable here.** That the menu takes Cmd+H first is AppKit's
+behaviour, read in winit-appkit's source; it is among the manual checks on a
+Mac (storage ledger S16).
+
+**Mutation checks.** M16 (no Cmd+Y) and M16b (History on Cmd+H again), both
+red in that test.
+
+---
+
+## L17 — The hover tips name Ctrl on macOS
+
+**Report.** Found with L16: the tips and the "Recently closed" tag name
+their keys as fixed text ("New tab · Ctrl+T", "History · Ctrl+H", …). Since
+L12 the command key is Cmd on macOS, so there every tip named a key that
+does nothing, and after L16 History's was doubly wrong.
+
+**Fix.** The templates hold a token per key (`{key:newtab}`, …), and
+`KEY_LABELS` gives each its label on each platform: Ctrl+… elsewhere, Cmd+…
+on macOS, and History's Ctrl+H or Cmd+Y. `shell_html` replaces the tokens,
+and the two builders that name keys take their labels from the same table.
+
+**Tests.** `chrome::tests::every_key_label_names_a_key_that_does_what_it_says`:
+for both platforms, each label is parsed back into a key and modifiers, and
+`global_shortcut` must give the action the tip names; no token is left in
+the shell. On Linux the labels are as before, so no capture changes.
+
+**Mutation checks.** M17 (the macOS label of New tab back to Ctrl+T) and
+M17b (the tokens left unreplaced), both red in that test.
+
+---
+
+## L18 — Three engine findings of the storage work, reported upstream
+
+**Why.** The user asked on 2026-10-06 that the Blitz findings be searched
+for, and filed where new ([upstream reports](upstream/README.md)). Evidence
+in `target/scratch/upstream/`: the searches, the reproduction crates (at the
+pin `674d7d2`, on `main` at `2335458`, and on a clone of `main` with a
+suggested fix), and each issue's text as filed.
+
+| Finding | Where it came from | Result | Filed as |
+|---|---|---|---|
+| A window's rendering at a zoom depends on the zoom it started at | storage ledger S13 part 2, E3 | Reproduced with Blitz alone, on `main` too, for a zoom and for a display-scale change alike. Without borders, or with outlines instead, nothing differs: Stylo snaps a border width to device pixels when it computes it (`snap_as_border_width`), and Blitz recascades on a colour-scheme change but not on a scale change, since #782 ended the full restyle on every device change. Recascading on a scale change too made every case identical on a clone of `main`, and blitz-dom's 57 tests passed | [DioxusLabs/blitz#1076](https://github.com/DioxusLabs/blitz/issues/1076) |
+| `<meta name="color-scheme">` has no effect | L13, "Not fixed here" | Under a dark preference, `content="light"` leaves the dark system colours that `:root { color-scheme: light }` removes; no code reads the `<meta>` | [DioxusLabs/blitz#1077](https://github.com/DioxusLabs/blitz/issues/1077) |
+| No `Canvas` behind a page that asks for dark | L13, "Not fixed here" | A `color-scheme: dark` page with no colours of its own gets a transparent canvas (embedders fill white) and black text: `paint_scene` paints only the root's or the body's background, and Stylo's initial `color` is black where CSS Color 4 gives `CanvasText` | [DioxusLabs/blitz#1078](https://github.com/DioxusLabs/blitz/issues/1078) |
+
+The open pull requests nearest each finding were read in full and are cited
+in the issues: #902 and #837 (borders at a fractional scale), #784 (inline
+layouts on zoom), #1011, #672 and #640 (the root's and the body's background
+on the canvas), #523 (the white under the WPT runner).

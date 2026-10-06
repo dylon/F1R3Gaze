@@ -1,0 +1,66 @@
+[
+ {
+  "id": "M8g",
+  "what": "the real binary starts without its busy flag (begin skipped)",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "        match migrate::begin(l, fs) {",
+  "new": "        match Ok::<migrate::Begun, std::io::Error>(migrate::Begun::Clean) {",
+  "test": "real_kills_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "crash-points,storage-trace",
+   "--test",
+   "crash_points"
+  ]
+ },
+ {
+  "id": "M8h",
+  "what": "the migration does not note the plan it replays",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    fs.note(&format!(\"plan {}\", serde_json::to_string(plan).expect(\"a plan always serializes\")));\n",
+  "new": "",
+  "test": "real_kills_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "crash-points,storage-trace",
+   "--test",
+   "crash_points"
+  ]
+ },
+ {
+  "id": "M8i",
+  "what": "a crash point never aborts",
+  "file": "crates/gaze-fs/src/fs.rs",
+  "package": "gaze-shell",
+  "old": "        std::process::abort();",
+  "new": "        let _ = at;",
+  "test": "every_crash_point_is_a_traced_operation",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "crash-points,storage-trace",
+   "--test",
+   "crash_points"
+  ]
+ },
+ {
+  "id": "M8j",
+  "what": "the lock's operations bypass start-up's file system (the alignment)",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "            match take_patiently_in(fs, &path, patience) {",
+  "new": "            match take_patiently_in(&StdFs, &path, patience) {",
+  "test": "every_crash_point_is_a_traced_operation",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "crash-points,storage-trace",
+   "--test",
+   "crash_points"
+  ]
+ }
+]

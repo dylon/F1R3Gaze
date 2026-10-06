@@ -1,7 +1,9 @@
 //! Key custody (spec §9.1). A keystore holds named secp256k1 keys: the
 //! wallets the user pays with (`wallet:<address>`), and anything else a
-//! component needs to keep. The browser never writes a key anywhere else.
+//! component needs to keep. A key leaves the keystore only when the user
+//! exports a wallet, to a file only its owner can read.
 
+use gaze_fs::{Fs, Perm, StdFs};
 use k256::ecdsa::SigningKey;
 use std::path::PathBuf;
 
@@ -21,11 +23,28 @@ pub trait Keystore: Send + Sync + 'static {
     fn remove(&self, name: &str) -> Result<(), String>;
 }
 
-/// Keys as hex files, readable only by the user on Unix: the fallback where
-/// no OS credential store is available (Linux without secret-service). File
-/// names are hashes of the entry names.
+/// Keys as hex files, readable only by the user on Unix from the moment they
+/// exist, in a directory only the user can enter: the fallback where no OS
+/// credential store is available (Linux without secret-service). File names
+/// are hashes of the entry names. Writes and removals are synced, so a key
+/// is never half-written and a removed key does not come back after a power
+/// cut.
 pub struct FileKeystore {
     dir: PathBuf,
+}
+
+/// The file name a [`FileKeystore`] keeps the key `name` under: the
+/// BLAKE2b-256 hash of the name in lower-case hex, then `.key`.
+pub fn key_file_name(name: &str) -> String {
+    let h = k1ndl1ng_norm::hash::blake2b_256(name.as_bytes()).0;
+    format!("{}.key", gaze_net::hex(&h))
+}
+
+/// The secret key in a key file: hex text, white space around it ignored.
+pub fn parse_key_file(bytes: &[u8]) -> Result<SigningKey, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "corrupt key file: not UTF-8 text".to_string())?;
+    let raw = gaze_net::unhex(text.trim()).ok_or("corrupt key file: not hexadecimal")?;
+    SigningKey::from_slice(&raw).map_err(|e| format!("corrupt key file: {e}"))
 }
 
 impl FileKeystore {
@@ -33,38 +52,29 @@ impl FileKeystore {
         FileKeystore { dir: dir.into() }
     }
     fn path(&self, name: &str) -> PathBuf {
-        let h = k1ndl1ng_norm::hash::blake2b_256(name.as_bytes()).0;
-        self.dir.join(format!("{}.key", gaze_net::hex(&h)))
+        self.dir.join(key_file_name(name))
     }
 }
 
 impl Keystore for FileKeystore {
     fn load(&self, name: &str) -> Result<Option<SigningKey>, String> {
-        match std::fs::read_to_string(self.path(name)) {
-            Ok(t) => {
-                let b = gaze_net::unhex(t.trim()).ok_or("corrupt key file")?;
-                SigningKey::from_slice(&b).map(Some).map_err(|e| e.to_string())
-            }
+        match StdFs.read(&self.path(name)) {
+            Ok(bytes) => parse_key_file(&bytes).map(Some),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.to_string()),
         }
     }
     fn store(&self, name: &str, key: &SigningKey) -> Result<(), String> {
-        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
-        let p = self.path(name);
-        let tmp = p.with_extension("tmp");
-        std::fs::write(&tmp, gaze_net::hex(&key.to_bytes())).map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
-        }
-        std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+        gaze_fs::create_dir_durably(&StdFs, &self.dir).map_err(|e| e.to_string())?;
+        let hex = gaze_net::hex(&key.to_bytes());
+        gaze_fs::write_atomic(&StdFs, &self.path(name), hex.as_bytes(), Perm::Private)
+            .map_err(|e| e.to_string())
     }
     fn remove(&self, name: &str) -> Result<(), String> {
-        match std::fs::remove_file(self.path(name)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
-            _ => Ok(()),
+        match StdFs.remove_file(&self.path(name)) {
+            Ok(()) => StdFs.sync_dir(&self.dir).map_err(|e| e.to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
         }
     }
 }
@@ -135,7 +145,7 @@ mod tests {
 
     #[test]
     fn keys_round_trip_by_name() {
-        let dir = std::env::temp_dir().join(format!("gaze-keys-{}", std::process::id()));
+        let dir = gaze_fs::scratch_dir("gaze-keys").join("keys");
         let ks = FileKeystore::new(&dir);
         assert!(ks.load("wallet:a").unwrap().is_none());
         let k = fresh_key().unwrap();
@@ -147,9 +157,12 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(ks.path("wallet:a")).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "the key directory is the owner's alone");
         }
         ks.remove("wallet:a").unwrap();
         assert!(ks.load("wallet:a").unwrap().is_none());
-        let _ = std::fs::remove_dir_all(dir);
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert!(left.is_empty(), "no temporary file is left");
     }
 }

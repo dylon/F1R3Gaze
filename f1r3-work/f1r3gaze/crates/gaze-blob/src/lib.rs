@@ -7,6 +7,9 @@
 //! Whatever verifies is written to the cache.
 
 #![forbid(unsafe_code)]
+// Tests write their fixtures directly (clippy.toml's disallowed-methods
+// apply to the code they test).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 use gaze_net::{Http, HttpRequest, digest, hex};
 use std::path::{Path, PathBuf};
@@ -25,6 +28,9 @@ pub trait BlobSource: Send + Sync + 'static {
 pub struct ContentCache {
     dir: PathBuf,
     max_bytes: u64,
+    /// Why nothing is written, in a session that only reads the profile
+    /// ([`ContentCache::read_only`]).
+    read_only: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -40,7 +46,22 @@ impl ContentCache {
         ContentCache {
             dir: dir.as_ref().to_path_buf(),
             max_bytes,
+            read_only: None,
         }
+    }
+
+    /// The same cache, read but never written: for a session that does not
+    /// hold the profile's lock, or cannot write it. Entries are read and
+    /// verified; a damaged one is skipped, not removed; a fetched blob is
+    /// served without being stored; nothing is evicted; clearing is refused.
+    pub fn read_only(mut self, why: &str) -> ContentCache {
+        self.read_only.get_or_insert_with(|| why.to_string());
+        self
+    }
+
+    /// Why the cache is never written, if it is not.
+    pub fn read_only_reason(&self) -> Option<&str> {
+        self.read_only.as_deref()
     }
 
     fn path(&self, h: &Hash) -> PathBuf {
@@ -75,6 +96,9 @@ impl ContentCache {
     }
 
     pub fn clear(&self) -> Result<(), String> {
+        if let Some(why) = &self.read_only {
+            return Err(format!("the content cache is not cleared: {why}"));
+        }
         let Ok(top) = std::fs::read_dir(&self.dir) else {
             return Ok(());
         };
@@ -92,17 +116,28 @@ impl ContentCache {
     pub fn get(&self, h: &Hash) -> Option<Vec<u8>> {
         let p = self.path(h);
         let b = std::fs::read(&p).ok()?;
-        if digest(&b) == *h {
-            Some(b)
-        } else {
-            let _ = std::fs::remove_file(p); // corrupt on disk
-            None
+        match (digest(&b) == *h, &self.read_only) {
+            (true, _) => Some(b),
+            // Corrupt on disk: removed, unless this session only reads.
+            (false, None) => {
+                let _ = std::fs::remove_file(p);
+                None
+            }
+            (false, Some(_)) => None,
         }
     }
 
+    /// Stores a verified blob. Unlike the rest of the profile, the cache is
+    /// written without `gaze-fs` and without a sync: every read verifies the
+    /// hash, and a damaged or missing entry is deleted and fetched again
+    /// (docs/storage/README.md, "The content cache").
+    #[allow(clippy::disallowed_methods)]
     pub fn put(&self, h: &Hash, b: &[u8]) -> Result<(), String> {
         if digest(b) != *h {
             return Err("hash mismatch".into());
+        }
+        if let Some(why) = &self.read_only {
+            return Err(format!("the content cache only reads: {why}"));
         }
         let p = self.path(h);
         if let Some(d) = p.parent() {
@@ -115,8 +150,12 @@ impl ContentCache {
         Ok(())
     }
 
-    /// Drop the oldest files until the cache fits.
+    /// Drop the oldest files until the cache fits. Nothing, in a session
+    /// that only reads.
     pub fn evict(&self) {
+        if self.read_only.is_some() {
+            return;
+        }
         let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
         let Ok(top) = std::fs::read_dir(&self.dir) else {
             return;
@@ -276,8 +315,7 @@ mod tests {
 
     #[test]
     fn the_hash_decides_and_the_cache_remembers() {
-        let dir = std::env::temp_dir().join(format!("gaze-blob-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = gaze_fs::scratch_dir("gaze-blob").join("content");
         let blobs = Blobs::new(ContentCache::new(&dir, 1 << 20), Http::new());
         blobs.add_source(Arc::new(Liar));
         let h = digest(b"page");
@@ -296,13 +334,49 @@ mod tests {
         // A corrupted cache file is detected and dropped.
         std::fs::write(again.cache.path(&h), b"rot").unwrap();
         assert!(again.cache.get(&h).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A session that only reads uses the cache, and never changes it.
+    #[test]
+    fn a_read_only_cache_reads_and_never_writes() {
+        let dir = gaze_fs::scratch_dir("gaze-blob-read-only").join("content");
+        let writer = ContentCache::new(&dir, 1 << 20);
+        let kept = b"kept".to_vec();
+        writer.put(&digest(&kept), &kept).expect("stored");
+        let damaged = b"damaged".to_vec();
+        writer.put(&digest(&damaged), &damaged).expect("stored");
+        std::fs::write(writer.path(&digest(&damaged)), b"rot").expect("damage it");
+        let listing = |dir: &Path| -> Vec<(PathBuf, Vec<u8>)> {
+            let mut all = Vec::new();
+            for sub in std::fs::read_dir(dir).expect("the cache").flatten() {
+                for file in std::fs::read_dir(sub.path()).expect("a shard").flatten() {
+                    all.push((file.path(), std::fs::read(file.path()).expect("an entry")));
+                }
+            }
+            all.sort();
+            all
+        };
+        let before = listing(&dir);
+        let reader = ContentCache::new(&dir, 1).read_only("another F1R3Gaze holds the profile");
+        assert_eq!(reader.read_only_reason(), Some("another F1R3Gaze holds the profile"));
+        assert_eq!(reader.get(&digest(&kept)), Some(kept.clone()), "read and verified");
+        assert_eq!(reader.get(&digest(&damaged)), None, "a damaged entry is skipped");
+        let fetched = b"fetched".to_vec();
+        let refused = reader.put(&digest(&fetched), &fetched).expect_err("not stored");
+        assert!(refused.contains("only reads"), "{refused}");
+        reader.evict();
+        assert!(reader.clear().is_err());
+        assert_eq!(listing(&dir), before, "nothing written, removed or evicted");
+        // Blobs still serves what a source has, from memory.
+        let blobs = Blobs::new(ContentCache::new(&dir, 1 << 20).read_only("read only"), Http::new());
+        blobs.add_source(Arc::new(Honest(fetched.clone())));
+        assert_eq!(blobs.get(&digest(&fetched), &[]).expect("served"), fetched);
+        assert_eq!(listing(&dir), before);
     }
 
     #[test]
     fn eviction_bounds_the_cache() {
-        let dir = std::env::temp_dir().join(format!("gaze-blob-evict-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = gaze_fs::scratch_dir("gaze-blob-evict").join("content");
         let c = ContentCache::new(&dir, 2500);
         for i in 0..10u8 {
             let b = vec![i; 1000];
@@ -314,6 +388,5 @@ mod tests {
             .map(|d| std::fs::read_dir(d.path()).unwrap().count())
             .sum();
         assert!(n <= 2, "{n}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

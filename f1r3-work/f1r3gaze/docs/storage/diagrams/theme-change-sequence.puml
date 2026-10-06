@@ -1,0 +1,85 @@
+@startuml theme-change-sequence
+!pragma teoz true
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+title A theme change: the chrome, its pages, the window's decorations and the settings file
+
+actor "user" as User #FFF2CC
+box "F1R3Gaze" #F4F8FC
+  participant "ChromeDocument\n(chrome.rs)" as Chrome #DDEBF7
+  participant "Profile::set_theme\n(profile.rs)" as Profile #DDEBF7
+  participant "theme::resolve\n(theme.rs)" as Resolve #DDEBF7
+  participant "ChromeApplication\n(application.rs)" as App #DDEBF7
+end box
+box "Blitz and winit" #F5FAF2
+  participant "the chrome's document\nand its pages (blitz-dom)" as Doc #E2EFDA
+  participant "View and Window\n(blitz-shell, winit)" as Window #E2EFDA
+end box
+box "The system" #F5FAF2
+  participant "XDG portal\n(dbus-send)" as Portal #E2EFDA
+end box
+participant "<config>/settings.toml" as Settings #FCE4D6
+
+== The user chooses Light in Appearance ==
+User -> Chrome : click Light (data-action="theme:light")
+Chrome -> Chrome : Action::parse: Theme(ThemeOp::Light)\n(next, template and custom are refused)
+Chrome -> Profile : set_theme(BuiltIn(Light))
+Profile -> Profile : the session's choice first
+Profile -> Settings : [appearance] theme = "default-light"\n(write_setting: comments kept, written atomically)
+note right of Settings #F8CBAD
+  Refused in a read-only session:
+  "The theme applies to this session only"
+end note
+Chrome -> Resolve : resolve(choice, system's preference, fs, theme folders)
+Resolve --> Chrome : Resolved { colours, scheme: Light, file, problem }
+Chrome -> Doc : paint_theme: --gaze-* on <html>;\nthe host sheet of every built-in page;\nviewport.color_scheme = Light (L13)
+Chrome -> Chrome : request(Scheme { Light, follows_system: false })\n(only the latest Scheme is kept)
+App -> Chrome : take_window_requests()\n(after the event, and once per loop turn)
+App -> Window : set_theme_override(Some(Light)), if it changes:\nthe window's own theme no longer replaces the scheme
+App -> Window : set_theme(decoration_theme(platform, Light, false)) = Some(Light),\nif it changes
+Doc -> Doc : next layout: resolve copies color_scheme into every\npage's viewport (resolve.rs), and each page restyles once
+note right of Doc #FFF2CC
+  Pages see prefers-color-scheme: light. A page that
+  declares no color-scheme keeps light system colours
+  in either scheme (PAGE_SCHEME_CSS, L13 H2).
+end note
+
+== The system turns dark while System is chosen (Linux) ==
+Window -> App : WindowEvent::Focused(true)
+App -> Chrome : window_focused(now)
+Chrome -> Portal : refresh: dbus-send ... Settings.ReadOne color-scheme\n(a gaze-system-theme thread; at most every 2 s; killed at 1 s)
+Portal --> Chrome : variant uint32 1 (dark); the window is woken
+Chrome -> Chrome : poll: follow_system: the preference changed,\nso apply_theme resolves and paints again
+Chrome -> Chrome : request(Scheme { Dark, follows_system: true })
+App -> Window : set_theme_override(Some(Dark)); set_theme(Some(Dark))\n(X11 and Wayland report nothing themselves)
+note over App, Window #DDEBF7
+  macOS and Windows report the change instead: ThemeChanged
+  goes to window_reported_scheme, and the window, which has no
+  theme of its own while it follows the system, needs none.
+  After every report the scheme is asked for again, and the
+  decorations given are forgotten: Windows re-themes a window
+  created without a theme at each settings change.
+end note
+
+== The user chooses System again ==
+User -> Chrome : click System (theme:system)
+Chrome -> Profile : set_theme(System)
+Profile -> Settings : [appearance] theme = "system"
+Chrome -> Portal : refresh(now): Linux asks again
+Chrome -> Chrome : request(Scheme { shown, true }), request(FollowSystem)
+App -> Window : macOS and Windows: set_theme(None),\nthe window follows the system again
+App -> Window : event_loop.system_theme()\n(macOS reported nothing while the window had a theme)
+App -> Chrome : window_reported_scheme(preference)
+Chrome -> Chrome : follow_system; request(Scheme { preference, true })
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code |
+  |<#E2EFDA> | Blitz, winit and the system |
+  |<#FFF2CC> | what the user does and sees |
+  |<#FCE4D6> | the settings file |
+  |<#F8CBAD> | a failure, and what happens then |
+endlegend
+@enduml

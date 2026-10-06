@@ -1,0 +1,79 @@
+@startuml startup-activity
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam ArrowFontSize 11
+title Start-up: what F1R3Gaze does to its files before the window opens
+
+start
+:**1. Locate** the five roots
+--profile, F1R3GAZE_PROFILE, or the platform's folders; <<#DDEBF7>>
+:**2. Lock** the anchor <data>/instance.lock,
+then <runtime>/instance.lock
+(new folders synced in their parents); <<#DDEBF7>>
+if (the profile can be written?) then (yes)
+  if (the marker names a newer layout?) then (yes)
+    :read only, with no busy flag:
+    nothing is written to a newer profile; <<#F8CBAD>>
+  else (no)
+    if (busy flag there, or no marker?) then (yes: the last start did not finish)
+      :**3. Barrier**: sync every folder start-up writes into:
+      the skeleton, the roots' ancestors, the backups,
+      link targets' folders, the migration's plan; <<#FCE4D6>>
+    else (no)
+      :no barrier: the last start left nothing pending; <<#EDEDED>>
+    endif
+    :set the busy flag data/.startup-busy
+    (not synced: a power cut leaves nothing pending); <<#FFF2CC>>
+    :**4. Migrate** an old single-folder profile,
+    or create the marker of a new one; <<#DDEBF7>>
+    if (the move stopped, or waits?) then (yes)
+      :read only from here; the busy flag stays,
+      so the next start runs the barrier and resumes; <<#F8CBAD>>
+    else (no)
+    endif
+  endif
+else (no: another F1R3Gaze holds it, or it cannot be locked)
+  :every step below only reports
+  what it would write; <<#EDEDED>>
+endif
+:**5. Prepare**: create missing skeleton folders,
+each synced in its parent, and remove dead writers'
+temporary files (never in wallet/keys); <<#DDEBF7>>
+if (a folder cannot be made?) then (yes)
+  :read only from here; the busy flag stays; <<#F8CBAD>>
+else (no)
+endif
+:**6. Reconcile** each managed file
+(see managed-file-states),
+then report the wallet keys, which are never written; <<#DDEBF7>>
+if (this start set the busy flag, and still writes?) then (yes)
+  :**7. Finish**: remove the busy flag,
+  sync the data folder: nothing is left pending; <<#FCE4D6>>
+else (no)
+endif
+:**8. Load** the layered settings and
+**9. open** the engine, showing what start-up reported; <<#DDEBF7>>
+stop
+
+note right
+  Steps 3 to 7 are one function, profile::start_up:
+  Profile::open, profile check and the trace checks
+  all run this one copy of the order.
+
+  **A crash at any step** (a kill, a panic, a power cut):
+  the next start finds the busy flag, or no marker,
+  and runs the barrier before it decides anything.
+  Every write above leaves the old content or the new,
+  never a mix, and never nothing where something was.
+end note
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code |
+  |<#FFF2CC> | a change not yet durable |
+  |<#FCE4D6> | a durability point |
+  |<#F8CBAD> | the session goes read-only |
+  |<#EDEDED> | a check, or nothing to do |
+endlegend
+@enduml

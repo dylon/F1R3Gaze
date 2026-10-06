@@ -8,6 +8,7 @@ members = [
   "crates/gaze-exec",
   "crates/gaze-broker",
   # Native.
+  "crates/gaze-fs",
   "crates/gaze-net",
   "crates/gaze-store",
   "crates/gaze-blob",
@@ -25,6 +26,7 @@ default-members = [
   "crates/gaze-dom-core",
   "crates/gaze-exec",
   "crates/gaze-broker",
+  "crates/gaze-fs",
   "crates/gaze-net",
   "crates/gaze-store",
   "crates/gaze-blob",
@@ -74,6 +76,7 @@ gaze-knf = { path = "crates/gaze-knf" }
 gaze-dom-core = { path = "crates/gaze-dom-core" }
 gaze-exec = { path = "crates/gaze-exec" }
 gaze-broker = { path = "crates/gaze-broker" }
+gaze-fs = { path = "crates/gaze-fs" }
 gaze-net = { path = "crates/gaze-net" }
 gaze-store = { path = "crates/gaze-store" }
 gaze-wallet = { path = "crates/gaze-wallet" }

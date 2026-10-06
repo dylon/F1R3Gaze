@@ -11,15 +11,20 @@
 //! `("err", "unavailable", ...)` until then.
 
 #![forbid(unsafe_code)]
+// Tests write their fixtures directly (clippy.toml's disallowed-methods
+// apply to the code they test).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod bridge;
 pub mod deploy;
 pub mod expr;
+pub mod fresh;
 pub mod keys;
 pub mod node;
 pub mod site;
 pub mod term;
 
 pub use bridge::{Bridge, DriveSource, EventHub, KeyPayer, Payer, Prompt, Rung, ShardConfig, ShardOut, ShardService};
+pub use fresh::{FileFreshness, Forget, FreshnessLog, MemFreshness};
 pub use keys::{FileKeystore, Keystore, MemKeystore};
 pub use site::{SiteAddr, SiteManifest};

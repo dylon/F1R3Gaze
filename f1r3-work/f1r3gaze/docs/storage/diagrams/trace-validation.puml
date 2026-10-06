@@ -1,0 +1,51 @@
+@startuml trace-validation
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam ArrowFontSize 11
+title Checking real start-ups against the model (ledger S8)
+
+rectangle "tests/storage_trace.rs" as Harness #DDEBF7 {
+  component "a case: a profile,\ncrashes and power cuts" as Case #DDEBF7
+  component "start-up, in main.rs's order\n(begin, migrate, prepare,\nreconcile, finish)" as Startup #DDEBF7
+}
+
+rectangle "gaze-fs" as Fs #E2EFDA {
+  component "TraceFs\n(records each operation)" as Trace #E2EFDA
+  component "MemFs\n(A1–A3, or W1–W2:\npending operations, power cuts)" as Mem #E2EFDA
+}
+
+component "migrate/trace.rs\n(names and operations\ninto the model's terms)" as Convert #DDEBF7
+file "Trace_<case>.tla\nTrace_<case>.cfg" as Module #FFF2CC
+component "TLC\n(ProfileStartupTrace.tla\nover ProfileStartup.tla)" as Tlc #E2EFDA
+
+card "**accepted**: TraceEnd violated,\nevery event matched" as Accepted #FCE4D6
+card "**rejected**: the model cannot\nfollow; the first event it\ncannot match is named" as Rejected #F8CBAD
+
+Case --> Startup : each restart\nis a new process
+Startup --> Trace : every file operation
+Trace --> Mem : forwarded
+Case --> Mem : crashes,\npower cuts
+Trace ..> Convert : the operations, in order
+Mem ..> Convert : the pending queue\nat each power cut
+Convert --> Module
+Module --> Tlc
+Tlc --> Accepted
+Tlc --> Rejected
+
+note bottom of Rejected
+  Two mutant traces must be rejected:
+  a move without its folder sync, and
+  a move whose link and unlink are swapped.
+end note
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code and tests |
+  |<#E2EFDA> | the test file systems, and TLC |
+  |<#FFF2CC> | a generated file |
+  |<#FCE4D6> | the verdict a trace must get |
+  |<#F8CBAD> | a rejection |
+endlegend
+@enduml

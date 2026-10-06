@@ -1,0 +1,6 @@
+# Cargo's build output, and the scratch evidence of the ledgers
+# (target/scratch/). What reproduces an experiment is versioned elsewhere:
+# scripts/ and docs/storage/mutations/.
+/target/
+# Python bytecode of the scripts (scripts/mutation-check.py imported as a module).
+__pycache__/

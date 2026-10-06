@@ -1,0 +1,330 @@
+[
+ {
+  "id": "M7a",
+  "what": "a converted file written with write_atomic, replacing what is there",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "                match gaze_fs::write_new(fs, dst, text.as_bytes(), Perm::Private) {",
+  "new": "                match gaze_fs::write_atomic(fs, dst, text.as_bytes(), Perm::Private) {",
+  "test": "a_file_that_appears_meanwhile_is_never_replaced"
+ },
+ {
+  "id": "M7b",
+  "what": "a file moved with rename, replacing what is there",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "            gaze_fs::move_no_replace(fs, src, dst)?;",
+  "new": "            fs.rename(src, dst).and_then(|()| fs.sync_dir(gaze_fs::parent(dst)?))?;",
+  "test": "a_file_that_appears_meanwhile_is_never_replaced"
+ },
+ {
+  "id": "M7c",
+  "what": "the marker written before the actions",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    let mut outcomes = Vec::with_capacity(plan.actions.len());\n    let mut far_cache = false;",
+  "new": "    let _ = gaze_fs::write_new(\n        fs,\n        &l.marker_file(),\n        &Marker { layout: LAYOUT_VERSION, created: Some(plan.planned.clone()), migrated_from: Some(plan.legacy.clone()), repaired: false }.to_bytes(),\n        Perm::Private,\n    );\n    let mut outcomes = Vec::with_capacity(plan.actions.len());\n    let mut far_cache = false;",
+  "test": "a_crash_at_any_step_resumes_and_loses_nothing"
+ },
+ {
+  "id": "M7d",
+  "what": "the plan published without syncing its data",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    gaze_fs::write_new(fs, &dir.join(PLAN_FILE), &bytes, Perm::Private)",
+  "new": "    fs.create_new(&dir.join(\".plan.json.part\"), &bytes, PRIVATE_FILE_MODE)\n        .and_then(|()| fs.rename(&dir.join(\".plan.json.part\"), &dir.join(PLAN_FILE)))",
+  "test": "a_crash_at_any_step_resumes_and_loses_nothing"
+ },
+ {
+  "id": "M7e",
+  "what": "the start barrier skipped",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        true => Begun::AfterUnfinished {\n            synced: barrier(layout, fs)?,\n        },",
+  "new": "        true => Begun::AfterUnfinished { synced: 0 },",
+  "test": "two_crashes_never_lose_an_item"
+ },
+ {
+  "id": "M7f",
+  "what": "a stale temporary file published as the moved file",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        (Some(_), None) => {\n            gaze_fs::move_no_replace(fs, src, dst)?;",
+  "new": "        (Some(_), None) => {\n            let dir = gaze_fs::parent(dst)?;\n            let prefix = format!(\".{}.tmp-\", dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());\n            match fs.list(dir)?.into_iter().find(|n| n.to_string_lossy().starts_with(&prefix)) {\n                Some(stale) => {\n                    gaze_fs::publish_no_replace(fs, &dir.join(stale), dst)?;\n                    retire(fs, src)?;\n                }\n                None => gaze_fs::move_no_replace(fs, src, dst)?,\n            }",
+  "test": "a_crash_at_any_step_resumes_and_loses_nothing"
+ },
+ {
+  "id": "M7g",
+  "what": "dark kept as dark (written as default-dark)",
+  "file": "crates/gaze-shell/src/profile/migrate/convert.rs",
+  "package": "gaze-shell",
+  "old": "                ThemeFold::Unchanged | ThemeFold::System { .. } => continue,",
+  "new": "                ThemeFold::Unchanged => continue,\n                ThemeFold::System { .. } => Value::from(\"default-dark\"),",
+  "test": "workspace_splits_for_each_theme"
+ },
+ {
+  "id": "M7h",
+  "what": "every old key written, set or not",
+  "file": "crates/gaze-shell/src/profile/migrate/convert.rs",
+  "package": "gaze-shell",
+  "old": "            (_, _, Some(old)) if set.iter().any(|s| s.table == k.table && s.name == k.name) => {",
+  "new": "            (_, _, Some(old)) if !set.is_empty() || set.is_empty() => {",
+  "test": "every_old_template_converts_byte_for_byte"
+ },
+ {
+  "id": "M7i",
+  "what": "a set key dropped (quorum)",
+  "file": "crates/gaze-shell/src/profile/migrate/convert.rs",
+  "package": "gaze-shell",
+  "old": "        .filter(|k| legacy_name(k).is_some_and(|old| set.contains(&old)))",
+  "new": "        .filter(|k| k.name != \"quorum\" && legacy_name(k).is_some_and(|old| set.contains(&old)))",
+  "test": "conversion_matches_the_old_parser"
+ },
+ {
+  "id": "M7j",
+  "what": "the cache copied to another file system",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "                Err(e) if e.kind() == io::ErrorKind::CrossesDevices => Outcome::Left(FAR_CACHE.into()),",
+  "new": "                Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {\n                    let _ = gaze_fs::create_dir_durably(fs, dst);\n                    for name in fs.list(src).unwrap_or_default() {\n                        let _ = gaze_fs::copy_verified(fs, &src.join(&name), &dst.join(&name));\n                    }\n                    Outcome::Done\n                }",
+  "test": "the_cache_is_left_behind_across_devices"
+ },
+ {
+  "id": "M7k",
+  "what": "links moved like files (linked, which follows them on some systems)",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        (Some(Kind::Symlink), None) => {",
+  "new": "        (Some(Kind::Other), None) => {",
+  "test": "symlinks_are_moved_not_followed"
+ },
+ {
+  "id": "M7l",
+  "what": "a folder with any name in it counts as an old profile",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        let signed = SIGNATURE.iter().any(|name| has_file(fs, &root.join(name)));",
+  "new": "        let signed = SIGNATURE.iter().any(|name| has_file(fs, &root.join(name))) || fs.list(root).is_ok_and(|n| !n.is_empty());",
+  "test": "detection_needs_a_signature"
+ },
+ {
+  "id": "M7m",
+  "what": "MIGRATED.txt ignored by detection",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        if !is_folder(fs, root).map_err(|e| format!(\"{}: {e}\", root.display()))? || has_file(fs, &root.join(MIGRATED_FILE)) {",
+  "new": "        if !is_folder(fs, root).map_err(|e| format!(\"{}: {e}\", root.display()))? {",
+  "test": "a_profile_is_migrated_once"
+ },
+ {
+  "id": "M7n",
+  "what": "a failed step not reported as failed: the session stays writable",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        format!(\"the move of your old profile stopped at {what}: {e}. F1R3Gaze opened read only, and finishes the move at the next start\"),\n    ));\n    Migration::Failed { error }",
+  "new": "        format!(\"the move of your old profile stopped at {what}: {e}. F1R3Gaze opened read only, and finishes the move at the next start\"),\n    ));\n    let _ = error;\n    Migration::Current",
+  "test": "a_failed_migration_opens_read_only_and_resumes"
+ },
+ {
+  "id": "M7o",
+  "what": "moved files keep a mode others can read",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        fs.set_mode(dst, mode & 0o600)?;",
+  "new": "        let _ = mode;",
+  "test": "moved_files_are_private"
+ },
+ {
+  "id": "M7p",
+  "what": "the settings file's text in MIGRATED.txt",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "            out.push_str(&format!(\"  {key}\\n\"));",
+  "new": "            out.push_str(&format!(\"  {key}\\n{}\\n\", text_of_write(&settings_file).unwrap_or_default()));",
+  "test": "migrated_txt_never_holds_urls"
+ },
+ {
+  "id": "M7q",
+  "what": "a resumed migration planned again, in a new backup session",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "            Ok(planned) if writable => execute(start, &planned, true),",
+  "new": "            Ok(planned) if writable => match plan(l, fs, Path::new(&planned.legacy), now) {\n                Ok(again) => execute(start, &again, true),\n                Err(e) => failed(e),\n            },",
+  "test": "a_resumed_migration_keeps_its_backup_folder"
+ },
+ {
+  "id": "M7r",
+  "what": "a power cut keeps the entries of a folder it loses",
+  "file": "crates/gaze-fs/src/mem.rs",
+  "package": "gaze-fs",
+  "old": "        let names = reachable(names);",
+  "new": "        let names = if names.is_empty() { reachable(names) } else { names };",
+  "test": "a_power_cut_never_keeps_a_folders_entries_without_the_folder"
+ },
+ {
+  "id": "M7s",
+  "what": "a new settings folder not synced in its parent",
+  "file": "crates/gaze-shell/src/profile/settings.rs",
+  "package": "gaze-shell",
+  "old": "    gaze_fs::create_dir_durably(fs, dir).map_err(WriteError::Write)?;",
+  "new": "    fs.create_dir_all(dir).map_err(WriteError::Write)?;",
+  "test": "saving_a_theme_writes_only_when_it_changes"
+ },
+ {
+  "id": "M7t",
+  "what": "the plan folder removed before its removals are synced",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    if removed > 0 {\n        fs.sync_dir(&dir)?;\n    }",
+  "new": "    let _ = removed;",
+  "test": "a_crash_at_any_step_resumes_and_loses_nothing"
+ },
+ {
+  "id": "M7u",
+  "what": "a conflict listed as not part of a profile",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "                if let Action::Move { src, .. } = action {\n                    reasons.insert(",
+  "new": "                if let Action::Move { src, .. } = action\n                    && src.is_empty()\n                {\n                    reasons.insert(",
+  "test": "conflicts_keep_both"
+ },
+ {
+  "id": "M7v",
+  "what": "a half-converted workspace reported as not converted",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "            (true, false, true) => format!(\"{visits_part}; {} was already there\", shown(l, &session_file)),",
+  "new": "            (true, false, true) => \"not converted: the open tabs and the history start empty\".to_string(),",
+  "test": "conflicts_keep_both"
+ },
+ {
+  "id": "M7w",
+  "what": "every second crash point skipped",
+  "file": "crates/gaze-fs/src/crash.rs",
+  "package": "gaze-fs",
+  "old": "            .map(|first| scope.spawn(move || (first..=last).step_by(cores).map(job).sum::<usize>()))",
+  "new": "            .map(|first| scope.spawn(move || (first..=last).step_by(cores * 2).map(job).sum::<usize>()))",
+  "test": "every_crash_point_is_checked_once_on_every_core"
+ },
+ {
+  "id": "M7x",
+  "what": "grants: folder made without syncing its parent",
+  "file": "crates/gaze-shell/src/grants.rs",
+  "package": "gaze-shell",
+  "old": "        gaze_fs::create_dir_durably(&StdFs, dir)\n            .and_then(|_| gaze_fs::write_atomic(&StdFs, &self.path, out.as_bytes(), Perm::Private))",
+  "new": "        gaze_fs::Fs::create_dir_all(&StdFs, dir)\n            .and_then(|_| gaze_fs::write_atomic(&StdFs, &self.path, out.as_bytes(), Perm::Private))",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7y",
+  "what": "wallets: folder made without syncing its parent",
+  "file": "crates/gaze-wallet/src/wallets.rs",
+  "package": "gaze-wallet",
+  "old": "        gaze_fs::create_dir_durably(&StdFs, &self.dir).map_err(|e| e.to_string())?;",
+  "new": "        gaze_fs::Fs::create_dir_all(&StdFs, &self.dir).map_err(|e| e.to_string())?;",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7z",
+  "what": "the keystore: folder made without syncing its parent",
+  "file": "crates/gaze-shard/src/keys.rs",
+  "package": "gaze-shard",
+  "old": "        gaze_fs::create_dir_durably(&StdFs, &self.dir).map_err(|e| e.to_string())?;",
+  "new": "        gaze_fs::Fs::create_dir_all(&StdFs, &self.dir).map_err(|e| e.to_string())?;",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7aa",
+  "what": "freshness records: folder made without syncing its parent",
+  "file": "crates/gaze-shard/src/fresh.rs",
+  "package": "gaze-shard",
+  "old": "        gaze_fs::create_dir_durably(&StdFs, dir)\n            .and_then(|_| gaze_fs::write_atomic(&StdFs, &self.path, text.as_bytes(), Perm::Private))",
+  "new": "        gaze_fs::Fs::create_dir_all(&StdFs, dir)\n            .and_then(|_| gaze_fs::write_atomic(&StdFs, &self.path, text.as_bytes(), Perm::Private))",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7ab",
+  "what": "site stores: folder made with std::fs::create_dir_all",
+  "file": "crates/gaze-store/src/lib.rs",
+  "package": "gaze-store",
+  "old": "            gaze_fs::create_dir_durably(&StdFs, d).map_err(io)?;",
+  "new": "            std::fs::create_dir_all(d).map_err(io)?;",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7ac",
+  "what": "the store index: folder made without syncing its parent",
+  "file": "crates/gaze-shell/src/engine.rs",
+  "package": "gaze-shell",
+  "old": "        let _ = gaze_fs::create_dir_durably(fs, &layout.site_data_dir())",
+  "new": "        let _ = gaze_fs::Fs::create_dir_all(fs, &layout.site_data_dir())",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7ad",
+  "what": "replay logs: folder made without syncing its parent",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                let written = gaze_fs::create_dir_durably(profile.fs(), &dir)",
+  "new": "                let written = gaze_fs::Fs::create_dir_all(profile.fs(), &dir)",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7ae",
+  "what": "wallet exports: folder made without syncing its parent",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                    gaze_fs::create_dir_durably(profile.fs(), &dir).map_err(|e| e.to_string())?;",
+  "new": "                    gaze_fs::Fs::create_dir_all(profile.fs(), &dir).map_err(|e| e.to_string())?;",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7af",
+  "what": "the old workspace: folder made without syncing its parent",
+  "file": "crates/gaze-shell/src/ui_state.rs",
+  "package": "gaze-shell",
+  "old": "        gaze_fs::create_dir_durably(&StdFs, dir).map_err(|e| e.to_string())?;",
+  "new": "        gaze_fs::Fs::create_dir_all(&StdFs, dir).map_err(|e| e.to_string())?;",
+  "test": "disallowed_methods",
+  "check": "clippy"
+ },
+ {
+  "id": "M7ag",
+  "what": "the old settings: folder made without syncing its parent",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "                let _ = gaze_fs::create_dir_durably(&StdFs, dir).and_then(|_| {",
+  "new": "                let _ = gaze_fs::Fs::create_dir_all(&StdFs, dir).and_then(|_| {",
+  "test": "disallowed_methods",
+  "check": "clippy",
+  "retired": "its writer, profile::Settings::load, was disabled at the switch-over (ledger S14): settings.toml is written by settings::write_setting, whose folder is made durably (S9), and by start-up's repair; the mutation found its text only in the comment that keeps the old code"
+ },
+ {
+  "id": "M7ah",
+  "what": "the old user id: folder made without syncing its parent",
+  "file": "crates/gaze-shell/src/profile.rs",
+  "package": "gaze-shell",
+  "old": "    let _ = gaze_fs::create_dir_durably(&StdFs, dir)\n        .and_then(|_| gaze_fs::write_atomic(&StdFs, &p, id.as_bytes(), Perm::Private));",
+  "new": "    let _ = gaze_fs::Fs::create_dir_all(&StdFs, dir)\n        .and_then(|_| gaze_fs::write_atomic(&StdFs, &p, id.as_bytes(), Perm::Private));",
+  "test": "disallowed_methods",
+  "check": "clippy",
+  "retired": "its writer, profile::user_id, was disabled at the switch-over (ledger S14): start-up's repair writes the id, into the data root that prepare makes durably (S6, part 2)"
+ },
+ {
+  "id": "M7ai",
+  "what": "sweeping one name without syncing its folder",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "    if removed > 0 {\n        fs.sync_dir(dir)?;\n    }\n    Ok(removed)\n}\n\n/// Removes a temporary file after a failed write",
+  "new": "    Ok(removed)\n}\n\n/// Removes a temporary file after a failed write",
+  "test": "sweeping_one_name_leaves_every_other_file"
+ }
+]

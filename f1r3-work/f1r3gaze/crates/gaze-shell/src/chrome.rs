@@ -8,17 +8,17 @@
 //! * Static regions (toolbar, rail, find box, wallet form) are parsed once
 //!   from the templates below. Their state (pressed, disabled, focused,
 //!   hidden) is set by attribute on stable ids with
-//!   [`ChromeDocument::sync_attr`], so a field being typed into is never
+//!   `ChromeDocument::sync_attr`, so a field being typed into is never
 //!   rebuilt.
 //! * Dynamic regions are rebuilt as HTML strings from plain data by the free
 //!   `*_html` builders, and inserted only when their markup changed
-//!   ([`ChromeDocument::set_html`]).
+//!   (`ChromeDocument::set_html`).
 //! * Labels are shortened to the exact width they are given
 //!   ([`TextFitter`]), because Blitz has no `text-overflow`.
 //! * Labels are elements, never bare text in a flex box: Blitz never
 //!   restyles the anonymous box such text gets (`docs/ui/ledger.md`, L2).
 
-use crate::application::ChromeApplication;
+use crate::application::{ChromeApplication, PendingWindow};
 use crate::cursor::CursorArbiter;
 use crate::frame_stats;
 use crate::renderer::CoalescingRenderer;
@@ -26,20 +26,30 @@ use crate::display::{self, LogLevel, Recency, SchemeKind, Tone};
 use crate::engine::{Engine, NavRequest, escape};
 use crate::tab::{Stage, Tab};
 use crate::text_fit::{ELLIPSIS, Face, Font, Marked, TextFitter};
-use crate::theme;
-use crate::ui_state::{SavedTab, UiState, Visit, match_span, search_score};
+use crate::profile::report::{Event, EventKind, Severity};
+use crate::system_theme::{Known, OVERRIDE_VAR, STARTUP_WAIT, Source, SystemScheme};
+use crate::window_state::WindowState;
+use crate::theme::{self, Scheme, ThemeChoice, ThemeFile};
+// Was `UiState`: one `workspace.json` held the session, the history and the
+// theme. They are `state/session.json`, `state/history.json` and
+// `[appearance] theme` in `settings.toml` now (ledger S14).
+use crate::ui_state::{History, SavedTab, SessionState, Visit, match_span, search_score};
 use anyrender_vello::VelloWindowRenderer;
 use blitz_dom::{
     BaseDocument, DocGuard, DocGuardMut, Document, DocumentConfig, EventDriver, EventHandler,
     LocalName, NodeId, QualName, ns,
 };
-use blitz_shell::{BlitzApplication, BlitzShellProxy, ControlFlow, EventLoop, WindowConfig};
+// `WindowConfig` is made in `application.rs` now, where the window is made
+// at the size and place it was left (storage ledger S13, part 2).
+use blitz_shell::{BlitzApplication, BlitzShellProxy, ControlFlow, EventLoop};
 use blitz_traits::events::{DomEvent, DomEventData, EventState, MouseEventButton, UiEvent};
 use blitz_traits::net::NetWaker;
+use blitz_traits::shell::ColorScheme;
+use gaze_fs::Perm;
 use gaze_dom_blitz::{FindHit, Pacer, RhoDocument, WakeHandle};
 use keyboard_types::{Key, Modifiers};
 use std::any::Any;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -78,6 +88,29 @@ const CONSOLE_SHOWN: usize = 200;
 /// How long a status message stays: confirmations briefly, problems longer.
 const FLASH_BRIEF: Duration = Duration::from_secs(4);
 const FLASH_LONG: Duration = Duration::from_secs(8);
+
+/// How long a visit waits before the history is written: the visits of a
+/// burst of page loads are saved once, and a tab switch never rewrites the
+/// history (`ChromeDocument::history_changed`).
+const HISTORY_SAVE_DELAY: Duration = Duration::from_secs(2);
+
+// Disabled in step 10 (ledger S12, part 3): Custom was the interim name of
+// `themes/custom.css` (step 9). Every theme file is a row of the Appearance
+// panel's Themes list now.
+// /// The theme file the Appearance panel's Custom segment uses:
+// /// `themes/custom.css` in the settings folder, where the move of an old
+// /// profile puts its `palette.css`.
+// const CUSTOM_THEME: &str = "custom";
+
+/// How many names New theme tries when one turns out to be taken by
+/// something the Themes list does not show (a folder; a `.CSS` file on a
+/// file system that ignores case).
+const NEW_THEME_TRIES: usize = 8;
+
+/// What the colour scheme colours: the end of the sentence under the
+/// scheme control (`scheme_note`). Pages that offer light and dark styles
+/// follow it (ledger L13).
+const SCHEME_NOTE: &str = "Colors the browser controls and built-in pages, and sites that offer light and dark styles.";
 
 /// The sidebar panels in rail order: `(panel, rail button id, title)`.
 const PANELS: [(&str, &str, &str); 7] = [
@@ -319,6 +352,7 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 mark{background:transparent;color:inherit}
 .row-label mark,.row-detail mark,.suggestion-title mark,.suggestion-url mark{color:var(--gaze-text);text-decoration-line:underline;text-decoration-color:var(--gaze-accent);text-decoration-thickness:2px;text-underline-offset:2px}
 .row-desc{font-size:12px;line-height:1.4;color:var(--gaze-muted)}
+.row-desc.why{overflow-wrap:anywhere}
 .row-meta{flex:none;font-size:11px;color:var(--gaze-muted);white-space:nowrap}
 .row-side{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
 .row-actions{position:absolute;top:0;right:4px;bottom:0;display:flex;align-items:center;gap:2px;padding-left:18px;visibility:hidden;background:linear-gradient(to right,transparent,var(--gaze-hover) 16px)}
@@ -488,23 +522,23 @@ const SHELL: &str = r#"<html><head><title>F1R3Gaze</title><style>__CSS__</style>
 
 /// The tab list (filled per render) and the new-tab button, which stays
 /// outside the list so that it is never clipped.
-const TAB_STRIP_HTML: &str = r#"<div id="tablist"></div><button id="newtab" class="icon-btn" data-action="newtab" aria-label="New tab"><i class="fa-solid fa-plus"></i><span class="tip tip-below">New tab · Ctrl+T</span></button>"#;
+const TAB_STRIP_HTML: &str = r#"<div id="tablist"></div><button id="newtab" class="icon-btn" data-action="newtab" aria-label="New tab"><i class="fa-solid fa-plus"></i><span class="tip tip-below">New tab · {key:newtab}</span></button>"#;
 
-const TOOLBAR_HTML: &str = r#"<button id="sidetoggle" class="icon-btn" data-action="sidebar:toggle" aria-label="Sidebar"><i class="fa-solid fa-table-columns"></i><span class="tip tip-below">Show or hide the sidebar · Ctrl+B</span></button>
+const TOOLBAR_HTML: &str = r#"<button id="sidetoggle" class="icon-btn" data-action="sidebar:toggle" aria-label="Sidebar"><i class="fa-solid fa-table-columns"></i><span class="tip tip-below">Show or hide the sidebar · {key:sidebar}</span></button>
 <button id="back" class="icon-btn" data-action="back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i><span class="tip tip-below">Back</span></button>
 <button id="fwd" class="icon-btn" data-action="fwd" aria-label="Forward"><i class="fa-solid fa-arrow-right"></i><span class="tip tip-below">Forward</span></button>
-<button id="reload" class="icon-btn" data-action="reload" aria-label="Reload"><i class="fa-solid fa-rotate-right"></i><span class="tip tip-below">Reload · Ctrl+R</span></button>
+<button id="reload" class="icon-btn" data-action="reload" aria-label="Reload"><i class="fa-solid fa-rotate-right"></i><span class="tip tip-below">Reload · {key:reload}</span></button>
 <div id="urlwrap"><span id="scheme"></span><span class="inbox"><input id="url" type="text" value="" aria-label="Address"><span id="url-ph" class="ghost-hint off">Enter an address, or search tabs and history</span></span><div id="suggestions"></div></div>
 <!-- Go was removed: Enter opens the address, and its arrow icon was the same as Forward's.
 <button data-action="go" title="Open address"><i class="fa-solid fa-arrow-right"></i></button> -->
-<button id="findbtn" class="icon-btn" data-action="find:show" aria-label="Find in page"><i class="fa-solid fa-magnifying-glass"></i><span class="tip tip-below-end">Find in page · Ctrl+F</span></button>
+<button id="findbtn" class="icon-btn" data-action="find:show" aria-label="Find in page"><i class="fa-solid fa-magnifying-glass"></i><span class="tip tip-below-end">Find in page · {key:find}</span></button>
 <!-- The menu button was removed: it did the same as the rail's Tabs button.
 <button data-action="panel:tabs" title="Toggle tab sidebar"><i class="fa-solid fa-bars"></i></button> -->
-<!-- Scheme cycling was removed: Appearance shows and sets the color scheme.
+<!-- Scheme cycling was removed: Appearance shows and sets the color scheme (theme:next no longer parses).
 <button data-action="theme:next" title="Change color scheme"><i class="fa-solid fa-palette"></i></button> -->"#;
 
 const RAIL_HTML: &str = r#"<button id="rail-tabs" class="rail-btn" data-action="panel:tabs" aria-label="Tabs"><i class="fa-solid fa-layer-group"></i><span class="tip tip-right">Tabs</span></button>
-<button id="rail-history" class="rail-btn" data-action="panel:history" aria-label="History"><i class="fa-solid fa-clock-rotate-left"></i><span class="tip tip-right">History · Ctrl+H</span></button>
+<button id="rail-history" class="rail-btn" data-action="panel:history" aria-label="History"><i class="fa-solid fa-clock-rotate-left"></i><span class="tip tip-right">History · {key:history}</span></button>
 <button id="rail-sites" class="rail-btn" data-action="panel:sites" aria-label="Site data"><i class="fa-solid fa-database"></i><span class="tip tip-right">Site data</span></button>
 <button id="rail-grants" class="rail-btn" data-action="panel:grants" aria-label="Permissions"><i class="fa-solid fa-shield-halved"></i><span class="tip tip-right">Permissions</span></button>
 <button id="rail-wallet" class="rail-btn" data-action="panel:wallet" aria-label="Wallet"><i class="fa-solid fa-wallet"></i><span class="tip tip-right">Wallet</span></button>
@@ -546,18 +580,55 @@ fn side_controls_html(panel: &str) -> &'static str {
 
 /// The chrome stylesheet for a scheme: fonts and icons, colour variables,
 /// then [`CSS`].
+// The window resolves its colours (`chrome_css_of`); the tests still name
+// the old schemes.
+#[cfg(test)]
 fn chrome_css(scheme: &str, custom: Option<&BTreeMap<String, String>>) -> String {
-    format!(
-        "{}{}{}",
-        theme::font_css(),
-        theme::variables(scheme, custom),
-        CSS
-    )
+    chrome_css_of(&theme::palette(scheme, custom))
+}
+
+/// The chrome's style sheet for resolved colours (`theme::resolve`).
+fn chrome_css_of(colours: &BTreeMap<String, String>) -> String {
+    format!("{}{}{}", theme::font_css(), theme::variables_of(colours), CSS)
+}
+
+/// The keys the chrome's hover tips and tags name, on each platform:
+/// `(token in the markup, elsewhere, on macOS)`. The command key is Cmd on
+/// macOS (ledger L12), and History is Cmd+Y there (L16); the tips named Ctrl
+/// on every platform (L17).
+const KEY_LABELS: [(&str, &str, &str); 6] = [
+    ("{key:newtab}", "Ctrl+T", "Cmd+T"),
+    ("{key:sidebar}", "Ctrl+B", "Cmd+B"),
+    ("{key:reload}", "Ctrl+R", "Cmd+R"),
+    ("{key:find}", "Ctrl+F", "Cmd+F"),
+    ("{key:history}", "Ctrl+H", "Cmd+Y"),
+    ("{key:reopen}", "Ctrl+Shift+T", "Cmd+Shift+T"),
+];
+
+/// The label of the key `token` names, on `platform`.
+fn key_label(token: &str, platform: KeyPlatform) -> &'static str {
+    let (_, other, mac) = KEY_LABELS
+        .iter()
+        .find(|(name, _, _)| *name == token)
+        .expect("every key token is in KEY_LABELS");
+    match platform {
+        KeyPlatform::Other => other,
+        KeyPlatform::MacOs => mac,
+    }
+}
+
+/// `html` with every key token replaced by its label on `platform`.
+fn key_labels(html: &str, platform: KeyPlatform) -> String {
+    KEY_LABELS
+        .iter()
+        .fold(html.to_string(), |html, (token, _, _)| html.replace(token, key_label(token, platform)))
 }
 
 /// The window's initial markup.
 fn shell_html(css: &str, sidebar_open: bool) -> String {
-    SHELL
+    // Was the templates as they are: their tips named Ctrl on every
+    // platform (ledger L17).
+    let html = SHELL
         .replace("__CSS__", css)
         .replace("__TAB_STRIP__", TAB_STRIP_HTML)
         .replace("__TOOLBAR__", TOOLBAR_HTML)
@@ -567,7 +638,8 @@ fn shell_html(css: &str, sidebar_open: bool) -> String {
         .replace(
             "__SIDEBAR_CLASS__",
             if sidebar_open { "" } else { "hidden" },
-        )
+        );
+    key_labels(&html, KeyPlatform::CURRENT)
 }
 
 // ── Actions ─────────────────────────────────────────────────────────────
@@ -597,7 +669,7 @@ enum Action {
     Wallet(String),
     FocusUrl,
     Input(String, String),
-    Theme(String),
+    Theme(ThemeOp),
     Find(String),
     FindNext(i32),
     FindHide,
@@ -620,6 +692,9 @@ enum Action {
     /// Escape elsewhere: close whatever is open (dropdown, menu, a
     /// confirmation).
     Dismiss,
+    /// F11, or Ctrl+Cmd+F on macOS: enter or leave full screen (the window
+    /// does it: `WindowRequest::ToggleFullScreen`). No markup emits it.
+    FullScreen,
 }
 
 impl Action {
@@ -650,7 +725,7 @@ impl Action {
             "letitrun" => Action::LetItRun,
             "savelog" => Action::SaveLog,
             "wallet" => Action::Wallet(rest.to_string()),
-            "theme" => Action::Theme(rest.into()),
+            "theme" => Action::Theme(ThemeOp::parse(rest)?),
             "find" => match rest {
                 "show" => Action::Find(String::new()),
                 "next" => Action::FindNext(1),
@@ -687,6 +762,43 @@ impl Action {
             "dismiss" => Action::Dismiss,
             _ => return None,
         })
+    }
+}
+
+/// What the Appearance panel's controls ask (`data-action="theme:<op>"`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ThemeOp {
+    /// Follow the system's light or dark preference (`theme = "system"`).
+    System,
+    /// The built-in schemes.
+    Dark,
+    Light,
+    /// A theme file, `themes/<name>.css`: `theme:use:<name>`.
+    Use(String),
+    /// The colours shown, saved as a new theme file, which is then chosen.
+    New,
+    /// The theme files, and the chosen theme, read again.
+    Reload,
+}
+
+impl ThemeOp {
+    /// `system`, `dark`, `light`, `use:<name>`, `new` or `reload`; anything
+    /// else is refused. The step-9 strings `next`, `template` and `custom`
+    /// no longer parse, and a name must be a theme name
+    /// (`theme::check_theme_name`).
+    fn parse(argument: &str) -> Option<ThemeOp> {
+        match argument.split_once(':') {
+            None => match argument {
+                "system" => Some(ThemeOp::System),
+                "dark" => Some(ThemeOp::Dark),
+                "light" => Some(ThemeOp::Light),
+                "new" => Some(ThemeOp::New),
+                "reload" => Some(ThemeOp::Reload),
+                _ => None,
+            },
+            Some(("use", name)) if theme::check_theme_name(name).is_ok() => Some(ThemeOp::Use(name.to_string())),
+            Some(_) => None,
+        }
     }
 }
 
@@ -823,18 +935,52 @@ impl EventHandler for ChromeHandler<'_> {
     }
 }
 
-fn global_shortcut(key: &Key, modifiers: Modifiers, tabs: &[u64], active: usize) -> Option<Action> {
-    let cmd = modifiers.contains(Modifiers::CONTROL) || modifiers.contains(Modifiers::META);
-    if !cmd {
-        return None;
+/// The platform whose key bindings apply. The window uses the one it runs on;
+/// tests choose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyPlatform {
+    MacOs,
+    Other,
+}
+
+impl KeyPlatform {
+    const CURRENT: KeyPlatform = match cfg!(target_os = "macos") {
+        true => KeyPlatform::MacOs,
+        false => KeyPlatform::Other,
+    };
+
+    /// Whether `modifiers` hold the platform's command key: Cmd on macOS and
+    /// Ctrl elsewhere. Blitz reports winit's meta key, which is Cmd on macOS,
+    /// as `SUPER` (blitz-shell `winit_modifiers_to_kbt_modifiers`), never as
+    /// `META`, so a binding that only tested `META` never fired (ledger L12).
+    fn command(self, modifiers: Modifiers) -> bool {
+        match self {
+            KeyPlatform::MacOs => modifiers.intersects(Modifiers::SUPER | Modifiers::META),
+            KeyPlatform::Other => modifiers.intersects(Modifiers::CONTROL | Modifiers::META),
+        }
     }
-    if *key == Key::Tab && !tabs.is_empty() {
+}
+
+fn global_shortcut(
+    key: &Key,
+    modifiers: Modifiers,
+    tabs: &[u64],
+    active: usize,
+    platform: KeyPlatform,
+) -> Option<Action> {
+    // Ctrl+Tab cycles tabs on every platform: on macOS, Cmd+Tab is the
+    // system's application switcher, so browsers bind Ctrl+Tab there too.
+    let cycles = modifiers.contains(Modifiers::CONTROL) || platform.command(modifiers);
+    if *key == Key::Tab && cycles && !tabs.is_empty() {
         let next = if modifiers.contains(Modifiers::SHIFT) {
             (active + tabs.len() - 1) % tabs.len()
         } else {
             (active + 1) % tabs.len()
         };
         return Some(Action::Select(tabs[next]));
+    }
+    if !platform.command(modifiers) {
+        return None;
     }
     let Key::Character(c) = key else { return None };
     if let Some(n) = c
@@ -859,10 +1005,51 @@ fn global_shortcut(key: &Key, modifiers: Modifiers, tabs: &[u64], active: usize)
         "l" => Some(Action::FocusUrl),
         "w" => Some(Action::Close(u64::MAX)),
         "f" => Some(Action::Find(String::new())),
-        "h" => Some(Action::Panel("history".into())),
+        // L16: on macOS, winit's default menu takes Cmd+H for Hide before any
+        // view sees the key (winit-appkit `menu.rs:38-45`), so History is
+        // Cmd+Y there, as in Safari and Chrome.
+        // "h" => Some(Action::Panel("history".into())),
+        "h" if platform == KeyPlatform::Other => Some(Action::Panel("history".into())),
+        "y" if platform == KeyPlatform::MacOs => Some(Action::Panel("history".into())),
         "b" => Some(Action::SidebarToggle),
         _ => None,
     }
+}
+
+/// The full-screen chord: F11 alone, or on macOS Ctrl+Cmd+F (Blitz reports
+/// Cmd as `SUPER`, ledger L12; `META` is taken too), as other browsers bind
+/// it on each.
+fn full_screen_chord(key: &Key, modifiers: Modifiers, platform: KeyPlatform) -> bool {
+    let others = Modifiers::ALT | Modifiers::SHIFT;
+    match platform {
+        KeyPlatform::Other => {
+            *key == Key::F11 && !modifiers.intersects(Modifiers::CONTROL | Modifiers::SUPER | Modifiers::META | others)
+        }
+        KeyPlatform::MacOs => {
+            matches!(key, Key::Character(c) if c.eq_ignore_ascii_case("f"))
+                && modifiers.contains(Modifiers::CONTROL)
+                && modifiers.intersects(Modifiers::SUPER | Modifiers::META)
+                && !modifiers.intersects(others)
+        }
+    }
+}
+
+/// What a key does before Blitz routes it: the full-screen chord first (on
+/// macOS Cmd+F with Ctrl held is not Find), then the browser's shortcuts. A
+/// chord held down repeats nothing: `Some(None)` consumes the key. `None`:
+/// not the browser's key.
+fn browser_shortcut(
+    key: &Key,
+    modifiers: Modifiers,
+    repeating: bool,
+    tabs: &[u64],
+    active: usize,
+    platform: KeyPlatform,
+) -> Option<Option<Action>> {
+    if full_screen_chord(key, modifiers, platform) {
+        return Some((!repeating).then_some(Action::FullScreen));
+    }
+    global_shortcut(key, modifiers, tabs, active, platform).map(Some)
 }
 
 /// Which chrome field has keyboard focus.
@@ -918,6 +1105,28 @@ fn next_suggestion(current: Option<usize>, delta: i32, len: usize) -> Option<usi
         (Some(i), -1, _) => Some(i - 1),
         (current, _, _) => current,
     }
+}
+
+// ── Requests to the window ──────────────────────────────────────────────
+
+/// What the chrome asks of the window that shows it. Only
+/// `ChromeApplication` holds the winit window, so it carries these out
+/// (`take_window_requests`): after Blitz makes the window, after each of the
+/// window's events, and once per turn of the event loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowRequest {
+    /// Show `effective`: to the pages, through Blitz's theme override, which
+    /// keeps the window's own theme from replacing the chrome's scheme
+    /// (ledger L13); and in the window's decorations
+    /// (`application::decoration_theme`). `follows_system`: the scheme is
+    /// the system's.
+    Scheme { effective: Scheme, follows_system: bool },
+    /// The theme is System again: read the system's scheme now. macOS
+    /// reports no change while the window has a theme of its own.
+    FollowSystem,
+    /// Full screen on the monitor the window is on, or back (F11; Ctrl+Cmd+F
+    /// on macOS). Each press is one request.
+    ToggleFullScreen,
 }
 
 // ── Plain data for the builders ─────────────────────────────────────────
@@ -1037,12 +1246,15 @@ struct PermissionsView {
     remembered: Vec<RememberedChoice>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PaletteStatus {
-    Valid,
-    Missing,
-    Invalid(String),
-}
+// Disabled in step 10 (ledger S12, part 3): the Appearance panel's card
+// showed the status of one file, `themes/custom.css`; each theme file's row
+// shows its own now.
+// #[derive(Clone, Debug, PartialEq, Eq)]
+// enum PaletteStatus {
+//     Valid,
+//     Missing,
+//     Invalid(String),
+// }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WalletRow {
@@ -1089,7 +1301,11 @@ fn side_head_html(title: &str, count: Option<&str>) -> String {
     if let Some(count) = count {
         put!(html, r#"<span class="count">{}</span>"#, escape(count));
     }
-    html.push_str(r#"<span class="grow"></span><button class="icon-btn" data-action="sidebar:toggle" aria-label="Hide sidebar"><i class="fa-solid fa-angles-left"></i><span class="tip tip-below-end">Hide sidebar · Ctrl+B</span></button>"#);
+    put!(
+        html,
+        r#"<span class="grow"></span><button class="icon-btn" data-action="sidebar:toggle" aria-label="Hide sidebar"><i class="fa-solid fa-angles-left"></i><span class="tip tip-below-end">Hide sidebar · {}</span></button>"#,
+        key_label("{key:sidebar}", KeyPlatform::CURRENT)
+    );
     html
 }
 
@@ -1232,8 +1448,9 @@ fn tab_panel_html(
     if !closed.is_empty() {
         put!(
             html,
-            r#"<div class="section-head"><span>Recently closed</span><span class="count">{}</span><span class="grow"></span><span class="tag">Ctrl+Shift+T</span></div>"#,
-            closed.len()
+            r#"<div class="section-head"><span>Recently closed</span><span class="count">{}</span><span class="grow"></span><span class="tag">{}</span></div>"#,
+            closed.len(),
+            key_label("{key:reopen}", KeyPlatform::CURRENT)
         );
         let width = row_text() - ROUNDING;
         for row in closed {
@@ -1654,32 +1871,194 @@ fn console_html(lines: &[(String, String)]) -> PanelView {
     }
 }
 
-/// The Appearance panel: the scheme, its colours, and the custom palette.
-fn appearance_html(
-    fit: &mut TextFitter,
-    scheme: &str,
-    colors: &BTreeMap<String, String>,
-    palette_path: &str,
-    status: &PaletteStatus,
-) -> PanelView {
-    let mut html = String::with_capacity(4_096);
-    let segment = |value: &str, icon: &str, label: &str, disabled: bool| {
+// Disabled in step 10 (ledger S12, part 3): Dark, Light and Custom, and
+// the card of the one custom file, `themes/custom.css`. Replaced by System,
+// Dark and Light, the Themes list and the Theme files card below.
+// /// The Appearance panel: the scheme, its colours, and the custom palette.
+// fn appearance_html(
+//     fit: &mut TextFitter,
+//     scheme: &str,
+//     colors: &BTreeMap<String, String>,
+//     palette_path: &str,
+//     status: &PaletteStatus,
+// ) -> PanelView {
+//     let mut html = String::with_capacity(4_096);
+//     let segment = |value: &str, icon: &str, label: &str, disabled: bool| {
+//         format!(
+//             r#"<button class="segment{on}" data-action="theme:{value}"{off}><i class="fa-solid {icon}"></i><span>{label}</span></button>"#,
+//             on = if scheme == value { " on" } else { "" },
+//             off = if disabled { " disabled" } else { "" },
+//         )
+//     };
+//     put!(
+//         html,
+//         r#"<div class="section-head"><span>Color scheme</span></div><div class="segmented">{}{}{}</div><span class="footnote">Colors the browser controls and built-in pages. Sites keep their own styles.</span>"#,
+//         segment("dark", "fa-moon", "Dark", false),
+//         segment("light", "fa-sun", "Light", false),
+//         segment("custom", "fa-swatchbook", "Custom", *status != PaletteStatus::Valid),
+//     );
+//     html.push_str(r#"<div class="section-head"><span>Current palette</span></div><div class="swatches">"#);
+//     for name in theme::token_names() {
+//         let color = colors.get(*name).map(String::as_str).unwrap_or("transparent");
+//         put!(
+//             html,
+//             r#"<div class="swatch"><span class="swatch-color" style="background:{}"></span><span class="swatch-name">{}</span></div>"#,
+//             escape(color),
+//             escape(name.trim_start_matches("--gaze-"))
+//         );
+//     }
+//     let path_width = geometry::card_inner() - geometry::ROUNDING;
+//     put!(
+//         html,
+//         r#"</div><div class="section-head"><span>Custom palette file</span></div><div class="card"><div class="mono wallet-address">{}</div>"#,
+//         escape(&fit.middle(MONO, palette_path, path_width))
+//     );
+//     let (notice, button) = match status {
+//         PaletteStatus::Valid => (
+//             notice_html(
+//                 Tone::Ok,
+//                 "The palette is valid. Edit the file, then reload it to apply the changes.",
+//                 None,
+//             ),
+//             r#"<button class="btn btn-sm" data-action="theme:custom"><i class="fa-solid fa-rotate-right"></i><span>Reload palette</span></button>"#,
+//         ),
+//         PaletteStatus::Missing => (
+//             notice_html(
+//                 Tone::Info,
+//                 "Create a palette file to choose your own colors. It lists every --gaze-* color as #RRGGBB.",
+//                 None,
+//             ),
+//             r#"<button class="btn btn-sm" data-action="theme:template"><i class="fa-solid fa-plus"></i><span>Create palette file</span></button>"#,
+//         ),
+//         PaletteStatus::Invalid(why) => (
+//             notice_html(Tone::Err, &format!("The palette cannot be used: {why}"), None),
+//             r#"<button class="btn btn-sm" data-action="theme:custom"><i class="fa-solid fa-rotate-right"></i><span>Reload palette</span></button>"#,
+//         ),
+//     };
+//     put!(
+//         html,
+//         r#"{notice}<div class="card-actions">{button}</div></div>"#
+//     );
+//     PanelView { html, count: None }
+// }
+
+/// What the Appearance panel shows (`appearance_html`).
+struct AppearanceView<'a> {
+    /// The theme chosen.
+    choice: &'a ThemeChoice,
+    /// What is known of the system's preference (the sentence, with System).
+    system: &'a Known,
+    /// The colours shown (the swatches).
+    colours: &'a BTreeMap<String, String>,
+    /// The scheme shown.
+    shown: Scheme,
+    /// Why the chosen theme cannot be used, if it cannot
+    /// (`theme::Resolved::problem`).
+    problem: Option<&'a str>,
+    /// The theme files: the user's, and those installed for everyone.
+    themes: &'a [ThemeFile],
+    /// The user's themes folder.
+    folder: &'a str,
+}
+
+/// A scheme's name in a sentence.
+fn scheme_word(scheme: Scheme) -> &'static str {
+    match scheme {
+        Scheme::Dark => "dark",
+        Scheme::Light => "light",
+    }
+}
+
+/// The sentence under the scheme control: with System, what the system
+/// prefers; then what the scheme colours.
+fn scheme_note(choice: &ThemeChoice, system: &Known) -> String {
+    let follows = match (choice, system) {
+        (ThemeChoice::System, Known::Answered(Some(Scheme::Dark))) => "Follows your system, which prefers dark. ",
+        (ThemeChoice::System, Known::Answered(Some(Scheme::Light))) => "Follows your system, which prefers light. ",
+        (ThemeChoice::System, Known::Answered(None)) => "Your system states no preference, so the dark scheme is used. ",
+        (ThemeChoice::System, Known::Unknown(_)) => {
+            "Your system's preference could not be read, so the dark scheme is used. "
+        }
+        _ => "",
+    };
+    format!("{follows}{SCHEME_NOTE}")
+}
+
+/// The Appearance panel: a chosen theme that cannot be used, the scheme
+/// control and its sentence, the theme files, the colours shown, and the
+/// themes folder with New theme and Reload.
+fn appearance_html(fit: &mut TextFitter, view: &AppearanceView<'_>) -> PanelView {
+    use geometry::*;
+    let mut html = String::with_capacity(6_144 + 768 * view.themes.len());
+    if let (ThemeChoice::Named(name), Some(problem)) = (view.choice, view.problem) {
+        let text = format!(
+            "“{name}” cannot be used: {problem}. The {} scheme is shown instead.",
+            scheme_word(view.shown)
+        );
+        html.push_str(&notice_html(Tone::Err, &text, None));
+    }
+    let lit = match view.choice {
+        ThemeChoice::System => "system",
+        ThemeChoice::BuiltIn(Scheme::Dark) => "dark",
+        ThemeChoice::BuiltIn(Scheme::Light) => "light",
+        ThemeChoice::Named(_) => "",
+    };
+    let segment = |value: &str, icon: &str, label: &str| {
         format!(
-            r#"<button class="segment{on}" data-action="theme:{value}"{off}><i class="fa-solid {icon}"></i><span>{label}</span></button>"#,
-            on = if scheme == value { " on" } else { "" },
-            off = if disabled { " disabled" } else { "" },
+            r#"<button class="segment{on}" data-action="theme:{value}" aria-pressed="{pressed}"><i class="fa-solid {icon}"></i><span>{label}</span></button>"#,
+            on = if lit == value { " on" } else { "" },
+            pressed = lit == value,
         )
     };
     put!(
         html,
-        r#"<div class="section-head"><span>Color scheme</span></div><div class="segmented">{}{}{}</div><span class="footnote">Colors the browser controls and built-in pages. Sites keep their own styles.</span>"#,
-        segment("dark", "fa-moon", "Dark", false),
-        segment("light", "fa-sun", "Light", false),
-        segment("custom", "fa-swatchbook", "Custom", *status != PaletteStatus::Valid),
+        r#"<div class="section-head"><span>Color scheme</span></div><div class="segmented">{}{}{}</div><span class="footnote">{}</span>"#,
+        segment("system", "fa-circle-half-stroke", "System"),
+        segment("dark", "fa-moon", "Dark"),
+        segment("light", "fa-sun", "Light"),
+        escape(&scheme_note(view.choice, view.system)),
     );
+    put!(
+        html,
+        r#"<div class="section-head"><span>Themes</span><span class="count">{}</span></div>"#,
+        view.themes.len()
+    );
+    if view.themes.is_empty() {
+        html.push_str(&empty_state_html("fa-palette", "No theme files yet.", None));
+    }
+    for file in view.themes {
+        let tag = match &file.colours {
+            Ok(declared) => match theme::scheme_of(&theme::palette_with(declared)) {
+                Scheme::Dark => "Dark",
+                Scheme::Light => "Light",
+            },
+            Err(_) => "Unusable",
+        };
+        // The row's text column, less the tag beside it (R5).
+        let width = row_text() - (fit.width(TAG, tag) + TAG_PAD) - ROW_GAP - ROUNDING;
+        let label = escape(&fit.end(LABEL, &file.name, width));
+        match &file.colours {
+            Ok(_) => {
+                let chosen = matches!(view.choice, ThemeChoice::Named(name) if *name == file.name);
+                put!(
+                    html,
+                    r#"<div class="row{on}" data-action="theme:use:{name}"><i class="fa-solid fa-palette row-icon"></i><div class="row-text"><span class="row-label">{label}</span><span class="row-detail">{path}</span></div><span class="tag">{tag}</span></div>"#,
+                    on = if chosen { " on" } else { "" },
+                    name = escape(&file.name),
+                    path = escape(&fit.middle(DETAIL, &file.path.display().to_string(), width)),
+                );
+            }
+            // Shown with why, and never chosen: it has no action.
+            Err(why) => put!(
+                html,
+                r#"<div class="row static"><i class="fa-solid fa-triangle-exclamation row-icon err"></i><div class="row-text"><span class="row-label">{label}</span><span class="row-desc why">{why}</span></div><span class="tag err">{tag}</span></div>"#,
+                why = escape(why),
+            ),
+        }
+    }
     html.push_str(r#"<div class="section-head"><span>Current palette</span></div><div class="swatches">"#);
     for name in theme::token_names() {
-        let color = colors.get(*name).map(String::as_str).unwrap_or("transparent");
+        let color = view.colours.get(*name).map(String::as_str).unwrap_or("transparent");
         put!(
             html,
             r#"<div class="swatch"><span class="swatch-color" style="background:{}"></span><span class="swatch-name">{}</span></div>"#,
@@ -1687,37 +2066,15 @@ fn appearance_html(
             escape(name.trim_start_matches("--gaze-"))
         );
     }
-    let path_width = geometry::card_inner() - geometry::ROUNDING;
     put!(
         html,
-        r#"</div><div class="section-head"><span>Custom palette file</span></div><div class="card"><div class="mono wallet-address">{}</div>"#,
-        escape(&fit.middle(MONO, palette_path, path_width))
-    );
-    let (notice, button) = match status {
-        PaletteStatus::Valid => (
-            notice_html(
-                Tone::Ok,
-                "The palette is valid. Edit the file, then reload it to apply the changes.",
-                None,
-            ),
-            r#"<button class="btn btn-sm" data-action="theme:custom"><i class="fa-solid fa-rotate-right"></i><span>Reload palette</span></button>"#,
+        r#"</div><div class="section-head"><span>Theme files</span></div><div class="card"><div class="mono wallet-address">{}</div>{}<div class="card-actions"><button class="btn btn-sm" data-action="theme:new"><i class="fa-solid fa-plus"></i><span>New theme</span></button><button class="btn btn-sm btn-ghost" data-action="theme:reload"><i class="fa-solid fa-rotate-right"></i><span>Reload</span></button></div></div>"#,
+        escape(&fit.middle(MONO, view.folder, card_inner() - ROUNDING)),
+        notice_html(
+            Tone::Info,
+            "A theme is a .css file of --gaze-* colors in this folder. New theme starts one from the current colors; edit it, then reload.",
+            None
         ),
-        PaletteStatus::Missing => (
-            notice_html(
-                Tone::Info,
-                "Create a palette file to choose your own colors. It lists every --gaze-* color as #RRGGBB.",
-                None,
-            ),
-            r#"<button class="btn btn-sm" data-action="theme:template"><i class="fa-solid fa-plus"></i><span>Create palette file</span></button>"#,
-        ),
-        PaletteStatus::Invalid(why) => (
-            notice_html(Tone::Err, &format!("The palette cannot be used: {why}"), None),
-            r#"<button class="btn btn-sm" data-action="theme:custom"><i class="fa-solid fa-rotate-right"></i><span>Reload palette</span></button>"#,
-        ),
-    };
-    put!(
-        html,
-        r#"{notice}<div class="card-actions">{button}</div></div>"#
     );
     PanelView { html, count: None }
 }
@@ -1781,7 +2138,7 @@ fn wallet_card_html(
     if !embers && wallets > 0 {
         html.push_str(&notice_html(
             Tone::Info,
-            "Balances and transfers need an Embers service: set embers_api in settings.conf.",
+            "Balances and transfers need an Embers service: set embers_api under [wallet] in settings.toml.",
             None,
         ));
     }
@@ -2248,7 +2605,11 @@ pub struct ChromeDocument {
     /// frame, in tab order (`begin_paint`; ledger L9, H9). Kept to be reused.
     paint_hovers: Vec<Option<NodeId>>,
     wallet: Arc<Mutex<WalletView>>,
-    ui: UiState,
+    // Was `ui: UiState`, the whole `workspace.json`.
+    /// The open tabs and the sidebar's layout (`state/session.json`).
+    session: SessionState,
+    /// The pages visited (`state/history.json`).
+    history: History,
     parents: BTreeMap<u64, Option<u64>>,
     lazy: BTreeMap<u64, String>,
     /// Closed tabs, the most recent last.
@@ -2281,7 +2642,32 @@ pub struct ChromeDocument {
     /// still has the focus: the address box after Ctrl+L or Escape, the
     /// find box after Ctrl+F. Typing then replaces the old text.
     select_pending: Option<&'static str>,
-    state_dirty: bool,
+    // Was `state_dirty`: any change rewrote the session, the history and
+    // the theme together.
+    /// The session changed since it was saved.
+    session_dirty: bool,
+    /// When the history is to be written (`history_changed`).
+    history_due: Option<Instant>,
+    /// The operating system's light or dark preference.
+    system: SystemScheme,
+    /// Where `system` comes from: reports from the window count only for
+    /// `Source::Window`.
+    system_source: Source,
+    /// The preference the colours were resolved with.
+    applied_preference: Option<Scheme>,
+    /// The colours shown, and the theme file they came from.
+    resolved: theme::Resolved,
+    /// The built-in pages' style sheet for those colours.
+    host_css: String,
+    /// The theme files the Appearance panel lists: read when the panel is
+    /// shown, by New theme and by Reload, never at each render (`None`: read
+    /// at the next render).
+    themes: Option<Vec<ThemeFile>>,
+    /// What the chrome asks of its window (`take_window_requests`).
+    window_requests: Vec<WindowRequest>,
+    /// Start-up's notices, and failed saves of the freshness records, still
+    /// to be shown in the status bar, most severe first.
+    notices: VecDeque<(Tone, String)>,
     last_find_scan: Instant,
     fitter: TextFitter,
 }
@@ -2298,19 +2684,50 @@ fn page_is_laid_out(page: &RhoDocument) -> bool {
 }
 
 impl ChromeDocument {
+    /// A window on `url`, with the system's preference fixed as unknown:
+    /// tests, which never run `dbus-send` (`launch` passes the real one).
     pub fn new(eng: Rc<Engine>, url: &str) -> ChromeDocument {
-        let mut ui = UiState::load(&eng.dir);
+        ChromeDocument::with_system_scheme(
+            eng,
+            url,
+            SystemScheme::fixed(Known::Unknown(None)),
+            Source::Fixed(None),
+            WakeHandle::default(),
+        )
+    }
+
+    /// A window on `url`, following `system`'s preference, woken by `wake`.
+    pub fn with_system_scheme(
+        eng: Rc<Engine>,
+        url: &str,
+        system: SystemScheme,
+        system_source: Source,
+        wake: WakeHandle,
+    ) -> ChromeDocument {
+        // Was `UiState::load(&eng.dir)`: `workspace.json`, whose bad JSON
+        // gave the default, which the next save wrote over (ledger S1, H1).
+        // Start-up has checked, backed up and repaired both files now.
+        let mut session: SessionState = eng.profile.read_state();
+        let history: History = eng.profile.read_state();
         // Every window starts with the sidebar collapsed, unless the profile
         // asks to reopen it as it was left (`restore_sidebar`). The panel is
         // still restored, so Ctrl+B reopens the one last shown.
         if !eng.settings.restore_sidebar {
-            ui.sidebar_open = false;
+            session.sidebar_open = false;
         }
-        let panel = ui.panel.clone();
-        let custom = theme::custom_palette(&eng.dir).ok();
-        let css = chrome_css(&ui.theme, custom.as_ref());
-        let html = shell_html(&css, ui.sidebar_open);
-        let wake = WakeHandle::default();
+        let panel = session.panel.clone();
+        // Was the palette file in the single profile folder, laid over the
+        // chosen scheme whatever it was (ledger L14).
+        let applied_preference = preference_of(&system.known());
+        let resolved = theme::resolve(
+            &eng.profile.theme(),
+            applied_preference,
+            eng.profile.fs(),
+            &eng.profile.theme_dirs(),
+        );
+        let css = chrome_css_of(&resolved.colours);
+        let host_css = theme::builtin_css_of(&resolved.colours);
+        let html = shell_html(&css, session.sidebar_open);
         let inner = gaze_dom_blitz::parse_html(
             &html,
             DocumentConfig {
@@ -2342,7 +2759,8 @@ impl ChromeDocument {
             title: String::new(),
             flash: None,
             wallet: Default::default(),
-            ui,
+            session,
+            history,
             parents: BTreeMap::new(),
             lazy: BTreeMap::new(),
             closed: Vec::with_capacity(CLOSED_LIMIT + 1),
@@ -2365,25 +2783,44 @@ impl ChromeDocument {
             find_selected_tab: None,
             find_rescan: false,
             select_pending: None,
-            state_dirty: false,
+            session_dirty: false,
+            history_due: None,
+            system,
+            system_source,
+            applied_preference,
+            resolved,
+            host_css,
+            themes: None,
+            window_requests: Vec::with_capacity(2),
+            notices: VecDeque::with_capacity(8),
             last_find_scan: Instant::now(),
             fitter: TextFitter::new(),
         };
-        if url == c.eng.settings.home && !c.ui.tabs.is_empty() {
-            let saved = c.ui.tabs.clone();
+        if url == c.eng.settings.home && !c.session.tabs.is_empty() {
+            let saved = c.session.tabs.clone();
             let mut ids = Vec::with_capacity(saved.len());
             for t in &saved {
                 let parent = t.parent.and_then(|i| ids.get(i).copied());
                 c.add_tab(&t.url, parent, false, &t.title);
                 ids.push(c.next_id);
             }
-            c.select(c.ui.active.min(c.tabs.len() - 1));
+            c.select(c.session.active.min(c.tabs.len() - 1));
         } else {
             c.open_tab(url);
         }
-        c.apply_theme();
+        c.paint_theme();
+        // What start-up found is shown first, most severe first; so is a
+        // chosen theme that cannot be used.
+        c.take_notices();
+        if let Some(problem) = c.resolved.problem.clone() {
+            let shown = match c.resolved.scheme {
+                Scheme::Dark => "dark",
+                Scheme::Light => "light",
+            };
+            c.notices.push_back((Tone::Warn, format!("The chosen theme cannot be used ({problem}); the {shown} scheme is shown")));
+        }
         // A profile reopened on the Wallet panel shows balances at once.
-        if c.ui.sidebar_open && c.panel == "wallet" {
+        if c.session.sidebar_open && c.panel == "wallet" {
             c.refresh_balances();
         }
         c
@@ -2511,7 +2948,7 @@ impl ChromeDocument {
         if load {
             self.select(self.tabs.len() - 1);
         }
-        self.state_dirty = true;
+        self.session_dirty = true;
     }
 
     fn select(&mut self, i: usize) {
@@ -2546,7 +2983,7 @@ impl ChromeDocument {
         self.dismiss_address();
         // Ledger L1/H6: find re-runs on the incoming tab.
         self.refresh_find();
-        self.state_dirty = true;
+        self.session_dirty = true;
     }
 
     fn close(&mut self, id: u64) {
@@ -2603,7 +3040,7 @@ impl ChromeDocument {
                 .unwrap_or(i.min(self.tabs.len() - 1));
             self.select(next);
         }
-        self.state_dirty = true;
+        self.session_dirty = true;
     }
 
     fn saved_tabs(&self) -> Vec<SavedTab> {
@@ -2621,14 +3058,57 @@ impl ChromeDocument {
             .collect()
     }
 
-    fn save_workspace(&mut self) {
-        if !self.state_dirty {
-            return;
+    // Disabled at the switch-over (ledger S14): it wrote the session, the
+    // whole history and the theme into one file after every change, a tab
+    // switch included. `save_state` writes each file when it changed.
+    // fn save_workspace(&mut self) {
+    //     if !self.state_dirty {
+    //         return;
+    //     }
+    //     self.ui.tabs = self.saved_tabs();
+    //     self.ui.active = self.active;
+    //     let _ = self.ui.save(&self.eng.dir);
+    //     self.state_dirty = false;
+    // }
+
+    /// Saves what changed: the session at once, the history once its delay
+    /// is over at `now`. A save that fails changes nothing on screen: a
+    /// session that only reads said so when it started.
+    fn save_state(&mut self, now: Instant) {
+        if self.session_dirty {
+            self.session.tabs = self.saved_tabs();
+            self.session.active = self.active;
+            let _ = self.eng.profile.write_state(&self.session);
+            self.session_dirty = false;
         }
-        self.ui.tabs = self.saved_tabs();
-        self.ui.active = self.active;
-        let _ = self.ui.save(&self.eng.dir);
-        self.state_dirty = false;
+        if self.history_due.is_some_and(|due| due <= now) {
+            let _ = self.eng.profile.write_state(&self.history);
+            self.history_due = None;
+        }
+    }
+
+    /// The history changed. A visit is written once [`HISTORY_SAVE_DELAY`]
+    /// has passed, with the visits made meanwhile; clearing and forgetting
+    /// are written at the next save (`at_once`), since the user expects
+    /// them gone.
+    fn history_changed(&mut self, at_once: bool) {
+        let now = Instant::now();
+        match at_once {
+            true => self.history_due = Some(now),
+            false => {
+                self.history_due.get_or_insert(now + HISTORY_SAVE_DELAY);
+            }
+        }
+    }
+
+    /// Saves everything still waiting, the history's delay or not: the
+    /// window is closing.
+    fn flush_state(&mut self) {
+        let now = Instant::now();
+        if self.history_due.is_some() {
+            self.history_due = Some(now);
+        }
+        self.save_state(now);
     }
 
     /// Error pages are F1R3Gaze's own, so they are themed like `gaze://`.
@@ -2636,30 +3116,216 @@ impl ChromeDocument {
         tab.url.starts_with("gaze://") || tab.error_page
     }
 
+    // Disabled at the switch-over (ledger S14): it laid the old folder's
+    // `palette.css` over whichever scheme was chosen (ledger L14), and saved
+    // the theme with the session. The theme is a setting now, saved by
+    // `Profile::set_theme`.
+    // fn apply_theme(&mut self) {
+    //     let custom = theme::custom_palette(&self.eng.dir).ok();
+    //     let colors = theme::palette(&self.ui.theme, custom.as_ref());
+    //     if let Some(root) = self
+    //         .id("html")
+    //         .or_else(|| Some(self.inner.root_element().id))
+    //     {
+    //         let mut m = self.inner.mutate();
+    //         for (key, value) in &colors {
+    //             m.set_style_property(root, key, value);
+    //         }
+    //     }
+    //     let css = theme::builtin_css(&self.ui.theme, custom.as_ref());
+    //     for (t, view) in &self.tabs {
+    //         if Self::themed_as_builtin(t)
+    //             && let Some(r) = rho_mut(&mut self.inner, *view)
+    //         {
+    //             r.set_host_theme(&css);
+    //         }
+    //     }
+    //     // Rebuild every rendered region with fresh boxes. The constant side
+    //     // controls stay: rebuilding them would take focus from their field.
+    //     self.rendered.retain(|id, _| *id == "sidecontrols");
+    //     self.state_dirty = true;
+    // }
+
+    /// Resolves the chosen theme with the system's preference now, and
+    /// shows it.
     fn apply_theme(&mut self) {
-        let custom = theme::custom_palette(&self.eng.dir).ok();
-        let colors = theme::palette(&self.ui.theme, custom.as_ref());
+        let preference = preference_of(&self.system.known());
+        self.applied_preference = preference;
+        self.resolved = theme::resolve(
+            &self.eng.profile.theme(),
+            preference,
+            self.eng.profile.fs(),
+            &self.eng.profile.theme_dirs(),
+        );
+        self.paint_theme();
+    }
+
+    /// Shows the resolved colours: the chrome's variables, the style sheet
+    /// of every built-in page, and the scheme, to the pages (ledger L13) and
+    /// to the window.
+    fn paint_theme(&mut self) {
         if let Some(root) = self
             .id("html")
             .or_else(|| Some(self.inner.root_element().id))
         {
             let mut m = self.inner.mutate();
-            for (key, value) in &colors {
+            for (key, value) in &self.resolved.colours {
                 m.set_style_property(root, key, value);
             }
         }
-        let css = theme::builtin_css(&self.ui.theme, custom.as_ref());
+        self.host_css = theme::builtin_css_of(&self.resolved.colours);
         for (t, view) in &self.tabs {
             if Self::themed_as_builtin(t)
                 && let Some(r) = rho_mut(&mut self.inner, *view)
             {
-                r.set_host_theme(&css);
+                r.set_host_theme(&self.host_css);
             }
         }
         // Rebuild every rendered region with fresh boxes. The constant side
         // controls stay: rebuilding them would take focus from their field.
         self.rendered.retain(|id, _| *id == "sidecontrols");
-        self.state_dirty = true;
+        // L13: pages see the scheme shown. Blitz copies this document's scheme
+        // into every page's viewport at each layout (`BaseDocument::resolve`),
+        // and the window is asked to keep its own theme from replacing it
+        // (`WindowRequest::Scheme`).
+        self.inner.viewport_mut().color_scheme = color_scheme_of(self.resolved.scheme);
+        self.request_scheme();
+    }
+
+    /// Follows a change of the system's preference: the theme is resolved
+    /// again, and shown only when its colours changed (System, or a named
+    /// theme that fell back to the preferred scheme). Returns whether it
+    /// was shown.
+    fn follow_system(&mut self) -> bool {
+        let preference = preference_of(&self.system.known());
+        if preference == self.applied_preference {
+            return false;
+        }
+        let colours = self.resolved.colours.clone();
+        self.apply_theme();
+        self.resolved.colours != colours
+    }
+
+    /// The system's preference as the window system reported it (macOS and
+    /// Windows: winit's `system_theme` and `ThemeChanged`). The preference
+    /// is ignored unless it comes from the window; either way the window is
+    /// asked again to show the scheme shown, since the window system may have
+    /// changed its decorations itself (Windows applies the system's theme on
+    /// a settings change).
+    // Was: an early return for any other source, which asked the window
+    // nothing (step 9).
+    pub(crate) fn window_reported_scheme(&mut self, preference: Option<Scheme>) {
+        if self.system_source == Source::Window {
+            self.system.set(preference);
+            if self.follow_system() {
+                self.inner.shell_provider.request_redraw();
+            }
+        }
+        self.request_scheme();
+    }
+
+    /// The window gained the focus: the portal is asked again, at most every
+    /// `REQUERY_INTERVAL` (Linux; the answer wakes the window).
+    pub(crate) fn window_focused(&mut self, now: Instant) {
+        self.system.refresh(now);
+    }
+
+    /// Asks the window to show the scheme shown.
+    fn request_scheme(&mut self) {
+        let request = WindowRequest::Scheme {
+            effective: self.resolved.scheme,
+            follows_system: self.follows_system(),
+        };
+        self.request(request);
+    }
+
+    /// Queues a request for the window. Only the latest `Scheme` matters,
+    /// and one `FollowSystem` is enough.
+    fn request(&mut self, request: WindowRequest) {
+        match request {
+            WindowRequest::Scheme { .. } => self
+                .window_requests
+                .retain(|queued| !matches!(queued, WindowRequest::Scheme { .. })),
+            WindowRequest::FollowSystem if self.window_requests.contains(&request) => return,
+            WindowRequest::FollowSystem | WindowRequest::ToggleFullScreen => {}
+        }
+        self.window_requests.push(request);
+    }
+
+    /// Whether the scheme shown is the system's: System, or a theme file
+    /// that cannot be used and fell back to the system's preference.
+    fn follows_system(&self) -> bool {
+        match self.eng.profile.theme() {
+            ThemeChoice::System => true,
+            ThemeChoice::Named(_) => self.resolved.file.is_none(),
+            ThemeChoice::BuiltIn(_) => false,
+        }
+    }
+
+    /// What the chrome asked of its window since the last call
+    /// (`ChromeApplication` carries it out).
+    pub(crate) fn take_window_requests(&mut self) -> Vec<WindowRequest> {
+        std::mem::take(&mut self.window_requests)
+    }
+
+    /// The scheme shown, and whether it is the system's: what the window is
+    /// made with (`ChromeApplication::create_window`).
+    pub(crate) fn scheme_shown(&self) -> (Scheme, bool) {
+        (self.resolved.scheme, self.follows_system())
+    }
+
+    /// The window entered or left full screen. On entering, also when it is
+    /// made full screen as it was left, the status bar says how to leave;
+    /// on leaving, that message goes.
+    pub(crate) fn full_screen_changed(&mut self, on: bool) {
+        let hint = full_screen_hint(KeyPlatform::CURRENT);
+        match on {
+            true => self.flash(Tone::Info, hint),
+            false if self.flash.as_ref().is_some_and(|flash| flash.text == hint) => self.flash = None,
+            false => {}
+        }
+        // The status bar is drawn at the next poll.
+        self.wake.wake();
+    }
+
+    /// Moves start-up's events not shown yet, and a failed save of the
+    /// freshness records, into the notices, most severe first.
+    fn take_notices(&mut self) {
+        let profile = &self.eng.profile;
+        if let Some(error) = self.eng.bridge.take_freshness_error() {
+            profile.report.push(Event::new(
+                EventKind::Other,
+                Severity::Alert,
+                profile.layout.trust_file(),
+                format!("The freshness records could not be saved ({error}); they hold for this session only"),
+            ));
+        }
+        let mut events = profile.report.take_unshown();
+        // Stable: the most severe first, each severity in the order found.
+        events.sort_by_key(|event| std::cmp::Reverse(event.severity));
+        for event in events {
+            let tone = match event.severity {
+                Severity::Alert => Tone::Err,
+                Severity::Warning => Tone::Warn,
+                Severity::Notice | Severity::Quiet => Tone::Info,
+            };
+            self.notices.push_back((tone, event.message));
+        }
+    }
+
+    /// Shows the next notice once the status bar's message has expired.
+    /// Returns whether one is shown.
+    fn show_next_notice(&mut self, now: Instant) -> bool {
+        if self.flash.as_ref().is_some_and(|f| f.until > now) {
+            return false;
+        }
+        let Some((tone, text)) = self.notices.pop_front() else {
+            return false;
+        };
+        let until = now + FLASH_LONG;
+        self.flash = Some(Flash { tone, text, until });
+        self.pacer.at(until);
+        true
     }
 
     // ── Find ──
@@ -2763,14 +3429,14 @@ impl ChromeDocument {
         let i = self.active;
         self.tabs[i].0.navigate(url, true);
         self.url_dirty = true;
-        self.state_dirty = true;
+        self.session_dirty = true;
     }
 
     /// The suggestions for what is typed: open tabs (switched to, not
     /// reopened) and history, without the active tab itself.
     fn build_suggestions(&self) -> Vec<Suggestion> {
         let active_url = &self.tabs[self.active].0.url;
-        self.ui
+        self.history
             .suggestions(&self.address_query, &self.saved_tabs())
             .into_iter()
             .filter(|found| &found.url != active_url)
@@ -2800,21 +3466,25 @@ impl ChromeDocument {
             self.history_confirm = false;
             self.panel = panel.to_string();
         }
-        self.ui.panel = self.panel.clone();
+        self.session.panel = self.panel.clone();
         self.set_sidebar(true);
         if self.panel == "wallet" {
             self.refresh_balances();
+        }
+        // The theme files may have changed while the panel was hidden.
+        if self.panel == "appearance" {
+            self.themes = None;
         }
         if self.panel == "tabs" {
             self.side_scan_cursor = 0;
             self.side_results.clear();
         }
-        self.state_dirty = true;
+        self.session_dirty = true;
     }
 
     fn set_sidebar(&mut self, open: bool) {
-        let opening = open && !self.ui.sidebar_open;
-        self.ui.sidebar_open = open;
+        let opening = open && !self.session.sidebar_open;
+        self.session.sidebar_open = open;
         if !open {
             self.menu_tab = None;
             self.history_confirm = false;
@@ -2822,7 +3492,10 @@ impl ChromeDocument {
         if opening && self.panel == "wallet" {
             self.refresh_balances();
         }
-        self.state_dirty = true;
+        if opening && self.panel == "appearance" {
+            self.themes = None;
+        }
+        self.session_dirty = true;
     }
 
     fn reset_side_search(&mut self) {
@@ -2882,7 +3555,7 @@ impl ChromeDocument {
         if !matches!(verb, "menu" | "menu-open") {
             self.menu_tab = None;
         }
-        self.state_dirty = true;
+        self.session_dirty = true;
     }
 
     /// Tab verbs that act on one existing tab.
@@ -3040,13 +3713,13 @@ impl ChromeDocument {
                     self.tabs[i].0.revoke(&urn, r);
                 }
             }
-            Action::Panel(p) => match (self.ui.sidebar_open, self.panel == p) {
+            Action::Panel(p) => match (self.session.sidebar_open, self.panel == p) {
                 (true, true) => self.set_sidebar(false),
                 _ => self.show_panel(&p),
             },
             Action::ShowPanel(p) => self.show_panel(&p),
             Action::SidebarToggle => {
-                let open = !self.ui.sidebar_open;
+                let open = !self.session.sidebar_open;
                 self.set_sidebar(open);
             }
             Action::Wallet(w) => self.wallet_action(&w),
@@ -3080,7 +3753,7 @@ impl ChromeDocument {
                 }
                 _ => {}
             },
-            Action::Theme(choice) => self.theme_action(&choice),
+            Action::Theme(op) => self.theme_op(op, Instant::now()),
             Action::Find(_) => {
                 self.find_visible = true;
                 // Focus moves without a blur event, so drop the address box's
@@ -3107,8 +3780,8 @@ impl ChromeDocument {
             }
             Action::TabOp(verb, id) => self.tab_op(&verb, id),
             Action::ToggleTree => {
-                self.ui.tree_tabs = !self.ui.tree_tabs;
-                self.state_dirty = true;
+                self.session.tree_tabs = !self.session.tree_tabs;
+                self.session_dirty = true;
             }
             Action::ToggleSidePages => {
                 self.side_pages = !self.side_pages;
@@ -3123,8 +3796,8 @@ impl ChromeDocument {
             Action::VisitOp(verb, url) => match verb.as_str() {
                 "open" => self.open_tab(&url),
                 "forget" => {
-                    self.ui.forget(&url);
-                    self.state_dirty = true;
+                    self.history.forget(&url);
+                    self.history_changed(true);
                 }
                 _ => {}
             },
@@ -3132,6 +3805,7 @@ impl ChromeDocument {
             Action::ConsoleClear => {
                 self.consoles.remove(&self.tabs[i].0.id);
             }
+            Action::FullScreen => self.request(WindowRequest::ToggleFullScreen),
             Action::Dismiss => match (
                 self.address_query.is_empty(),
                 self.menu_tab,
@@ -3154,13 +3828,17 @@ impl ChromeDocument {
         let (tid, view) = (self.tabs[self.active].0.id, self.tabs[self.active].1);
         match rho_mut(&mut self.inner, view).and_then(|r| r.log_bytes()) {
             Some(bytes) => {
-                let p = self
-                    .eng
-                    .dir
-                    .join("logs")
-                    .join(format!("tab-{tid}-{}.gzlog", std::process::id()));
-                let _ = std::fs::create_dir_all(p.parent().expect("a log path has a parent"));
-                match std::fs::write(&p, bytes) {
+                let profile = &self.eng.profile;
+                if let Some(why) = profile.read_only_reason() {
+                    self.flash(Tone::Err, format!("The log is not saved: {why}"));
+                    return;
+                }
+                // Was `<profile>/logs/`, in the single profile folder.
+                let dir = profile.layout.replay_logs_dir();
+                let p = dir.join(format!("tab-{tid}-{}.gzlog", std::process::id()));
+                let written = gaze_fs::create_dir_durably(profile.fs(), &dir)
+                    .and_then(|_| gaze_fs::write_atomic(profile.fs(), &p, &bytes, Perm::Private));
+                match written {
                     Ok(()) => self.flash(Tone::Ok, format!("Replay log saved to {}", p.display())),
                     Err(e) => self.flash(Tone::Err, format!("Could not save the log: {e}")),
                 }
@@ -3172,41 +3850,213 @@ impl ChromeDocument {
         }
     }
 
-    fn theme_action(&mut self, choice: &str) {
-        let has_custom = theme::custom_palette(&self.eng.dir).is_ok();
-        if choice == "template" {
-            let path = self.eng.dir.join("palette.css");
-            if !path.exists() {
-                let body: String = theme::palette("dark", None)
-                    .iter()
-                    .map(|(k, v)| format!("{k}: {v};\n"))
-                    .collect();
-                match std::fs::write(&path, body) {
-                    Ok(()) => {
-                        self.flash(Tone::Ok, format!("Palette created at {}", path.display()))
-                    }
-                    Err(e) => self.flash(Tone::Err, format!("Could not create the palette: {e}")),
+    // Disabled at the switch-over (ledger S14): the theme was a name saved in
+    // `workspace.json`, and Custom the old folder's `palette.css`.
+    // fn theme_action(&mut self, choice: &str) {
+    //     let has_custom = theme::custom_palette(&self.eng.dir).is_ok();
+    //     if choice == "template" {
+    //         let path = self.eng.dir.join("palette.css");
+    //         if !path.exists() {
+    //             let body: String = theme::palette("dark", None)
+    //                 .iter()
+    //                 .map(|(k, v)| format!("{k}: {v};\n"))
+    //                 .collect();
+    //             match gaze_fs::write_atomic(&StdFs, &path, body.as_bytes(), Perm::Private) {
+    //                 Ok(()) => {
+    //                     self.flash(Tone::Ok, format!("Palette created at {}", path.display()))
+    //                 }
+    //                 Err(e) => self.flash(Tone::Err, format!("Could not create the palette: {e}")),
+    //             }
+    //         }
+    //     }
+    //     let chosen = match choice {
+    //         "next" => match self.ui.theme.as_str() {
+    //             "dark" => "light",
+    //             "light" if has_custom => "custom",
+    //             _ => "dark",
+    //         },
+    //         other => other,
+    //     };
+    //     match (chosen, theme::custom_palette(&self.eng.dir)) {
+    //         ("dark" | "light", _) | ("custom", Ok(_)) => {
+    //             self.ui.theme = chosen.into();
+    //             self.apply_theme();
+    //         }
+    //         ("custom", Err(_)) => self.flash(
+    //             Tone::Warn,
+    //             "The custom palette is missing or invalid; see Appearance",
+    //         ),
+    //         _ => {}
+    //     }
+    // }
+
+    // Disabled in step 10 (ledger S12, part 3): the step-9 strings `dark`,
+    // `light`, `custom`, `template` and `next` became `ThemeOp`, which parses
+    // strictly; Custom became a row of the Themes list (`theme_op`).
+//     /// The Appearance panel's segments and buttons, whose markup is
+//     /// unchanged: Dark and Light choose the built-in schemes, Custom (and
+//     /// "Reload palette") the theme file `themes/custom.css`, "Create palette
+//     /// file" writes that file once, and `next` steps through them.
+//     fn theme_action(&mut self, choice: &str) {
+//         let profile = &self.eng.profile;
+//         let dirs = profile.theme_dirs();
+//         let custom_usable = matches!(
+//             theme::find_theme(profile.fs(), &dirs, CUSTOM_THEME),
+//             Some(ThemeFile { colours: Ok(_), .. })
+//         );
+//         if choice == "template" {
+//             self.create_custom_theme();
+//             return;
+//         }
+//         let custom = ThemeChoice::Named(CUSTOM_THEME.into());
+//         let chosen = match choice {
+//             "dark" => ThemeChoice::BuiltIn(Scheme::Dark),
+//             "light" => ThemeChoice::BuiltIn(Scheme::Light),
+//             "custom" => custom.clone(),
+//             "next" => match profile.theme() {
+//                 ThemeChoice::BuiltIn(Scheme::Dark) => ThemeChoice::BuiltIn(Scheme::Light),
+//                 ThemeChoice::BuiltIn(Scheme::Light) if custom_usable => custom.clone(),
+//                 _ => ThemeChoice::BuiltIn(Scheme::Dark),
+//             },
+//             _ => return,
+//         };
+//         if chosen == custom && !custom_usable {
+//             self.flash(Tone::Warn, "The custom palette is missing or invalid; see Appearance");
+//             return;
+//         }
+//         self.choose_theme(chosen);
+//     }
+
+    /// The Appearance panel's controls.
+    fn theme_op(&mut self, op: ThemeOp, now: Instant) {
+        match op {
+            ThemeOp::System => {
+                self.choose_theme(ThemeChoice::System);
+                // The preference may have changed unseen: Linux asks the
+                // portal again (at most every REQUERY_INTERVAL), and macOS
+                // reported nothing while the window had a theme of its own.
+                self.system.refresh(now);
+                self.request(WindowRequest::FollowSystem);
+            }
+            ThemeOp::Dark => self.choose_theme(ThemeChoice::BuiltIn(Scheme::Dark)),
+            ThemeOp::Light => self.choose_theme(ThemeChoice::BuiltIn(Scheme::Light)),
+            ThemeOp::Use(name) => self.use_theme(name),
+            ThemeOp::New => self.new_theme(),
+            ThemeOp::Reload => self.reload_themes(),
+        }
+    }
+
+    /// Chooses a theme file from the list; one that cannot be used is not
+    /// chosen, and the status bar says why.
+    fn use_theme(&mut self, name: String) {
+        let eng = Rc::clone(&self.eng);
+        let profile = &eng.profile;
+        // Read again at the next render: the file may have changed.
+        self.themes = None;
+        match theme::find_theme(profile.fs(), &profile.theme_dirs(), &name) {
+            Some(ThemeFile { colours: Ok(_), .. }) => self.choose_theme(ThemeChoice::Named(name)),
+            Some(ThemeFile { colours: Err(why), .. }) => {
+                self.flash(Tone::Warn, format!("“{name}” cannot be used: {why}"))
+            }
+            None => {
+                let folder = profile.theme_dirs().user;
+                self.flash(
+                    Tone::Warn,
+                    format!("“{name}” cannot be used: there is no {name}.css in {}", folder.display()),
+                );
+            }
+        }
+    }
+
+    /// Chooses a theme: for this window at once, and in `settings.toml`
+    /// (comments kept) when the session may write it.
+    fn choose_theme(&mut self, choice: ThemeChoice) {
+        let saved = self.eng.profile.set_theme(choice);
+        self.apply_theme();
+        if let Err(why) = saved {
+            self.flash(Tone::Warn, format!("The theme applies to this session only: {why}"));
+        }
+    }
+
+    // Disabled in step 10 (ledger S12, part 3): "Create palette file" wrote
+    // the dark scheme's colours into `themes/custom.css` once. New theme
+    // (`new_theme`) writes the colours shown under a new name, and chooses it.
+//     /// "Create palette file": `themes/custom.css` with the dark scheme's
+//     /// colours, written only if no file has that name (never replacing one).
+//     fn create_custom_theme(&mut self) {
+//         let profile = &self.eng.profile;
+//         if let Some(why) = profile.read_only_reason() {
+//             self.flash(Tone::Err, format!("The palette file is not created: {why}"));
+//             return;
+//         }
+//         let dir = profile.theme_dirs().user;
+//         let path = dir.join(format!("{CUSTOM_THEME}.css"));
+//         let css = theme::new_theme_css(CUSTOM_THEME, &theme::builtin_palette(Scheme::Dark));
+//         let written = gaze_fs::create_dir_durably(profile.fs(), &dir)
+//             .and_then(|_| gaze_fs::write_new(profile.fs(), &path, css.as_bytes(), Perm::Private));
+//         match written {
+//             Ok(()) => self.flash(Tone::Ok, format!("Palette created at {}", path.display())),
+//             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+//             Err(e) => self.flash(Tone::Err, format!("Could not create the palette: {e}")),
+//         }
+//     }
+
+    /// New theme: the colours shown, as `themes/<name>.css` (`my-theme`,
+    /// `my-theme-2`, …; `theme::new_theme_name`), written only where nothing
+    /// is, then chosen, so that it can be edited and reloaded.
+    fn new_theme(&mut self) {
+        let eng = Rc::clone(&self.eng);
+        let profile = &eng.profile;
+        if let Some(why) = profile.read_only_reason() {
+            self.flash(Tone::Err, format!("Could not create the theme: {why}"));
+            return;
+        }
+        let (fs, dirs) = (profile.fs(), profile.theme_dirs());
+        let mut taken = theme::list_themes(fs, &dirs);
+        for _ in 0..NEW_THEME_TRIES {
+            let name = theme::new_theme_name(&taken);
+            let path = dirs.user.join(format!("{name}.css"));
+            let css = theme::new_theme_css(&name, &self.resolved.colours);
+            let made = gaze_fs::create_dir_durably(fs, &dirs.user)
+                .and_then(|_| gaze_fs::write_new(fs, &path, css.as_bytes(), Perm::Private));
+            match made {
+                Ok(()) => {
+                    self.themes = Some(theme::list_themes(fs, &dirs));
+                    self.flash(Tone::Ok, format!("Theme created at {}", path.display()));
+                    // A setting that cannot be saved says so instead
+                    // (`choose_theme`).
+                    self.choose_theme(ThemeChoice::Named(name));
+                    return;
+                }
+                // Something the list does not show has that name: the next
+                // name is tried.
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => taken.push(ThemeFile {
+                    name,
+                    path,
+                    packaged: false,
+                    colours: Err(String::new()),
+                }),
+                Err(e) => {
+                    self.flash(Tone::Err, format!("Could not create the theme: {e}"));
+                    return;
                 }
             }
         }
-        let chosen = match choice {
-            "next" => match self.ui.theme.as_str() {
-                "dark" => "light",
-                "light" if has_custom => "custom",
-                _ => "dark",
-            },
-            other => other,
-        };
-        match (chosen, theme::custom_palette(&self.eng.dir)) {
-            ("dark" | "light", _) | ("custom", Ok(_)) => {
-                self.ui.theme = chosen.into();
-                self.apply_theme();
+        self.flash(Tone::Err, "Could not create the theme: every name tried is taken");
+    }
+
+    /// Reload: the theme files, and the chosen theme, read again after
+    /// editing.
+    fn reload_themes(&mut self) {
+        let eng = Rc::clone(&self.eng);
+        let profile = &eng.profile;
+        self.themes = Some(theme::list_themes(profile.fs(), &profile.theme_dirs()));
+        self.apply_theme();
+        match (profile.theme(), self.resolved.problem.clone()) {
+            (ThemeChoice::Named(name), Some(why)) => {
+                self.flash(Tone::Warn, format!("“{name}” cannot be used: {why}"))
             }
-            ("custom", Err(_)) => self.flash(
-                Tone::Warn,
-                "The custom palette is missing or invalid; see Appearance",
-            ),
-            _ => {}
+            _ => self.flash(Tone::Ok, "Themes reloaded"),
         }
     }
 
@@ -3215,10 +4065,19 @@ impl ChromeDocument {
             "clear-ask" => self.history_confirm = true,
             "clear-cancel" => self.history_confirm = false,
             "clear" => {
-                self.ui.visits.clear();
+                self.history.visits.clear();
                 self.history_confirm = false;
-                self.state_dirty = true;
-                self.flash(Tone::Ok, "History cleared");
+                self.history_changed(true);
+                // "Clear history" means all of it: the copies start-up kept
+                // of damaged history files go too.
+                let cleared = match self.eng.profile.read_only_reason() {
+                    Some(why) => Err(format!("in this window only: {why}")),
+                    None => self.eng.profile.forget_history_backups().map(drop),
+                };
+                match cleared {
+                    Ok(()) => self.flash(Tone::Ok, "History cleared"),
+                    Err(e) => self.flash(Tone::Warn, format!("History cleared {e}")),
+                }
             }
             "more" => self.history_limit += HISTORY_PAGE,
             // Opening and removing visits by index were replaced by the
@@ -3338,17 +4197,18 @@ impl ChromeDocument {
             },
             "export" => {
                 let r = Address::parse(arg).and_then(|a| {
-                    let body = wallets.export(&a)?;
-                    let dir = self.eng.dir.join("exports");
-                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                    let p = dir.join(format!("{a}.json"));
-                    std::fs::write(&p, body).map_err(|e| e.to_string())?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let _ =
-                            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+                    let profile = &self.eng.profile;
+                    if let Some(why) = profile.read_only_reason() {
+                        return Err(format!("the wallet file is not written: {why}"));
                     }
+                    let body = wallets.export(&a)?;
+                    // Was `<profile>/exports/`, in the single profile folder.
+                    let dir = profile.layout.exports_dir();
+                    gaze_fs::create_dir_durably(profile.fs(), &dir).map_err(|e| e.to_string())?;
+                    let p = dir.join(format!("{a}.json"));
+                    // A wallet file is a private key: owner-only from the start.
+                    gaze_fs::write_atomic(profile.fs(), &p, body.as_bytes(), Perm::Private)
+                        .map_err(|e| e.to_string())?;
                     Ok(p)
                 });
                 match r {
@@ -3489,7 +4349,7 @@ impl ChromeDocument {
             if search_score(&query, title, &tab.url).is_none() && page_matches == 0 {
                 continue;
             }
-            let depth = match (self.ui.tree_tabs, query.is_empty()) {
+            let depth = match (self.session.tree_tabs, query.is_empty()) {
                 (true, true) => self.tree_depth(tab.id),
                 _ => 0,
             };
@@ -3531,7 +4391,7 @@ impl ChromeDocument {
     fn render_history_panel(&mut self) -> PanelView {
         history_panel_html(
             &mut self.fitter,
-            &self.ui.visits,
+            &self.history.visits,
             &self.side_query,
             display::unix_now(),
             self.history_limit,
@@ -3637,27 +4497,58 @@ impl ChromeDocument {
         permissions_html(&mut self.fitter, &view)
     }
 
+    // Disabled in step 10 (ledger S12, part 3): it lit Dark, Light or Custom
+    // and showed the status of `themes/custom.css`.
+//     fn render_appearance_panel(&mut self) -> PanelView {
+//         // Was the old folder's `palette.css`, read and laid over the chosen
+//         // scheme here as well (ledger L14).
+//         let profile = &self.eng.profile;
+//         let dirs = profile.theme_dirs();
+//         let path = dirs.user.join(format!("{CUSTOM_THEME}.css"));
+//         let status = match theme::find_theme(profile.fs(), &dirs, CUSTOM_THEME) {
+//             None => PaletteStatus::Missing,
+//             Some(ThemeFile { colours: Ok(_), .. }) => PaletteStatus::Valid,
+//             Some(ThemeFile { colours: Err(why), .. }) => PaletteStatus::Invalid(why),
+//         };
+//         // The segment lit: Dark, Light or Custom; none for System or another
+//         // theme file.
+//         let choice = profile.theme();
+//         let lit = match &choice {
+//             ThemeChoice::BuiltIn(Scheme::Dark) => "dark",
+//             ThemeChoice::BuiltIn(Scheme::Light) => "light",
+//             ThemeChoice::Named(name) if name == CUSTOM_THEME => "custom",
+//             other => other.as_str(),
+//         };
+//         appearance_html(
+//             &mut self.fitter,
+//             lit,
+//             &self.resolved.colours,
+//             &path.display().to_string(),
+//             &status,
+//         )
+//     }
+
     fn render_appearance_panel(&mut self) -> PanelView {
-        let custom = theme::custom_palette(&self.eng.dir);
-        let path = self.eng.dir.join("palette.css");
-        let status = match &custom {
-            Ok(_) => PaletteStatus::Valid,
-            Err(_) if !path.exists() => PaletteStatus::Missing,
-            Err(e) => PaletteStatus::Invalid(e.clone()),
+        let eng = Rc::clone(&self.eng);
+        let profile = &eng.profile;
+        let dirs = profile.theme_dirs();
+        let themes = self.themes.get_or_insert_with(|| theme::list_themes(profile.fs(), &dirs));
+        let (choice, known, folder) = (profile.theme(), self.system.known(), dirs.user.display().to_string());
+        let view = AppearanceView {
+            choice: &choice,
+            system: &known,
+            colours: &self.resolved.colours,
+            shown: self.resolved.scheme,
+            problem: self.resolved.problem.as_deref(),
+            themes,
+            folder: &folder,
         };
-        let colors = theme::palette(&self.ui.theme, custom.as_ref().ok());
-        appearance_html(
-            &mut self.fitter,
-            &self.ui.theme,
-            &colors,
-            &path.display().to_string(),
-            &status,
-        )
+        appearance_html(&mut self.fitter, &view)
     }
 
     /// The wallet section: dynamic parts and the state of the static form.
     fn render_wallet(&mut self) -> bool {
-        if self.panel != "wallet" || !self.ui.sidebar_open {
+        if self.panel != "wallet" || !self.session.sidebar_open {
             return false;
         }
         let (balances, notice, confirm) = match self.wallet.lock() {
@@ -3737,7 +4628,7 @@ impl ChromeDocument {
     }
 
     fn scan_sidebar_pages(&mut self, page_changed: bool) {
-        if !self.ui.sidebar_open
+        if !self.session.sidebar_open
             || self.panel != "tabs"
             || !self.side_pages
             || self.side_query.trim().is_empty()
@@ -3798,7 +4689,7 @@ impl ChromeDocument {
     }
 
     fn render_visibility(&mut self) -> bool {
-        let sidebar = self.ui.sidebar_open;
+        let sidebar = self.session.sidebar_open;
         let wallet = sidebar && self.panel == "wallet";
         let mut changed = false;
         if self.show_region("sidebar", sidebar) {
@@ -3837,7 +4728,7 @@ impl ChromeDocument {
     fn render_toolbar_state(&mut self) -> bool {
         let mut changed = false;
         for (panel, rail_id, _) in PANELS {
-            let on = self.ui.sidebar_open && self.panel == panel;
+            let on = self.session.sidebar_open && self.panel == panel;
             changed |= self.sync_attr(
                 rail_id,
                 "class",
@@ -3847,7 +4738,7 @@ impl ChromeDocument {
         changed |= self.sync_attr(
             "sidetoggle",
             "class",
-            Some(if self.ui.sidebar_open {
+            Some(if self.session.sidebar_open {
                 "icon-btn on"
             } else {
                 "icon-btn"
@@ -3973,7 +4864,7 @@ impl ChromeDocument {
     }
 
     fn render_sidebar(&mut self) -> bool {
-        if !self.ui.sidebar_open {
+        if !self.session.sidebar_open {
             return false;
         }
         let panel = self.panel.clone();
@@ -4009,12 +4900,12 @@ impl ChromeDocument {
         changed |= self.sync_attr(
             "chip-tree",
             "class",
-            Some(if self.ui.tree_tabs { "chip on" } else { "chip" }),
+            Some(if self.session.tree_tabs { "chip on" } else { "chip" }),
         );
         changed |= self.sync_attr(
             "chip-tree",
             "aria-pressed",
-            Some(if self.ui.tree_tabs { "true" } else { "false" }),
+            Some(if self.session.tree_tabs { "true" } else { "false" }),
         );
         changed |= self.sync_attr(
             "chip-pages",
@@ -4113,6 +5004,41 @@ impl ChromeDocument {
         if self.find_rescan {
             self.pacer.at(now + FIND_RESCAN_DELAY);
         }
+        if let Some(due) = self.history_due {
+            self.pacer.at(due);
+        }
+    }
+}
+
+/// A scheme as Blitz's viewport names it.
+fn color_scheme_of(scheme: Scheme) -> ColorScheme {
+    match scheme {
+        Scheme::Dark => ColorScheme::Dark,
+        Scheme::Light => ColorScheme::Light,
+    }
+}
+
+/// How to leave full screen, on `platform`.
+fn full_screen_hint(platform: KeyPlatform) -> &'static str {
+    match platform {
+        KeyPlatform::Other => "Press F11 to leave full screen",
+        KeyPlatform::MacOs => "Press Ctrl+Cmd+F to leave full screen",
+    }
+}
+
+/// The preference the theme is resolved with: none until the system has
+/// answered, which means dark (`theme::resolve`).
+fn preference_of(known: &Known) -> Option<Scheme> {
+    match known {
+        Known::Answered(preference) => *preference,
+        Known::Unknown(_) => None,
+    }
+}
+
+impl Drop for ChromeDocument {
+    /// The window is closing: what is still to be saved is saved.
+    fn drop(&mut self) {
+        self.flush_state();
     }
 }
 
@@ -4125,8 +5051,25 @@ impl ChromeDocument {
             && !k.is_composing
         {
             let tab_ids: Vec<u64> = self.tabs.iter().map(|(t, _)| t.id).collect();
-            if let Some(action) = global_shortcut(&k.key, k.modifiers, &tab_ids, self.active) {
-                self.act(action);
+            // Was the browser's shortcuts alone (storage ledger S13, part 2):
+            // the full-screen chord comes first, since on macOS it holds Cmd+F.
+            // if let Some(action) =
+            //     global_shortcut(&k.key, k.modifiers, &tab_ids, self.active, KeyPlatform::CURRENT)
+            // {
+            //     self.act(action);
+            //     return;
+            // }
+            if let Some(action) = browser_shortcut(
+                &k.key,
+                k.modifiers,
+                k.is_auto_repeating,
+                &tab_ids,
+                self.active,
+                KeyPlatform::CURRENT,
+            ) {
+                if let Some(action) = action {
+                    self.act(action);
+                }
                 return;
             }
             let focus = self.key_focus();
@@ -4294,8 +5237,10 @@ impl Document for ChromeDocument {
             if let Some(doc) = self.tabs[i].0.pump() {
                 if !matches!(self.tabs[i].0.stage, Stage::Failed(_)) {
                     let tab = &self.tabs[i].0;
-                    self.ui.visit(&tab.url, &tab.title);
-                    self.state_dirty = true;
+                    self.history.visit(&tab.url, &tab.title);
+                    // The tab's address changed too.
+                    self.session_dirty = true;
+                    self.history_changed(false);
                 }
                 let view = self.tabs[i].1;
                 self.inner.remove_sub_document(view);
@@ -4303,12 +5248,13 @@ impl Document for ChromeDocument {
                 // L8: a page that loads under a resting pointer learns where
                 // the pointer is.
                 self.cursor.page_attached(&mut self.inner, view);
+                // The page takes the scheme shown at the chrome's next layout,
+                // which copies it into every page's viewport (ledger L13).
                 let themed = Self::themed_as_builtin(&self.tabs[i].0);
                 if let Some(r) = rho_mut(&mut self.inner, view) {
                     r.set_foreground(i == self.active);
                     if themed {
-                        let custom = theme::custom_palette(&self.eng.dir).ok();
-                        r.set_host_theme(&theme::builtin_css(&self.ui.theme, custom.as_ref()));
+                        r.set_host_theme(&self.host_css);
                     }
                 }
                 if i == self.active {
@@ -4350,15 +5296,21 @@ impl Document for ChromeDocument {
                 if i == self.active {
                     self.url_dirty = true;
                 }
-                self.state_dirty = true;
+                self.session_dirty = true;
             }
         }
         self.scan_sidebar_pages(changed);
+        // A new answer from the system, and notices still to show.
+        changed |= self.follow_system();
+        let now = Instant::now();
+        self.take_notices();
+        changed |= self.show_next_notice(now);
         changed |= self.render();
         // L8: hover changes reported during layout (Blitz's refresh_hover),
         // pages loaded under the pointer, and pages' redraw requests.
         changed |= self.settle_pointer();
-        self.save_workspace();
+        // Was `save_workspace()`.
+        self.save_state(now);
         self.schedule_wakes();
         changed
     }
@@ -4366,6 +5318,27 @@ impl Document for ChromeDocument {
 
 /// Open the browser window and run until it closes.
 pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
+    // The system's preference is asked for first, so the portal's answer
+    // (Linux) comes while the window is being made; start-up waits for it at
+    // most `STARTUP_WAIT`. macOS and Windows report it through the window.
+    let wake = WakeHandle::default();
+    let window_reports = cfg!(any(target_os = "macos", windows));
+    let override_value = std::env::var(OVERRIDE_VAR).ok();
+    let source = match Source::choose(override_value.as_deref(), window_reports) {
+        Ok(source) => source,
+        Err(why) => {
+            eng.profile.report.push(Event::new(
+                EventKind::Other,
+                Severity::Warning,
+                std::path::PathBuf::new(),
+                format!("{why}; the system's preference is read as usual"),
+            ));
+            Source::choose(None, window_reports).expect("without an override every platform has a source")
+        }
+    };
+    let waker = wake.clone();
+    let system = SystemScheme::start(&source, Some(Arc::new(move || waker.wake())), Instant::now());
+    system.wait(STARTUP_WAIT);
     // Built here rather than by `create_default_event_loop`, which panics
     // when there is no display; the user gets a message instead.
     let event_loop = EventLoop::builder().build().map_err(|e| {
@@ -4373,16 +5346,31 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
     })?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let (proxy, rx) = BlitzShellProxy::new(event_loop.create_proxy());
-    let mut app = BlitzApplication::new(proxy, rx);
-    let chrome = ChromeDocument::new(eng, url);
-    app.add_window(WindowConfig::new(
-        Box::new(chrome),
+    let app = BlitzApplication::new(proxy, rx);
+    // `window.json` as start-up left it, and how to write it: the chrome,
+    // which holds the profile, goes with the window when it closes.
+    let saved: WindowState = eng.profile.read_state();
+    let keeps = Rc::clone(&eng);
+    let chrome = ChromeDocument::with_system_scheme(eng, url, system, source, wake);
+    // Disabled in step 11 (storage ledger S13, part 2): the window was made
+    // with default attributes before the monitors could be listed. It is made
+    // once the event loop can list them, where it was left
+    // (`ChromeApplication::create_window`).
+    // app.add_window(WindowConfig::new(
+    //     Box::new(chrome),
+    //     // Resizes are coalesced into the next frame (ledger L9).
+    //     CoalescingRenderer::new(VelloWindowRenderer::new()),
+    // ));
+    let window = PendingWindow {
+        chrome,
         // Resizes are coalesced into the next frame (ledger L9).
-        CoalescingRenderer::new(VelloWindowRenderer::new()),
-    ));
+        renderer: CoalescingRenderer::new(VelloWindowRenderer::new()),
+        saved,
+        save: Box::new(move |state: &WindowState| keeps.profile.write_state(state)),
+    };
     // A resize is painted once, with the chrome already fitted to it (L9, H7).
     event_loop
-        .run_app(ChromeApplication::new(app))
+        .run_app(ChromeApplication::new(app, window))
         .map_err(|e| e.to_string())
 }
 

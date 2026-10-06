@@ -2,6 +2,7 @@
 
 use crate::deploy::{DeployData, SignedDeploy, public_key, sign};
 use crate::expr::to_norm;
+use crate::fresh::FreshnessLog;
 use crate::keys::fresh_key;
 use crate::node::Node;
 use crate::site::{SiteAddr, SiteManifest};
@@ -17,7 +18,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShardConfig {
     /// Read-only observers, run by distinct operators for the quorum rung.
     pub observers: Vec<String>,
@@ -168,9 +169,39 @@ pub struct Bridge {
     /// Who pays: the key that signs every deploy, and its account.
     pub payer: Arc<dyn Payer>,
     pub blobs: Arc<Blobs>,
-    /// Highest finalized block at which each binding was seen (freshness).
+    /// Highest finalized block at which each binding was seen (freshness),
+    /// kept across restarts by `freshness`.
     seen: Mutex<BTreeMap<String, i64>>,
+    freshness: Arc<dyn FreshnessLog>,
+    /// A failure to save the freshness records that the shell has not shown
+    /// yet. The records stay enforced in memory meanwhile.
+    freshness_error: Mutex<SaveFailure>,
     pub events: Option<Arc<EventHub>>,
+}
+
+/// Failures to save the freshness records, each reported once. A session
+/// that cannot write the profile fails every save the same way, and that is
+/// news only the first time: the same failure again is reported only after
+/// a save has succeeded in between.
+#[derive(Default)]
+struct SaveFailure {
+    /// The failure the shell has not taken yet.
+    unshown: Option<String>,
+    /// The last save's failure, if it failed.
+    last: Option<String>,
+}
+
+impl SaveFailure {
+    fn after(&mut self, saved: Result<(), String>) {
+        match saved {
+            Ok(()) => self.last = None,
+            Err(e) if self.last.as_ref() == Some(&e) => {}
+            Err(e) => {
+                self.unshown = Some(e.clone());
+                self.last = Some(e);
+            }
+        }
+    }
 }
 
 impl Bridge {
@@ -180,6 +211,7 @@ impl Bridge {
         pool: Pool,
         payer: Arc<dyn Payer>,
         blobs: Arc<Blobs>,
+        freshness: Arc<dyn FreshnessLog>,
     ) -> Arc<Bridge> {
         let events = cfg
             .observers
@@ -191,9 +223,17 @@ impl Bridge {
             pool,
             payer,
             blobs,
-            seen: Mutex::new(BTreeMap::new()),
+            seen: Mutex::new(freshness.load()),
+            freshness,
+            freshness_error: Mutex::new(SaveFailure::default()),
             events,
         })
+    }
+
+    /// The last failure to save the freshness records, once; the same
+    /// failure repeated is not handed out again (see `SaveFailure`).
+    pub fn take_freshness_error(&self) -> Option<String> {
+        self.freshness_error.lock().ok()?.unshown.take()
     }
 
     fn observers(&self) -> Vec<Node> {
@@ -249,15 +289,33 @@ impl Bridge {
         }
     }
 
+    /// Refuses an answer read at a block older than one already seen for
+    /// `binding`. A newer block is recorded, and saved while the lock is
+    /// held, so the saved records only ever rise.
     fn check_fresh(&self, binding: &str, num: i64) -> Result<(), String> {
         let mut seen = self.seen.lock().map_err(|_| "poisoned")?;
-        let e = seen.entry(binding.to_string()).or_insert(num);
-        if num < *e {
-            return Err(format!(
-                "stale answer: block {num} is older than {e}, already seen for {binding}"
-            ));
+        match seen.get(binding).copied() {
+            Some(highest) if num < highest => {
+                return Err(format!(
+                    "stale answer: block {num} is older than {highest}, already seen for {binding}"
+                ));
+            }
+            Some(highest) if num == highest => return Ok(()),
+            _ => {}
         }
-        *e = num;
+        seen.insert(binding.to_string(), num);
+        let saved = self.freshness.record(&seen);
+        // Was: every failure replaced the one not yet shown, so a session
+        // that cannot write the profile reported the same failure after
+        // every new block.
+        // if let Err(e) = self.freshness.record(&seen)
+        //     && let Ok(mut slot) = self.freshness_error.lock()
+        // {
+        //     *slot = Some(e);
+        // }
+        if let Ok(mut failure) = self.freshness_error.lock() {
+            failure.after(saved);
+        }
         Ok(())
     }
 

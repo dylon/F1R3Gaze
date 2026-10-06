@@ -1,0 +1,20 @@
+[
+ {"id": "M3a", "what": "relative XDG values accepted", "file": "crates/gaze-shell/src/profile/layout.rs", "package": "gaze-shell",
+  "old": "        Platform::Xdg | Platform::MacOs => text.starts_with('/'),", "new": "        Platform::Xdg | Platform::MacOs => !text.is_empty(),",
+  "test": "every_xdg_environment_maps_by_the_specification"},
+ {"id": "M3b", "what": "empty XDG values taken as set (the root becomes the vendor folder itself)", "file": "crates/gaze-shell/src/profile/layout.rs", "package": "gaze-shell",
+  "old": "        Platform::Xdg | Platform::MacOs => text.starts_with('/'),", "new": "        Platform::Xdg | Platform::MacOs => text.is_empty() || text.starts_with('/'),",
+  "test": "every_xdg_environment_maps_by_the_specification"},
+ {"id": "M3c", "what": "--profile not made absolute", "file": "crates/gaze-shell/src/profile/layout.rs", "package": "gaze-shell",
+  "old": "        Some(root) => std::path::absolute(&root)", "new": "        Some(root) => Ok::<PathBuf, std::io::Error>(root.clone())",
+  "test": "a_profile_argument_is_a_portable_root_made_absolute"},
+ {"id": "M3d", "what": "Windows config under the local application data", "file": "crates/gaze-shell/src/profile/layout.rs", "package": "gaze-shell",
+  "old": "        config: roaming.join(VENDOR).join(APP),", "new": "        config: ours.join(\"config\"),",
+  "test": "windows_prefers_known_folders_then_the_environment"},
+ {"id": "M3e", "what": "macOS following XDG variables", "file": "crates/gaze-shell/src/profile/layout.rs", "package": "gaze-shell",
+  "old": "        Platform::MacOs => macos_layout(machine),", "new": "        Platform::MacOs => xdg_layout(machine),",
+  "test": "macos_uses_the_bundle_id_its_caches_and_tmpdir"},
+ {"id": "M3f", "what": "XDG lists keep relative entries", "file": "crates/gaze-shell/src/profile/layout.rs", "package": "gaze-shell",
+  "old": "                    .filter(|entry| is_absolute_on(Platform::Xdg, entry))", "new": "                    .filter(|entry| !entry.is_empty())",
+  "test": "xdg_lists_keep_their_order_and_drop_bad_entries"}
+]

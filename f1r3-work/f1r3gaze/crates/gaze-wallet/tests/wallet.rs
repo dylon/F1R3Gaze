@@ -100,8 +100,7 @@ fn the_wallet_signs_only_the_transfer_it_was_asked_for() {
 
 #[test]
 fn wallets_are_kept_listed_exported_and_pay() {
-    let dir = std::env::temp_dir().join(format!("gaze-wallets-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = gaze_fs::scratch_dir("gaze-wallets").join("wallet");
     let ks: Arc<MemKeystore> = Arc::default();
     let w = Wallets::open(&dir, ks.clone(), None);
     assert!(w.payer().unwrap_err().contains("no wallet"));
@@ -122,7 +121,66 @@ fn wallets_are_kept_listed_exported_and_pay() {
     w2.remove(&b).unwrap();
     assert_eq!(w2.active(), Some(a.clone()));
     assert!(w2.key(&b).is_err());
-    let _ = std::fs::remove_dir_all(dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for file in [gaze_wallet::LIST_FILE, gaze_wallet::ACTIVE_FILE] {
+            let mode = std::fs::metadata(dir.join(file)).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{file}");
+        }
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+}
+
+/// A list that exists but cannot be read is never overwritten, and a
+/// refused change leaves no key in the keystore.
+#[test]
+// The fixture's folders are scratch: nothing in them must survive a power
+// cut.
+#[allow(clippy::disallowed_methods)]
+fn an_unreadable_wallet_list_is_never_overwritten() {
+    let dir = gaze_fs::scratch_dir("gaze-wallets-blocked").join("wallet");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir(dir.join(gaze_wallet::LIST_FILE)).unwrap();
+    let ks: Arc<MemKeystore> = Arc::default();
+    let w = Wallets::open(&dir, ks.clone(), None);
+    assert!(w.blocked().is_some());
+    assert!(w.import(VECTORS[1].2, "refused").unwrap_err().contains("cannot be changed"));
+    assert!(w.list().is_empty());
+    let name = format!("wallet:{}", VECTORS[1].1);
+    assert!(
+        gaze_shard::Keystore::load(ks.as_ref(), &name).unwrap().is_none(),
+        "no key was stored for the refused wallet"
+    );
+    assert!(dir.join(gaze_wallet::LIST_FILE).is_dir(), "left as it was");
+}
+
+#[test]
+fn a_read_only_session_changes_nothing() {
+    let dir = gaze_fs::scratch_dir("gaze-wallets-read-only").join("wallet");
+    let ks: Arc<MemKeystore> = Arc::default();
+    let a = Wallets::open(&dir, ks.clone(), None).create("first").unwrap();
+    let before = std::fs::read(dir.join(gaze_wallet::LIST_FILE)).unwrap();
+    let w = Wallets::open(&dir, ks.clone(), None).read_only("another F1R3Gaze holds the profile");
+    assert_eq!(w.list().len(), 1, "reading still works");
+    assert!(w.create("second").unwrap_err().contains("another F1R3Gaze"));
+    assert!(w.remove(&a).is_err());
+    assert!(w.set_active(&a).is_err());
+    assert_eq!(std::fs::read(dir.join(gaze_wallet::LIST_FILE)).unwrap(), before);
+    assert!(w.key(&a).is_ok(), "the key is still there");
+}
+
+#[test]
+fn damaged_wallet_lines_are_found() {
+    let good = VECTORS[1].1;
+    let list = format!("{good}\tsavings\nnot-an-address\tx\n\n{good}\n");
+    let check = gaze_wallet::check_list(list.as_bytes());
+    assert_eq!(check.dropped.iter().map(|(n, _)| *n).collect::<Vec<_>>(), [2]);
+    assert!(gaze_wallet::check_active(good.as_bytes()).is_ok());
+    assert!(gaze_wallet::check_active(format!("{good}\n").as_bytes()).is_ok());
+    assert!(gaze_wallet::check_active(b"garbage").is_err());
+    assert!(gaze_wallet::check_active(b"\xff").is_err());
 }
 
 // --- a mock Embers ---------------------------------------------------------
@@ -196,7 +254,7 @@ fn embers(evil: bool) -> Mock {
 fn transfers_through_an_honest_embers() {
     let m = embers(false);
     let w = Wallets::open(
-        std::env::temp_dir().join(format!("gaze-w-honest-{}", std::process::id())),
+        gaze_fs::scratch_dir("gaze-w-honest").join("wallet"),
         Arc::new(MemKeystore::default()),
         Some(Embers::new(&m.base, Http::new(), Limits::default())),
     );
@@ -216,7 +274,7 @@ fn transfers_through_an_honest_embers() {
 fn a_dishonest_embers_gets_nothing_signed() {
     let m = embers(true);
     let w = Wallets::open(
-        std::env::temp_dir().join(format!("gaze-w-evil-{}", std::process::id())),
+        gaze_fs::scratch_dir("gaze-w-evil").join("wallet"),
         Arc::new(MemKeystore::default()),
         Some(Embers::new(&m.base, Http::new(), Limits::default())),
     );

@@ -213,7 +213,7 @@ impl FrameLog {
     }
 
     fn frame(&mut self, render: Duration, size: Option<(u32, u32)>, coalesce: bool) {
-        use crate::frame_stats::{CHROME_REDRAW, CURSOR_SET, EVENT, PAGE_REDRAW, POLL, RENDER};
+        use crate::frame_stats::{CHROME_REDRAW, CURSOR_SET, EVENT, PAGE_REDRAW, POLL, RENDER, WINDOW_SAVE};
         use std::io::Write as _;
         let now = Instant::now();
         let ms = |d: Duration| d.as_secs_f64() * 1e3;
@@ -226,18 +226,22 @@ impl FrameLog {
         let (page_redraws, _) = PAGE_REDRAW.take();
         let (chrome_redraws, _) = CHROME_REDRAW.take();
         let (cursor_sets, _) = CURSOR_SET.take();
+        let (window_saves, window_save_ms) = WINDOW_SAVE.take();
         // Wall-clock milliseconds, to line frames up with logs taken outside
-        // the process (the GPU's clocks, for one: ledger L9, H10).
-        let epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|since| since.as_millis())
-            .unwrap_or(0);
+        // the process (the GPU's clocks, for one: ledger L9, H10). Was
+        // computed here; frame_stats::wall_clock_ms now also times the
+        // window's readings (storage ledger S13, part 2).
+        // let epoch = std::time::SystemTime::now()
+        //     .duration_since(std::time::UNIX_EPOCH)
+        //     .map(|since| since.as_millis())
+        //     .unwrap_or(0);
+        let epoch = crate::frame_stats::wall_clock_ms();
         let line = format!(
             "frame n={} t={:.1} interval={interval:.2} size={width}x{height} resizes={} reconfigures={} \
              reconfigure={:.2} render={:.2} latency={latency:.2} polls={polls} poll={poll_ms:.2} \
              chrome_renders={renders} chrome_render={render_ms:.2} events={events} event={event_ms:.2} \
              page_redraws={page_redraws} chrome_redraws={chrome_redraws} cursor_sets={cursor_sets} \
-             epoch={epoch} coalesce={}",
+             window_saves={window_saves} window_save={window_save_ms:.2} epoch={epoch} coalesce={}",
             self.frame,
             ms(now - self.started),
             self.resizes,

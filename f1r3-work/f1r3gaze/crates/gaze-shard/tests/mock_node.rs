@@ -72,8 +72,16 @@ fn manifest() -> Value {
 }
 
 fn bridge(observers: Vec<String>, validator: String, dir: &str) -> Arc<Bridge> {
-    let d = std::env::temp_dir().join(format!("gaze-shard-{dir}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    bridge_with(observers, validator, dir, Arc::new(MemFreshness::default()))
+}
+
+fn bridge_with(
+    observers: Vec<String>,
+    validator: String,
+    dir: &str,
+    freshness: Arc<dyn FreshnessLog>,
+) -> Arc<Bridge> {
+    let d = gaze_fs::scratch_dir(&format!("gaze-shard-{dir}"));
     let blobs = Arc::new(Blobs::new(ContentCache::new(d.join("blobs"), 1 << 20), Http::new()));
     Bridge::new(
         ShardConfig {
@@ -89,6 +97,7 @@ fn bridge(observers: Vec<String>, validator: String, dir: &str) -> Arc<Bridge> {
             address: "1111test".into(),
         }),
         blobs,
+        freshness,
     )
 }
 
@@ -110,10 +119,8 @@ fn quorum_disagreement_and_freshness() {
 
 }
 
-#[test]
-fn freshness_rejects_rollback_on_one_bridge() {
-    // One bridge whose observers roll back from block 12 to block 5.
-    let num = Arc::new(Mutex::new(12i64));
+/// A node that serves the site manifest at whatever block `num` holds.
+fn node_at(num: Arc<Mutex<i64>>) -> String {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", l.local_addr().unwrap());
     let n2 = Arc::clone(&num);
@@ -140,11 +147,109 @@ fn freshness_rejects_rollback_on_one_bridge() {
             let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{b}", b.len());
         }
     });
+    base
+}
+
+#[test]
+fn freshness_rejects_rollback_on_one_bridge() {
+    // One bridge whose observers roll back from block 12 to block 5.
+    let num = Arc::new(Mutex::new(12i64));
+    let base = node_at(Arc::clone(&num));
     let br = bridge(vec![base.clone()], base, "rollback");
     let addr = SiteAddr::parse("f1r3://abcd/todo/").unwrap();
     assert_eq!(br.resolve_site(&addr).unwrap().0, Rung::Node);
     *num.lock().unwrap() = 5;
     assert!(br.resolve_site(&addr).unwrap_err().contains("stale"));
+}
+
+/// The records outlive the bridge: a second bridge on the same file, as
+/// after a restart, still refuses the rolled-back block.
+#[test]
+fn freshness_survives_a_restart() {
+    let num = Arc::new(Mutex::new(12i64));
+    let base = node_at(Arc::clone(&num));
+    let records = gaze_fs::scratch_dir("gaze-shard-restart").join("trust/freshness.tsv");
+    let addr = SiteAddr::parse("f1r3://abcd/todo/").unwrap();
+    let first = bridge_with(vec![base.clone()], base.clone(), "restart-a", Arc::new(FileFreshness::open(&records, "root")));
+    assert_eq!(first.resolve_site(&addr).unwrap().0, Rung::Node);
+    assert_eq!(first.take_freshness_error(), None, "the record was saved");
+    drop(first);
+    *num.lock().unwrap() = 5;
+    let second = bridge_with(vec![base.clone()], base, "restart-b", Arc::new(FileFreshness::open(&records, "root")));
+    assert!(second.resolve_site(&addr).unwrap_err().contains("stale"));
+}
+
+/// Counts the saves it is asked for, and fails them while told to.
+struct CountingLog {
+    saves: std::sync::atomic::AtomicUsize,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl FreshnessLog for CountingLog {
+    fn load(&self) -> std::collections::BTreeMap<String, i64> {
+        Default::default()
+    }
+    fn record(&self, _all: &std::collections::BTreeMap<String, i64>) -> Result<(), String> {
+        self.saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        match self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            true => Err("disk full".into()),
+            false => Ok(()),
+        }
+    }
+}
+
+#[test]
+fn freshness_is_saved_only_when_a_block_rises() {
+    let num = Arc::new(Mutex::new(12i64));
+    let base = node_at(Arc::clone(&num));
+    let log = Arc::new(CountingLog { saves: Default::default(), fail: std::sync::atomic::AtomicBool::new(false) });
+    let br = bridge_with(vec![base.clone()], base, "rises", Arc::clone(&log) as Arc<dyn FreshnessLog>);
+    let addr = SiteAddr::parse("f1r3://abcd/todo/").unwrap();
+    br.resolve_site(&addr).unwrap();
+    br.resolve_site(&addr).unwrap();
+    assert_eq!(log.saves.load(std::sync::atomic::Ordering::SeqCst), 1, "the same block is not saved again");
+    *num.lock().unwrap() = 13;
+    br.resolve_site(&addr).unwrap();
+    assert_eq!(log.saves.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[test]
+fn a_failed_save_is_reported_and_freshness_still_holds() {
+    let num = Arc::new(Mutex::new(12i64));
+    let base = node_at(Arc::clone(&num));
+    let log = Arc::new(CountingLog { saves: Default::default(), fail: std::sync::atomic::AtomicBool::new(true) });
+    let br = bridge_with(vec![base.clone()], base, "failing", log);
+    let addr = SiteAddr::parse("f1r3://abcd/todo/").unwrap();
+    assert_eq!(br.resolve_site(&addr).unwrap().0, Rung::Node, "a failed save does not fail the answer");
+    assert_eq!(br.take_freshness_error().as_deref(), Some("disk full"));
+    assert_eq!(br.take_freshness_error(), None, "reported once");
+    *num.lock().unwrap() = 5;
+    assert!(br.resolve_site(&addr).unwrap_err().contains("stale"), "still enforced in memory");
+}
+
+/// A session that cannot save the records fails every save the same way: it
+/// is reported once, and again only after a save succeeded in between.
+#[test]
+fn a_repeated_save_failure_is_reported_once() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let num = Arc::new(Mutex::new(12i64));
+    let base = node_at(Arc::clone(&num));
+    let log = Arc::new(CountingLog { saves: Default::default(), fail: std::sync::atomic::AtomicBool::new(true) });
+    let br = bridge_with(vec![base.clone()], base, "repeated", Arc::clone(&log) as Arc<dyn FreshnessLog>);
+    let addr = SiteAddr::parse("f1r3://abcd/todo/").expect("an address");
+    let resolve_at = |block: i64| {
+        *num.lock().expect("the block") = block;
+        br.resolve_site(&addr).expect("resolved");
+        br.take_freshness_error()
+    };
+    assert_eq!(resolve_at(12).as_deref(), Some("disk full"));
+    assert_eq!(resolve_at(13), None, "the same failure is not news");
+    assert_eq!(resolve_at(14), None, "nor the next time");
+    log.fail.store(false, SeqCst);
+    assert_eq!(resolve_at(15), None, "saved");
+    log.fail.store(true, SeqCst);
+    assert_eq!(resolve_at(16).as_deref(), Some("disk full"), "failing again after a save is news");
+    assert_eq!(log.saves.load(SeqCst), 5, "every rise was offered to the log");
 }
 
 #[test]

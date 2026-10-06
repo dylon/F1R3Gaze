@@ -1,0 +1,57 @@
+@startuml managed-file-states
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam ArrowFontSize 11
+title One managed file at start-up (reconcile.rs, "reconcile a file")
+
+state "Read" as Read #DDEBF7 : fs.read(path)
+state "Valid" as Valid #EDEDED : passes its check:\nnever written
+state "Missing" as Missing #EDEDED
+state "Damaged" as Damaged #F8CBAD : fails its check
+state "Backed up" as BackedUp #FCE4D6 : a durable copy in\n<root>/backups/<session>/
+state "Repaired" as Repaired #FCE4D6 : its usable part or its default,\nrenamed over it (write_atomic)
+state "Created" as Created #FCE4D6 : its default, published without\nreplacing anything (write_new)
+state "Absent" as Absent #EDEDED : left to its owner
+state "Left as it is" as Blocked #EDEDED : reported; nothing is saved\nto it this session
+
+[*] --> Read
+Read --> Valid : the check passes
+Read --> Damaged : the check fails
+Read --> Missing : not found
+Read --> Blocked : unreadable, a link to nothing,\nor a newer format
+Missing --> Created : it has a default:\nsettings, examples,\nuser-id, state files
+Missing --> Absent : no default: lists, grants,\nfreshness; the marker is step 4's
+Missing --> Read : write_new finds something\nappeared meanwhile: look once more
+Damaged --> BackedUp : Backups::copy_into:\ncreate, sync the file, sync the folder
+Damaged --> Blocked : the copy fails:\nnever repaired without one
+BackedUp --> Repaired : temporary file, sync,\nrename over, sync the folder
+BackedUp --> Absent : wallet-active only:\nremove, sync the folder
+Valid --> [*]
+Repaired --> [*]
+Created --> [*]
+Absent --> [*]
+Blocked --> [*]
+
+note right of BackedUp #F8CBAD
+  **A crash before the rename:** the file still holds its
+  original, and the next start makes a new copy.
+  **A crash after it:** the file holds its whole repair.
+  So the file is never absent, and its content is never
+  only in a backup (the model's NeverAbsent, RepairInPlace).
+end note
+
+note left of Valid
+  A second start finds every file Valid,
+  Created or Absent: it writes nothing
+  but its busy flag.
+end note
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze reads the file |
+  |<#F8CBAD> | damage, and crashes |
+  |<#FCE4D6> | a durable write |
+  |<#EDEDED> | nothing is written |
+endlegend
+@enduml

@@ -1,0 +1,227 @@
+[
+ {
+  "id": "M6r1",
+  "what": "a damaged file repaired with no copy kept",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "    let backup = match start.backups.copy_into(path, bytes) {\n        Ok(backup) => backup,",
+  "new": "    let backup = match Ok::<PathBuf, io::Error>(path.to_path_buf()) {\n        Ok(backup) => backup,",
+  "test": "every_state_of_every_file_in_each_root"
+ },
+ {
+  "id": "M6r2",
+  "what": "the old repair order: the file moved into the backups, then its repair written",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "    let backup = match start.backups.copy_into(path, bytes) {",
+  "new": "    let backup = match start.backups.move_into(path) {",
+  "test": "a_repaired_file_is_never_absent_at_any_crash"
+ },
+ {
+  "id": "M6r3",
+  "what": "a failed backup ignored, and the file repaired anyway",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "        Err(e) => {\n            let message = format!(\"{} is damaged ({why}) but cannot be backed up ({e}); it is left as it is\", m.name());\n            report.push(Event::new(EventKind::Unrepaired { error: e.to_string() }, Severity::Warning, path, message.clone()));\n            return Outcome::Blocked(message);\n        }",
+  "new": "        Err(_) => path.to_path_buf(),",
+  "test": "a_file_that_cannot_be_backed_up_is_left_alone"
+ },
+ {
+  "id": "M6r4",
+  "what": "a file that cannot be read treated as missing",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "            Err(e) if e.kind() == io::ErrorKind::NotFound => {\n                if let Ok(Kind::Symlink) = fs.kind(&path) {",
+  "new": "            Err(e) => {\n                if let Ok(Kind::Symlink) = fs.kind(&path) {",
+  "test": "every_state_of_every_file_in_each_root"
+ },
+ {
+  "id": "M6r5",
+  "what": "a state file of a newer format treated as damaged",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "fn state_check(read: Result<(), StateError>, name: &str, default: Vec<u8>) -> Check {\n    match read {\n        Ok(()) => Check::Valid,\n        Err(StateError::Newer { version, known }) => Check::Newer { version, known },",
+  "new": "fn state_check(read: Result<(), StateError>, name: &str, default: Vec<u8>) -> Check {\n    match read {\n        Ok(()) => Check::Valid,\n        Err(StateError::Newer { version, known }) => state_check(Err(StateError::Corrupt(format!(\"format {version} of {known}\"))), name, default),",
+  "test": "a_newer_state_file_is_left_alone"
+ },
+ {
+  "id": "M6r6",
+  "what": "a read-only session repairs anyway",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "    let read_only = matches!(start.access, Access::ReadOnly { .. });\n    let blocked = |severity: Severity, kind: EventKind, message: String| {",
+  "new": "    let read_only = false;\n    let blocked = |severity: Severity, kind: EventKind, message: String| {",
+  "test": "a_read_only_run_changes_nothing"
+ },
+ {
+  "id": "M6r7",
+  "what": "the keystore swept (in place of the exports folder)",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "        l.exports_dir(),\n        l.permissions_dir(),",
+  "new": "        l.keys_dir(),\n        l.permissions_dir(),",
+  "test": "the_sweep_removes_only_dead_writers_temps"
+ },
+ {
+  "id": "M6r8",
+  "what": "no wallet listed again from its key when the list is damaged",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "                let recovered = recover_entries(input.keys, &listed);",
+  "new": "                let recovered = match lines.is_clean() {\n                    true => recover_entries(input.keys, &listed),\n                    false => Vec::new(),\n                };",
+  "test": "wallets_are_listed_again_from_their_keys"
+ },
+ {
+  "id": "M6r9",
+  "what": "a recovered wallet made the one that pays",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "    let user_id = match outcomes.get(&Managed::UserId) {",
+  "new": "    if let Some(first) = recovered.first() {\n        let _ = gaze_fs::write_atomic(fs, &l.wallet_dir().join(gaze_wallet::ACTIVE_FILE), format!(\"{first}\\n\").as_bytes(), Perm::Private);\n    }\n    let user_id = match outcomes.get(&Managed::UserId) {",
+  "test": "recovery_never_chooses_a_payer"
+ },
+ {
+  "id": "M6r10",
+  "what": "a damaged key file removed",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "            KeyFile::Corrupt(why) => {\n                let entry = owner(path);",
+  "new": "            KeyFile::Corrupt(why) => {\n                let _ = start.fs.remove_file(path);\n                let entry = owner(path);",
+  "test": "corrupt_keys_are_reported_and_never_touched"
+ },
+ {
+  "id": "M6r11",
+  "what": "lost freshness records reported as a Warning, not an Alert",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "                Severity::Alert,\n                \", so a stale answer for the names they recorded could be accepted once\",",
+  "new": "                Severity::Warning,\n                \", so a stale answer for the names they recorded could be accepted once\",",
+  "test": "every_state_of_every_file_in_each_root"
+ },
+ {
+  "id": "M6r12",
+  "what": "a new user id reported as a Warning, not an Alert",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "                                Severity::Alert,\n                                format!(\"user-id was damaged ({why}); a new id was made, so sites see this profile as a new user\"),",
+  "new": "                                Severity::Warning,\n                                format!(\"user-id was damaged ({why}); a new id was made, so sites see this profile as a new user\"),",
+  "test": "every_state_of_every_file_in_each_root"
+ },
+ {
+  "id": "M6r13",
+  "what": "an example that exists counts as current, whatever it holds",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "                match bytes == builtin.as_slice() {",
+  "new": "                match !builtin.is_empty() {",
+  "test": "examples_are_refreshed_with_their_old_content_kept"
+ },
+ {
+  "id": "M6r14",
+  "what": "a valid file written again",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "            Check::Valid => Outcome::Holds(bytes),",
+  "new": "            Check::Valid => match gaze_fs::write_atomic(fs, &path, &bytes, m.perm()) {\n                Ok(()) => Outcome::Holds(bytes),\n                Err(e) => Outcome::Blocked(e.to_string()),\n            },",
+  "test": "a_second_start_writes_nothing"
+ },
+ {
+  "id": "M6r15",
+  "what": "the skeleton's new folders not synced in their parents",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "                let created = gaze_fs::create_dir_durably(fs, &dir).map_err(|e| format!(\"{}: {e}\", dir.display()))?;",
+  "new": "                let created = fs.create_dir_all(&dir).map(|()| Vec::<PathBuf>::new()).map_err(|e| format!(\"{}: {e}\", dir.display()))?;",
+  "test": "a_finished_start_leaves_nothing_pending"
+ },
+ {
+  "id": "M6r16",
+  "what": "a link to nothing treated as a missing file",
+  "file": "crates/gaze-shell/src/profile/reconcile.rs",
+  "package": "gaze-shell",
+  "old": "                if let Ok(Kind::Symlink) = fs.kind(&path) {",
+  "new": "                if let Ok(Kind::Other) = fs.kind(&path) {",
+  "test": "a_link_to_nothing_is_left_alone"
+ },
+ {
+  "id": "M6r17",
+  "what": "a damaged site index keeps none of its names",
+  "file": "crates/gaze-shell/src/site_index.rs",
+  "package": "gaze-shell",
+  "old": "pub fn salvage_index(bytes: &[u8]) -> (Vec<String>, usize) {\n",
+  "new": "pub fn salvage_index(bytes: &[u8]) -> (Vec<String>, usize) {\n    if !bytes.is_empty() {\n        return (Vec::new(), 1);\n    }\n",
+  "test": "the_site_index_keeps_its_names"
+ },
+ {
+  "id": "M6r18",
+  "what": "the barrier only after a busy flag: not when the marker is missing",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    let unfinished = flagged || !present(fs, &layout.marker_file())?;",
+  "new": "    let unfinished = flagged;",
+  "test": "first_launch_survives_every_crash"
+ },
+ {
+  "id": "M6r19",
+  "what": "the barrier leaves the backups folders out",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        backup_folders(fs, &layout.backups(class), &mut folders);",
+  "new": "        let _ = backup_folders;",
+  "test": "a_repaired_file_is_never_absent_at_any_crash"
+ },
+ {
+  "id": "M6r20",
+  "what": "the barrier leaves the roots' ancestors out",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        folders.extend(layout.root(class).ancestors().skip(1).map(Path::to_path_buf));",
+  "new": "        let _ = layout.root(class).ancestors();",
+  "test": "first_launch_survives_every_crash"
+ },
+ {
+  "id": "M6r21",
+  "what": "the barrier leaves a linked file's target folder out",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "            folders.insert(dir.to_path_buf());\n        }\n    }\n    folders.insert(layout.migration_dir());",
+  "new": "            let _ = dir;\n        }\n    }\n    folders.insert(layout.migration_dir());",
+  "test": "the_barrier_covers_backups_link_targets_and_the_roots_ancestors"
+ },
+ {
+  "id": "M6r22",
+  "what": "no busy flag: a start after a crash in the repair skips the barrier",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    if !flagged {\n        fs.create_new(&busy, b\"\", PRIVATE_FILE_MODE)?;\n    }",
+  "new": "    let _ = flagged;",
+  "test": "a_repaired_file_is_never_absent_at_any_crash"
+ },
+ {
+  "id": "M6r23",
+  "what": "the busy flag's removal not synced",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    fs.sync_dir(&layout.data)\n}",
+  "new": "    Ok(())\n}",
+  "test": "a_finished_start_leaves_nothing_pending"
+ },
+ {
+  "id": "M6r24",
+  "what": "the lock's folders made without syncing their parents",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "    if let Err(e) = gaze_fs::create_dir_durably(fs, dir) {",
+  "new": "    if let Err(e) = fs.create_dir_all(dir) {",
+  "test": "the_lock_creates_its_folders_durably"
+ },
+ {
+  "id": "M6r25",
+  "what": "create_dir_durably without its parent syncs",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "    for created in &missing {\n        fs.sync_dir(parent(created)?)?;\n    }",
+  "new": "    for created in &missing {\n        let _ = parent(created)?;\n    }",
+  "test": "new_folders_are_durable_and_existing_ones_cost_nothing"
+ }
+]

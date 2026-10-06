@@ -1,0 +1,66 @@
+@startuml migration-activity
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam ArrowFontSize 11
+title Moving an old profile: start-up's step 4 (migrate.rs)
+
+start
+:**M0. Detect** (reads only); <<#DDEBF7>>
+if (data/layout.json, the marker, is there?) then (yes)
+  if (written by a newer F1R3Gaze?) then (yes)
+    :the session only reads; <<#F8CBAD>>
+    stop
+  else (no)
+    :**M9** if a migration's folder is left:
+    remove its plan, then the folder; <<#FCE4D6>>
+    stop
+  endif
+elseif (data/.migration/plan.json is there?) then (yes: resume)
+  :read the plan: the same actions
+  and the same backup session; <<#DDEBF7>>
+elseif (an old profile with a signature file?) then (yes)
+  :**M1. Plan** every action, read only,
+  then write plan.json with write_new; <<#FCE4D6>>
+else (no: a new profile)
+  :create the marker with write_new; <<#FCE4D6>>
+  stop
+endif
+:**M2.** create every folder the moves need,
+each synced in its parent; <<#FCE4D6>>
+:**M3.** write each converted file
+(settings.toml, session.json, history.json)
+with write_new: never replacing anything; <<#FCE4D6>>
+:**M4.** move each item: link the new name and sync,
+then unlink the old one and sync
+(across file systems: copy, sync, read back, compare); <<#FCE4D6>>
+:**M5.** move each converted original into
+<class>/backups/<session>/legacy-profile/; <<#FCE4D6>>
+:**M6.** rename each cache shard into cache/content/,
+synced in both folders
+(left behind on another file system); <<#FCE4D6>>
+:**M6b.** remove the old folders the moves emptied
+(keys/, exports/, store/, logs/, cache/): only an empty
+folder can go. M7's write syncs the old folder; <<#DDEBF7>>
+:**M7.** write MIGRATED.txt into the old folder; <<#FCE4D6>>
+:**M8.** create the marker; <<#FCE4D6>>
+:**M9.** remove the plan, then its folder; <<#FCE4D6>>
+stop
+
+note right
+  **Something already at a destination**: a conflict.
+  Both are kept, and MIGRATED.txt names it.
+  **A step that fails** (M2 to M5): the session only reads,
+  and the next start resumes the plan; finished steps
+  are then no-ops.
+  **A crash at any step**: the next start runs the barrier
+  (there is no marker yet), then resumes the plan.
+end note
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code, reading |
+  |<#FCE4D6> | a durable write |
+  |<#F8CBAD> | the session only reads |
+endlegend
+@enduml

@@ -1,0 +1,101 @@
+[
+ {
+  "id": "M4a",
+  "what": "write_atomic without the file sync before the rename",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "        .and_then(|()| fs.sync_file(&temp))\n        .and_then(|()| fs.rename(&temp, &target));",
+  "new": "        .and_then(|()| fs.rename(&temp, &target));",
+  "test": "write_atomic_survives_every_crash"
+ },
+ {
+  "id": "M4b",
+  "what": "publish without syncing the new name's directory before unlinking the old",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "        Ok(()) => {\n            fs.sync_dir(to_dir)?;\n            fs.remove_file(from)?;",
+  "new": "        Ok(()) => {\n            fs.remove_file(from)?;",
+  "test": "publishing_loses_nothing_and_shows_nothing_partial"
+ },
+ {
+  "id": "M4c",
+  "what": "the no-hard-link path without its check that the name is free",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "            match fs.kind(to) {\n                Ok(_) => return Err(already_exists(to)),",
+  "new": "            match fs.kind(to) {\n                Ok(_) => {}",
+  "test": "nothing_is_ever_replaced"
+ },
+ {
+  "id": "M4d",
+  "what": "the sweep without syncing its directory",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "            _ => {}\n        }\n    }\n    if removed > 0 {\n        fs.sync_dir(dir)?;\n    }\n    Ok(removed)\n}\n\n/// The temporary files [`sweep_temps`] would remove from `dir`, removing",
+  "new": "            _ => {}\n        }\n    }\n    Ok(removed)\n}\n\n/// The temporary files [`sweep_temps`] would remove from `dir`, removing",
+  "test": "sweeping_removes_only_other_processes_temporary_files"
+ },
+ {
+  "id": "M4e",
+  "what": "the verified copy without its comparison",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "        .and_then(|()| match same_contents(fs, &temp, from)? {",
+  "new": "        .and_then(|()| match true {",
+  "test": "a_copy_that_reads_back_wrong_is_never_published"
+ },
+ {
+  "id": "M4f",
+  "what": "write_atomic without the final directory sync",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "    fs.sync_dir(dir)\n}\n\n/// Writes a new file at `path`",
+  "new": "    let _ = dir;\n    Ok(())\n}\n\n/// Writes a new file at `path`",
+  "test": "completed_writes_survive_any_power_cut"
+ },
+ {
+  "id": "M4g",
+  "what": "publish without syncing the old name's directory",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "            fs.remove_file(from)?;\n            fs.sync_dir(from_dir)\n        }",
+  "new": "            fs.remove_file(from)?;\n            let _ = from_dir;\n            Ok(())\n        }",
+  "test": "completed_writes_survive_any_power_cut"
+ },
+ {
+  "id": "M4h",
+  "what": "NTFS emulation without committing a file's new name (W2)",
+  "file": "crates/gaze-fs/src/mem.rs",
+  "package": "gaze-fs",
+  "old": "        if self.ntfs\n            && let Some(Node::File(inode)) = self.names.get(path).cloned()",
+  "new": "        if self.ntfs && false\n            && let Some(Node::File(inode)) = self.names.get(path).cloned()",
+  "test": "moving_across_file_systems_loses_nothing"
+ },
+ {
+  "id": "M4i",
+  "what": "write_new without the file sync before publishing",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "        .create_new(&temp, bytes, mode)\n        .and_then(|()| fs.sync_file(&temp))\n        .and_then(|()| match fs.read(&temp)? == bytes {",
+  "new": "        .create_new(&temp, bytes, mode)\n        .and_then(|()| match fs.read(&temp)? == bytes {",
+  "test": "write_new_survives_every_crash"
+ },
+ {
+  "id": "M4j",
+  "what": "write_new renaming over the name (it can replace a file)",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-fs",
+  "old": "        .and_then(|()| publish_no_replace(fs, &temp, path));\n    if let Err(e) = written {\n        discard(fs, &temp);\n        return Err(e);\n    }\n    Ok(())",
+  "new": "        .and_then(|()| fs.rename(&temp, path));\n    if let Err(e) = written {\n        discard(fs, &temp);\n        return Err(e);\n    }\n    Ok(())",
+  "test": "write_new_never_replaces"
+ },
+ {
+  "id": "M4k",
+  "what": "TraceFs recording a rename without forwarding it",
+  "file": "crates/gaze-fs/src/trace.rs",
+  "package": "gaze-fs",
+  "old": "    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {\n        self.before(&Traced::of(\"rename\", from).to(to));\n        let result = self.inner.rename(from, to);",
+  "new": "    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {\n        self.before(&Traced::of(\"rename\", from).to(to));\n        let result: io::Result<()> = Ok(());",
+  "test": "trace_fs_is_transparent"
+ }
+]

@@ -1,0 +1,61 @@
+@startuml instance-lock-sequence
+!pragma teoz true
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+title The instance lock: one F1R3Gaze at a time writes a profile
+
+box "F1R3Gaze (first process)" #F4F8FC
+  participant "start-up\n(main.rs)" as Main #DDEBF7
+  participant "InstanceLock::acquire\n(profile/lock.rs)" as Lock #DDEBF7
+end box
+box "Operating system" #F5FAF2
+  participant "kernel:\nflock / LockFileEx" as Kernel #E2EFDA
+  participant "<data>/instance.lock\n(the anchor)" as Anchor #FCE4D6
+  participant "<runtime>/instance.lock" as Runtime #FCE4D6
+end box
+box "F1R3Gaze (second process)" #F4F8FC
+  participant "start-up" as Second #DDEBF7
+end box
+
+Main -> Lock : acquire(layout, Mode::Window, now)
+Lock -> Kernel : create <data>/ (0700) and open the anchor\n(O_CREAT, 0600)
+Kernel -> Anchor : the file exists from now on
+Lock -> Kernel : try_lock(anchor)
+Kernel --> Lock : locked
+Lock -> Kernel : create <runtime>/ (0700), open the runtime lock (0600)
+Lock -> Kernel : try_lock(runtime)
+Kernel --> Lock : locked
+Lock -> Runtime : Linux: chmod 01600\n(the sticky bit keeps XDG cleaners away)
+Lock -> Anchor : write pid, mode, start time, data root
+Lock -> Runtime : write the same lines
+Lock -> Lock : replace_unsynced instance.pid beside each lock:\nWindows forbids reading a locked file; not synced,\nsince a crash ends the hold it records
+Lock --> Main : InstanceLock (held until the process ends)
+
+== A second F1R3Gaze starts ==
+Second -> Kernel : open the anchor, try_lock
+Kernel --> Second : WouldBlock
+Second -> Anchor : read instance.pid beside it
+Second -> Second : LockError::Held: "another F1R3Gaze is using this\nprofile: process 4242 (window, since 2026-10-05T18:21:02Z)"
+note over Second #FFF2CC
+  The window, --headless and wallet commands that
+  write exit with status 1. Commands that only read
+  go on with the profile read-only.
+end note
+
+== The first process ends, however it ends ==
+Main -> Kernel : exit, crash or kill: the files close
+Kernel -> Kernel : both locks released by the kernel\n(runtime first on a clean exit)
+note over Kernel #FCE4D6
+  No stale lock: the next start takes both.
+end note
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code |
+  |<#E2EFDA> | operating system |
+  |<#FFF2CC> | what the user sees |
+  |<#FCE4D6> | lock files, and what holds after a crash |
+endlegend
+@enduml

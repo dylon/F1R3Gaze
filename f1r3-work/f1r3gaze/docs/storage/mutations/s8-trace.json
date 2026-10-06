@@ -1,0 +1,98 @@
+[
+ {
+  "id": "M8a",
+  "what": "a published name's folder not synced before the old name goes",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-shell",
+  "old": "        Ok(()) => {\n            fs.sync_dir(to_dir)?;\n            fs.remove_file(from)?;",
+  "new": "        Ok(()) => {\n            fs.remove_file(from)?;",
+  "test": "real_migrations_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "storage-trace",
+   "--test",
+   "storage_trace"
+  ]
+ },
+ {
+  "id": "M8b",
+  "what": "the busy flag never set",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    if !flagged {\n        fs.create_new(&busy, b\"\", PRIVATE_FILE_MODE)?;\n    }",
+  "new": "    let _ = flagged;",
+  "test": "real_migrations_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "storage-trace",
+   "--test",
+   "storage_trace"
+  ]
+ },
+ {
+  "id": "M8c",
+  "what": "the marker written before the plan's actions",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "    let mut outcomes = Vec::with_capacity(plan.actions.len());\n    let mut far_cache = false;",
+  "new": "    let _ = gaze_fs::write_new(\n        fs,\n        &l.marker_file(),\n        &Marker { layout: LAYOUT_VERSION, created: Some(plan.planned.clone()), migrated_from: Some(plan.legacy.clone()), repaired: false }.to_bytes(),\n        Perm::Private,\n    );\n    let mut outcomes = Vec::with_capacity(plan.actions.len());\n    let mut far_cache = false;",
+  "test": "real_migrations_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "storage-trace",
+   "--test",
+   "storage_trace"
+  ]
+ },
+ {
+  "id": "M8d",
+  "what": "a dead start's temporary marker not swept before the marker is made",
+  "file": "crates/gaze-shell/src/profile/migrate.rs",
+  "package": "gaze-shell",
+  "old": "        Some(name) => gaze_fs::sweep_temps_of(fs, &l.data, name).map(drop),",
+  "new": "        Some(_) => Ok(()),",
+  "test": "real_migrations_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "storage-trace",
+   "--test",
+   "storage_trace"
+  ]
+ },
+ {
+  "id": "M8e",
+  "what": "a simulated restart keeps the dead process's id",
+  "file": "crates/gaze-fs/src/atomic.rs",
+  "package": "gaze-shell",
+  "old": "    #[cfg(any(test, feature = \"testing\"))]\n    if let Some(id) = SIMULATED_PROCESS.with(std::cell::Cell::get) {\n        return id;\n    }",
+  "new": "    #[cfg(any(test, feature = \"testing\"))]\n    let _ = &SIMULATED_PROCESS;",
+  "test": "real_migrations_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "storage-trace",
+   "--test",
+   "storage_trace"
+  ]
+ },
+ {
+  "id": "M8f",
+  "what": "a copy never compared taken for garbage",
+  "file": "crates/gaze-shell/src/profile/migrate/trace.rs",
+  "package": "gaze-shell",
+  "old": "                    (Some(true), _) | (None, false) => format!(\"Orig({})\", string(id)),",
+  "new": "                    (Some(true), _) => format!(\"Orig({})\", string(id)),\n                    (None, false) => \"Garbage\".to_string(),",
+  "test": "real_migrations_are_behaviours_of_the_model",
+  "target": [
+   "--no-default-features",
+   "--features",
+   "storage-trace",
+   "--test",
+   "storage_trace"
+  ]
+ }
+]

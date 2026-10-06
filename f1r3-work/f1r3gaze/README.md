@@ -20,9 +20,16 @@ f1r3gaze [URL]                      open a window (default: gaze://newtab)
 f1r3gaze --headless URL [--allow] [--click SELECTOR]... [--timeout SECS] [--wait SECS] [--log FILE.gzlog]
                                     run a page without a window; print its committed
                                     document and console (CI smoke tests)
-f1r3gaze --profile DIR ...          use DIR as the profile (also: F1R3GAZE_PROFILE)
+f1r3gaze --profile DIR ...          keep every folder under DIR: DIR/{config,data,state,cache,runtime}
+                                    (also: F1R3GAZE_PROFILE)
 f1r3gaze wallet new|import|export|use|list|balance|send|remove ...
                                     the wallets that pay for deploys (docs/wallet.md)
+f1r3gaze paths                      print where the folders are
+f1r3gaze profile check              say what a start would change; change nothing
+f1r3gaze profile backups [prune --older-than DAYS]
+                                    list start-up's backups, or remove the old ones
+f1r3gaze trust list|forget BINDING|forget --all
+                                    this shard's freshness records (after a shard reset)
 
 f1r3c compile app.rho [-o app.knf] [--level k1g] [--import IDENT=URN]...
 f1r3c inspect app.knf               manifest, hashes, program text
@@ -54,12 +61,22 @@ Addresses: `https://…` and `http://…` (plain HTTP can be switched off),
 `f1r3h://blake2b-256/<hex>` for content by hash, `file://…`, and the
 built-in `gaze://newtab` and `gaze://about`.
 
-Settings live in `settings.conf` in the profile directory
-(`~/Library/Application Support/F1R3Gaze`, `%APPDATA%\F1R3Gaze`,
-`$XDG_DATA_HOME/f1r3gaze`): shard observers, the validator, the shard id,
-the quorum, blob mirrors, `https_only`, for the wallet `embers_api` and
-`max_fee`, and `restore_sidebar` for a window to reopen the sidebar as the
-last one left it.
+Settings live in `settings.toml` in the settings folder (`f1r3gaze paths`
+prints it; see [Where F1R3Gaze keeps its files](#where-f1r3gaze-keeps-its-files)),
+one table per area:
+- `[appearance]`: `theme`, and `restore_sidebar` for a window to reopen the
+  sidebar as the last one left it;
+- `[browsing]`: `home` and `https_only`;
+- `[shard]`: `observers`, `validator`, `shard_id`, `quorum` and `phlo_price`;
+- `[wallet]`: `embers_api` and `max_fee`;
+- `[content]`: blob `mirrors` and `cache_bytes`;
+- `[site_data]`: `store_quota`.
+
+A new file lists every setting commented out at its default, and
+`settings.toml.example` beside it stays a fresh copy. A value F1R3Gaze
+cannot use is reported with its line and column, and the default (or a
+system-wide file's value) is used for it. The format:
+[`docs/storage/README.md`](docs/storage/README.md), section 6.1.
 
 ### Browser controls
 
@@ -90,29 +107,50 @@ The design of every control is in [`docs/ui/README.md`](docs/ui/README.md).
   entry, and **Clear…** asks first.
 - **Find.** `Ctrl+F`/`Cmd+F` opens a box over the top right of the page.
   Enter and Shift+Enter step through the matches; Esc closes it.
-- **Keys.**
+- **Keys.** On macOS, Cmd stands for Ctrl, except in `Ctrl+Tab`.
   - `Ctrl+T` opens a tab and `Ctrl+W` closes one.
   - `Ctrl+Shift+T` reopens the last closed tab.
   - `Ctrl+L` selects the address.
   - `Ctrl+Tab` and `Ctrl+Shift+Tab` cycle tabs; `Ctrl+1`–`Ctrl+9` jump to a
     tab.
-  - `Ctrl+H` opens History.
+  - `Ctrl+H` opens History (`Cmd+Y` on macOS, where `Cmd+H` hides the
+    application).
+  - `F11` (`Ctrl+Cmd+F` on macOS) enters or leaves full screen.
+  - `Ctrl+=`, `Ctrl+−` and `Ctrl+0` zoom the window, from 25 % to 500 %.
 
-Recent history and open tabs are stored in `workspace.json`; restored
-background tabs load when selected.
+Open tabs and the sidebar's layout are kept in `state/session.json`, and
+history in `state/history.json`; restored background tabs load when
+selected. The window reopens at its size and place, maximized or full screen
+as it was left, and at its zoom (`state/window.json`); on Wayland the
+compositor chooses its place. **Clear history** also removes the copies start-up kept of
+damaged history files.
 
-Appearance offers Dark, Light, and Custom.
-- **Create palette file** writes `palette.css` in the profile directory. Edit
-  its `--gaze-*` hex colors, then choose **Custom** (or **Reload palette**).
+Appearance offers System, Dark, and Light, and lists the theme files.
+- **By default the browser follows the system's light or dark setting**
+  (`theme = "system"`): the XDG desktop portal on Linux, the operating
+  system on macOS and Windows. Without a preference it is dark, and
+  Appearance says what it found. Choosing System, Dark, Light or a theme
+  file saves the choice as `theme` under `[appearance]` in `settings.toml`.
+- **Theme files.** Every `themes/<name>.css` in the settings folder, and any
+  installed for everyone, is a row under **Themes**: click one to use it. A
+  file that cannot be used says why. **New theme** saves the colors shown
+  as `themes/my-theme.css` (never over an existing file) and chooses it;
+  edit its `--gaze-*` hex colors, then press **Reload**. The format is in
+  `docs/storage/README.md`, section 6.2, and `themes/default-dark.css.example`
+  and `default-light.css.example` show every token.
 - The browser checks text contrast (WCAG 4.5:1) and applies the scheme to its
-  controls and built-in `gaze://` pages. External sites keep their own styles.
+  controls, its built-in `gaze://` pages and the window's title bar. Sites
+  see it as well: a site's `prefers-color-scheme` styles follow the scheme
+  shown, as in other browsers, and a site with no dark styles keeps its own
+  colors.
 - The UI bundles Font Awesome Free 7 icons, Noto Sans, and Fira Code; licenses
   are in `crates/gaze-shell/assets/`.
 
 Site data lists the sites that keep something: capability store usage,
 remembered permissions, and live shard sessions. It also shows the verified
 cache. Web cookies and Web localStorage are not implemented, and JavaScript is
-not executed. Clearing the cache does not remove wallet exports or replay logs.
+not executed. Clearing the cache does not remove wallet exports or replay logs,
+which are in the data folder (`wallet/exports/`, `replay-logs/`).
 
 ### The wallet: the agent driving the browser pays
 
@@ -120,7 +158,8 @@ Every deploy the browser makes (a page's program, a session message) is
 signed by the **active wallet**, whose account pays for it. Wallets are
 created, imported and exported in the same file format as **F1R3Sky**, and
 their addresses are the F1R3Cap addresses F1R3Sky shows. Keys live in the OS
-keychain (macOS, Windows) or a `0600` file per key (Linux).
+keychain (macOS, Windows) or a `0600` file per key in the data folder's
+`wallet/keys/` (Linux).
 
 A program deployed under the user's key could otherwise take the deployer's
 identity and spend from the wallet, so the browser renders every deploy
@@ -136,6 +175,61 @@ Embers' transfer template before signing it. Details: `docs/wallet.md`.
 A listener receives `(type, fields)`. `docs/events.md` lists the fields
 guaranteed for each event type; hosts may add more, so pages end their
 patterns with a remainder: `@(_, {"x": x, "y": y ..._})`.
+
+## Where F1R3Gaze keeps its files
+
+F1R3Gaze keeps five kinds of files, each in the place the operating system
+has for it (the XDG Base Directory specification on Linux):
+
+| Kind | Linux | macOS | Windows |
+|---|---|---|---|
+| settings and themes | `$XDG_CONFIG_HOME/f1r3fly-io/f1r3gaze` | `~/Library/Application Support/io.f1r3fly.f1r3gaze/config` | `%APPDATA%\f1r3fly-io\f1r3gaze` |
+| data: wallets and keys, permissions, site data, freshness records, replay logs | `$XDG_DATA_HOME/f1r3fly-io/f1r3gaze` | `…/io.f1r3fly.f1r3gaze/data` | `%LOCALAPPDATA%\f1r3fly-io\f1r3gaze\data` |
+| state: open tabs, history, the window | `$XDG_STATE_HOME/f1r3fly-io/f1r3gaze` | `…/io.f1r3fly.f1r3gaze/state` | `…\state` |
+| the content cache | `$XDG_CACHE_HOME/f1r3fly-io/f1r3gaze` | `~/Library/Caches/io.f1r3fly.f1r3gaze` | `…\cache` |
+| the instance lock | `$XDG_RUNTIME_DIR/f1r3fly-io/f1r3gaze` | `$TMPDIR/io.f1r3fly.f1r3gaze` | `…\runtime` |
+
+- `f1r3gaze paths` prints them; `--profile DIR` (or `F1R3GAZE_PROFILE`)
+  keeps all five under `DIR`.
+- Settings and themes can also be installed for everyone: `settings.toml`
+  in `$XDG_CONFIG_DIRS/f1r3fly-io/f1r3gaze` (`/etc/xdg` by default), and
+  theme files in `$XDG_DATA_DIRS/f1r3fly-io/f1r3gaze/themes`. A user's own
+  file comes last and wins.
+- **One F1R3Gaze per profile.** A second window, `--headless`, or a command
+  that changes the profile, exits with status 1 and names the one that
+  holds it. Commands that only read (`wallet list`, `balance`, `export`,
+  `send`, `profile backups`, `trust list`) go on, read-only.
+- **Start-up checks every file.** A missing one is made from its default; a
+  damaged one is copied into `backups/<time>/` in its own folder first, then
+  repaired, and the window says so. Wallet keys are never changed.
+- `f1r3gaze profile check` says what the next start would do, and changes
+  nothing. `f1r3gaze profile backups` lists the backups, and
+  `profile backups prune --older-than DAYS` removes the old ones; nothing
+  else ever removes a backup.
+- After a shard is reset, its new blocks look like replays of old answers.
+  `f1r3gaze trust list` shows the freshness records, and
+  `trust forget BINDING` or `trust forget --all` forgets them.
+
+The design, the formats, and how start-up keeps the files whole through
+crashes and power cuts: [`docs/storage/README.md`](docs/storage/README.md).
+
+## Upgrading from a single-folder profile
+
+Older builds kept everything in one folder (`~/.local/share/f1r3gaze`,
+`~/Library/Application Support/F1R3Gaze` or `%APPDATA%\F1R3Gaze`). The
+first start of this build moves it into the folders above:
+- Every file is moved, never copied over anything: if something is already
+  at a file's new place, both are kept, and the window says so.
+- `settings.conf` becomes `settings.toml` (with only what was set), and
+  `workspace.json` becomes `state/session.json` and `state/history.json`;
+  the originals are kept in the backups.
+- The old dark theme becomes "system", since dark was the old default:
+  choose Dark in Appearance to keep it dark.
+- On another file system, the content cache stays behind (it can be
+  fetched again).
+- `MIGRATED.txt` in the old folder says where each file went. An older
+  build started afterwards finds the folder empty.
+- `f1r3gaze profile check` shows the plan first, and changes nothing.
 
 ## Building
 
@@ -235,7 +329,8 @@ Three defects in the existing code were found and fixed on the way:
 
 ## Tests
 
-172 tests in this workspace, all passing (CampF1R3 carries its own 181):
+478 tests in this workspace, all passing on stable and on Rust 1.95
+(CampF1R3 carries its own 181), and the storage checks below:
 
 | crate | tests | what they establish |
 | --- | --- | --- |
@@ -243,16 +338,22 @@ Three defects in the existing code were found and fixed on the way:
 | `gaze-dom-core`, `gaze-graded`, `gaze-knf` | 16 | the protocol engine, the semirings, the container |
 | `gaze-dom-blitz` | 8 | Blitz and `MemDom` commit identical hashes frame by frame; a Blitz log replays identically on both, including a click on a never-named node; scoped queries cannot leak; `decide` prevents; `setHTML` |
 | `gaze-broker` | 5 | policy, prompts, remembered grants, routes, revocation |
-| `gaze-net`, `gaze-store`, `gaze-blob` | 10 | redirects, credentials stripped, hashes; torn-tail recovery and quota; verified cache |
-| `gaze-shard` | 11 | the deploy preimage matches `prost`; signatures verify; against mock nodes: a lying observer is outvoted, a split is an error, a rollback is stale, nothing is deployed before consent, and the body the validator receives verifies |
-| `gaze-wallet` | 5 | addresses, wallet files and signature bytes identical to the Embers SDK's own output; the contract check refuses a changed recipient, amount or note, smuggled code, hidden fields, a high fee or another shard; wallets kept, exported, switched; transfers through an honest mock Embers, and nothing signed for a dishonest one |
+| `gaze-net`, `gaze-store`, `gaze-blob` | 16 | redirects, credentials stripped, hashes; torn-tail recovery, salvage before a store is cut back, quota; the verified cache, and a read-only one that never writes |
+| `gaze-fs` | 39 | durable writes: atomic replacement, publishing without replacing, verified copies across file systems, folders made durably, the temporary-file sweeps; every crash point and power cut of each (`MemFs`), on every core |
+| `gaze-shard` | 24 | the deploy preimage matches `prost`; signatures verify; against mock nodes: a lying observer is outvoted, a split is an error, a rollback is stale, nothing is deployed before consent, and the body the validator receives verifies; freshness records kept per shard, merged to the highest block, read-only, surviving a restart, and a save that keeps failing reported once |
+| `gaze-wallet` | 11 | addresses, wallet files and signature bytes identical to the Embers SDK's own output; the contract check refuses a changed recipient, amount or note, smuggled code, hidden fields, a high fee or another shard; wallets kept, exported, switched; transfers through an honest mock Embers, and nothing signed for a dishonest one; a damaged list keeps its lines, and wallets are found again from their keys |
 | `gaze-reach` | 3 | the reach tier commits exactly the native executive's hashes for the same page and clicks; integrity; `shard` is dead |
-| `gaze-shell` | 105 | settings; the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, the sidebar at startup, a window resized by its frame painting one frame per size, and the defect ledger's regression tests (`docs/ui/ledger.md`) |
+| `gaze-shell` | 347 | the profile: the five roots on every platform, `settings.toml`, the instance lock, start-up's repair of every state of every file, the move of an old profile (with every crash point and two crashes in a row), `Profile::open` and its lock policy, the engine's read-only and blocked files, themes and the system's scheme; the command line (`tests/cli.rs`, on the real binary); the chrome: the action protocol and keys, markup conventions, text widths checked against Blitz's layout, panels, find, theme switches, the tab strip, search highlights, the mouse cursor and hover over pages, the sidebar at startup, a window resized by its frame painting one frame per size, the session and history files, the Appearance panel (System, Dark and Light, theme files, New theme and Reload), the scheme in pages and in the window's decorations, and the defect ledgers' regression tests (`docs/ui/ledger.md`, `docs/storage/ledger.md`) |
 
 End-to-end, on the real binary:
 
 - the new-tab page's f1r3lang lamp toggles on a click. In the window it lights
   in both schemes, and goes out on a second click (snapshot scenes 69–71);
+- in the window: System follows the system's preference as the portal
+  answers it, when the window regains the focus too, and starts within 3 s
+  when the portal never answers; theme files are listed, chosen, created and
+  reloaded; and a page's own light and dark styles follow the scheme shown
+  (snapshot scenes 72–84);
 - a site's `.knf` is fetched by `src`, integrity-checked, fetches over `net`,
   writes and reads `store`, logs, and saves a replay log; a tampered copy is
   refused with "integrity mismatch";
@@ -269,8 +370,19 @@ End-to-end, on the real binary:
 - the `.deb` installs and runs, the AppImage runs, and the signed checksums
   verify (and fail on a changed byte).
 
-CI also runs `cargo clippy --workspace --all-targets --locked -- -D warnings`
-(the `lint` job in `.github/workflows/ci.yml`).
+The storage checks (`docs/storage/README.md`, section 15): the TLA+ model of
+start-up (`scripts/storage-model.sh`, 29 runs), 171 start-ups checked against
+it (`scripts/storage-trace.sh`), 164 real kills of the binary checked against
+it (`scripts/storage-kill.sh`), and a mutation check for every fix
+(`scripts/mutation-check.py`).
+
+CI (`.github/workflows/ci.yml`) runs the tests on Linux, macOS and Windows,
+with a storage smoke test on each (`scripts/storage-smoke.sh`: a private
+skeleton, and a second start that writes nothing) and, on Linux and macOS, an
+old profile moved for real (`scripts/storage-migration-ci.sh`); clippy with
+`-D warnings` in five configurations (the `lint` job); the model and the
+traces (the `model` job); and the real kills on all three systems (the
+`kill` job).
 
 `scripts/ui-snapshots.sh` drives the real binary under Xvfb through 71 scenes
 of the chrome. It writes the screenshots and their pixel checks (no page
@@ -301,7 +413,7 @@ none`. See `docs/ui/README.md` §12.
   `/api/explore-deploy`, `/ws/events`) rather than Embers' gRPC
   `firefly-client`, which needs `protoc` and `tonic` at build time. Deploys are
   byte-for-byte what the node verifies.
-- **Linux keys** are in a `0600` file in the profile; macOS and Windows use
+- **Linux keys** are in a `0600` file in the data folder's `wallet/keys/`; macOS and Windows use
   the OS keychain (`os-keyring`, on in release builds).
 - **One wallet signs for every site** (the spec's per-site keys are gone:
   the account that pays is the deployer). Sites can therefore link a user's

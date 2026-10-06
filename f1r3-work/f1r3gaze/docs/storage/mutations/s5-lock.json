@@ -1,0 +1,83 @@
+[
+ {
+  "id": "M5a",
+  "what": "no anchor: only the runtime lock is taken",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "        for (path, anchor) in [(layout.anchor_lock_file(), true), (layout.lock_file(), false)] {",
+  "new": "        for (path, anchor) in [(layout.lock_file(), false)] {",
+  "test": "the_anchor_holds_when_the_runtime_lock_is_removed_or_elsewhere"
+ },
+ {
+  "id": "M5b",
+  "what": "no lock at all: the file is opened but never locked",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "    match file.try_lock() {\n        Ok(()) => Take::Taken(file),",
+  "new": "    match Ok::<(), TryLockError>(()) {\n        Ok(()) => Take::Taken(file),",
+  "test": "a_holder_that_dies_releases_its_lock"
+ },
+ {
+  "id": "M5c",
+  "what": "the locks released in the order taken (anchor first)",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "        while let Some((path, file)) = self.held.pop() {\n            drop(file);\n            released.push(path);\n        }",
+  "new": "        for (path, file) in self.held.drain(..) {\n            drop(file);\n            released.push(path);\n        }",
+  "test": "the_runtime_lock_is_released_first"
+ },
+ {
+  "id": "M5d",
+  "what": "the runtime lock not made sticky",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "                    if !anchor {\n                        use std::os::unix::fs::PermissionsExt;",
+  "new": "                    if !anchor && false {\n                        use std::os::unix::fs::PermissionsExt;",
+  "test": "lock_files_are_private_and_the_runtime_one_sticky"
+ },
+ {
+  "id": "M5e",
+  "what": "lock files created with the default mode (umask) instead of owner-only",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "        options.mode(PRIVATE_FILE_MODE);",
+  "new": "        options.mode(0o666);",
+  "test": "lock_files_are_private_and_the_runtime_one_sticky"
+ },
+ {
+  "id": "M5f",
+  "what": "a profile that cannot be written taken for one without locks (runs writable on the runtime lock alone)",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "    matches!(error.kind(), io::ErrorKind::ReadOnlyFilesystem | io::ErrorKind::PermissionDenied)",
+  "new": "    matches!(error.kind(), io::ErrorKind::ReadOnlyFilesystem)",
+  "test": "a_profile_that_cannot_be_written_cannot_be_locked_for_writing"
+ },
+ {
+  "id": "M5g",
+  "what": "who holds the lock not recorded",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "            let written = write_into(file, &info)\n                .and_then(|()| gaze_fs::write_atomic(fs, &beside, info.as_bytes(), Perm::Private));",
+  "new": "            let _ = (file, &beside);\n            let written: io::Result<()> = Ok(());",
+  "test": "a_second_instance_is_refused_and_told_who_holds_the_profile"
+ },
+ {
+  "id": "M5h",
+  "what": "the runtime fallback not reported",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "        if layout.runtime_is_fallback {",
+  "new": "        if layout.runtime_is_fallback && false {",
+  "test": "a_runtime_fallback_is_reported"
+ },
+ {
+  "id": "M5i",
+  "what": "a held lock reported at once, with no retry (a quick restart after a crash is refused)",
+  "file": "crates/gaze-shell/src/profile/lock.rs",
+  "package": "gaze-shell",
+  "old": "        InstanceLock::acquire_within(fs, layout, mode, now, report, HELD_RETRY)",
+  "new": "        InstanceLock::acquire_within(fs, layout, mode, now, report, Duration::ZERO)",
+  "test": "a_lock_freed_while_waiting_is_taken"
+ }
+]

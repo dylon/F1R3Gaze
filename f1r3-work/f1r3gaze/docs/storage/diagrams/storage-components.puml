@@ -1,0 +1,107 @@
+@startuml storage-components
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam ArrowFontSize 11
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam nodesep 30
+skinparam ranksep 45
+title The storage pieces, and what each one reads and writes
+
+package "the commands and the window (crates/gaze-shell)" as Top #F4F8FC {
+  component "main.rs\nthe window, --headless, wallet,\npaths, profile, trust" as Main #DDEBF7
+  component "application.rs\nthe window's events,\nits scheme and geometry" as App #DDEBF7
+  component "chrome.rs\nsession, history, Appearance,\nnotices, window requests" as Chrome #DDEBF7
+  component "engine.rs\nEngine::open(profile)" as Engine #DDEBF7
+}
+
+package "what the chrome and the window use" as Uses #F4F8FC {
+  component "window_state.rs\nthe restore plan, the tracker" as WindowState #DDEBF7
+  component "system_theme.rs\nthe system's preference" as SystemTheme #DDEBF7
+  component "theme.rs\ntheme files, resolve" as Theme #DDEBF7
+  component "ui_state.rs\nSessionState, History" as UiState #DDEBF7
+}
+
+package "profile (crates/gaze-shell/src/profile)" as ProfileMod #EAF2FB {
+  component "profile.rs\nProfile::open, start_up, check;\nread_state, write_state, set_theme" as Profile #DDEBF7
+  component "layout.rs\nthe five roots on each platform" as Layout #DDEBF7
+  component "lock.rs\nthe anchor lock, then the runtime lock" as Lock #DDEBF7
+  component "migrate.rs\nthe durable plan, the moves,\nMIGRATED.txt" as Migrate #DDEBF7
+  component "reconcile.rs\nthe managed files:\nmade, repaired, swept" as Reconcile #DDEBF7
+  component "backup.rs\nbackups/<stamp>/, StoreSalvage" as Backup #DDEBF7
+  component "settings.rs\nthe layers of settings.toml" as Settings #DDEBF7
+  component "report.rs\nwhat start-up found, shown once" as Report #DDEBF7
+}
+
+package "where the engine keeps its files" as Crates #F4F8FC {
+  component "gaze-shard\nFileKeystore, FileFreshness" as Shard #DDEBF7
+  component "gaze-wallet\nWallets" as Wallet #DDEBF7
+  component "grants.rs (gaze-shell)\nFileGrants; the line format\nis gaze-broker's" as Broker #DDEBF7
+  component "gaze-store\nOriginStore, Salvage" as Store #DDEBF7
+  component "gaze-blob\nContentCache" as Blob #DDEBF7
+  component "gaze-fs\nFs; write_atomic, write_new,\npublish_no_replace, copy_verified" as GazeFs #DDEBF7
+}
+
+package "the operating system and third parties" as Os #F5FAF2 {
+  component "winit and Blitz" as Winit #E2EFDA
+  component "the XDG desktop portal\n(dbus-send, Linux)" as Portal #E2EFDA
+  component "the OS keystore\n(the os-keyring feature)" as Keyring #E2EFDA
+  component "the file system" as FS #E2EFDA
+}
+
+package "the five roots" as Roots #FFF8F2 {
+  folder "config/\nsettings.toml, themes/,\nbackups/" as Config #FCE4D6
+  folder "data/\nlayout.json, user-id, wallet/,\npermissions/, site-data/, trust/,\nreplay-logs/, backups/, instance.lock" as Data #FCE4D6
+  folder "state/\nwindow.json, session.json,\nhistory.json, backups/" as State #FCE4D6
+  folder "cache/\ncontent/" as Cache #FCE4D6
+  folder "runtime/\ninstance.lock, instance.pid" as Runtime #FCE4D6
+}
+
+Main --> Profile : open(layout, locking)
+Main --> Engine : Engine::open(profile)
+Main --> App : launch: a window
+App --> Chrome : events; requests back
+Chrome --> Engine
+App --> WindowState : window.json
+App --> Winit
+Chrome --> SystemTheme
+Chrome --> Theme
+Chrome --> UiState
+Chrome --> Profile : session, history, theme
+SystemTheme --> Portal
+Engine --> Shard
+Engine --> Wallet
+Engine --> Broker
+Engine --> Store
+Engine --> Blob
+Profile --> Layout : where
+Profile --> Lock : one writer
+Profile --> Migrate : an old profile
+Profile --> Reconcile : every start
+Profile --> Settings
+Profile --> Report
+Migrate --> Backup : the originals
+Reconcile --> Backup : before a repair
+Profile --> GazeFs : every write
+Theme --> GazeFs : reads theme files
+Shard --> GazeFs
+Wallet --> GazeFs
+Broker --> GazeFs
+Store --> GazeFs : compaction\n(appends are not synced)
+Shard --> Keyring : OsKeystore
+GazeFs --> FS : durable writes
+Blob --> FS : hash-verified
+FS --> Config
+FS --> Data
+FS --> State
+FS --> Cache
+FS --> Runtime
+
+legend right
+  |= Colour |= Meaning |
+  |<#DDEBF7> | F1R3Gaze code |
+  |<#E2EFDA> | the operating system and third parties |
+  |<#FCE4D6> | what must survive a crash: the roots' files |
+endlegend
+@enduml

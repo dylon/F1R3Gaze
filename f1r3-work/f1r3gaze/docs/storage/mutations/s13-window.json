@@ -1,0 +1,251 @@
+[
+ {
+  "id": "M13m",
+  "what": "an unchanged state written",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "        if self.tracker.state() == &self.written {",
+  "new": "        if false {",
+  "test": "only_changes_are_written"
+ },
+ {
+  "id": "M13n",
+  "what": "a failed write counted as written",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "        if write(self.tracker.state()).is_ok() {",
+  "new": "        if write(self.tracker.state()).is_ok() || true {",
+  "test": "a_failed_write_is_tried_again"
+ },
+ {
+  "id": "M13o",
+  "what": "macOS samples kept in physical pixels",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "            Some(Units::Points) => (to_i32(f64::from(x) / scale), to_i32(f64::from(y) / scale)),",
+  "new": "            Some(Units::Points) => (x, y),",
+  "test": "samples_are_read_in_each_platforms_units"
+ },
+ {
+  "id": "M13p",
+  "what": "macOS monitors kept in physical pixels",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "                (to_i32(f64::from(reading.position.0) / scale), to_i32(f64::from(reading.position.1) / scale)),",
+  "new": "                reading.position,",
+  "test": "monitors_are_described_in_desktop_units"
+ },
+ {
+  "id": "M13q",
+  "what": "Wayland clamped by the whole-number output scale",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "        (Some(_), None) | (None, _) => (width.clamp(MIN_SIZE.0, MAX_SIZE.0), height.clamp(MIN_SIZE.1, MAX_SIZE.1)),",
+  "new": "        (Some(i), None) => (\n            width.min(f64::from(monitors[i].size.0) / monitors[i].scale),\n            height.min(f64::from(monitors[i].size.1) / monitors[i].scale),\n        ),\n        (None, _) => (width.clamp(MIN_SIZE.0, MAX_SIZE.0), height.clamp(MIN_SIZE.1, MAX_SIZE.1)),",
+  "test": "wayland_leaves_the_size_to_the_compositor"
+ },
+ {
+  "id": "M13r",
+  "what": "no cap where no monitor bounds the size",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "        (Some(_), None) | (None, _) => (width.clamp(MIN_SIZE.0, MAX_SIZE.0), height.clamp(MIN_SIZE.1, MAX_SIZE.1)),",
+  "new": "        (Some(_), None) | (None, _) => (width.max(MIN_SIZE.0), height.max(MIN_SIZE.1)),",
+  "test": "sizes_without_a_monitor_are_capped"
+ },
+ {
+  "id": "M13s",
+  "what": "Blitz's f32 noise kept in the zoom",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "        let zoom = round_zoom(clamp_zoom(zoom));",
+  "new": "        let zoom = clamp_zoom(zoom);",
+  "test": "the_zoom_is_kept_in_range"
+ },
+ {
+  "id": "M13t",
+  "what": "Blitz's zoom left out of range (L15)",
+  "file": "crates/gaze-shell/src/window_state.rs",
+  "package": "gaze-shell",
+  "old": "    (kept != zoom).then_some(kept)",
+  "new": "    None::<f64>",
+  "test": "zoom_keys_stay_within_range"
+ },
+ {
+  "id": "M13u",
+  "what": "Windows' window made with a theme, kept for good",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        CreationTheme::KeptForGood => None,",
+  "new": "        CreationTheme::KeptForGood => decorations,",
+  "test": "a_window_is_made_with_no_theme_on_windows"
+ },
+ {
+  "id": "M13v",
+  "what": "macOS placed in physical pixels",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "            attributes.with_position(Position::Logical(LogicalPosition::new(f64::from(x), f64::from(y))))",
+  "new": "            attributes.with_position(Position::Physical(PhysicalPosition::new(x, y)))",
+  "test": "the_window_is_made_at_the_planned_size_and_place"
+ },
+ {
+  "id": "M13w",
+  "what": "a resize schedules no save",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        WindowEvent::SurfaceResized(_) | WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. }",
+  "new": "        WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. }",
+  "test": "only_geometry_events_schedule_a_save"
+ },
+ {
+  "id": "M13x",
+  "what": "the X11 map's focus loss saves",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "    had_focus && matches!(event, WindowEvent::Focused(false))",
+  "new": "    matches!(event, WindowEvent::Focused(false))",
+  "test": "only_losing_a_focus_it_had_saves_at_once"
+ },
+ {
+  "id": "M13y",
+  "what": "the loop never wakes to save",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        Some(due) => ControlFlow::WaitUntil(due),",
+  "new": "        Some(_) => ControlFlow::Wait,",
+  "test": "the_loop_wakes_when_a_save_is_due"
+ },
+ {
+  "id": "M13z",
+  "what": "XCB taken for a system that places windows itself",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        Some(RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)) => WindowSystem::X11,",
+  "new": "        Some(RawDisplayHandle::Xlib(_)) => WindowSystem::X11,",
+  "test": "the_window_system_comes_from_the_display"
+ },
+ {
+  "id": "M13aa",
+  "what": "F11 with a modifier is the chord",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            *key == Key::F11 && !modifiers.intersects(Modifiers::CONTROL | Modifiers::SUPER | Modifiers::META | others)",
+  "new": "            *key == Key::F11",
+  "test": "the_full_screen_chord_is_platform_specific"
+ },
+ {
+  "id": "M13ab",
+  "what": "Find before full screen",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "    if full_screen_chord(key, modifiers, platform) {\n        return Some((!repeating).then_some(Action::FullScreen));\n    }\n    global_shortcut(key, modifiers, tabs, active, platform).map(Some)",
+  "new": "    if let Some(action) = global_shortcut(key, modifiers, tabs, active, platform) {\n        return Some(Some(action));\n    }\n    full_screen_chord(key, modifiers, platform).then(|| (!repeating).then_some(Action::FullScreen))",
+  "test": "full_screen_comes_before_find_and_ignores_repeats"
+ },
+ {
+  "id": "M13ac",
+  "what": "a held chord toggles again",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        return Some((!repeating).then_some(Action::FullScreen));",
+  "new": "        return Some(Some(Action::FullScreen));",
+  "test": "full_screen_comes_before_find_and_ignores_repeats"
+ },
+ {
+  "id": "M13ad",
+  "what": "the chord asks the window nothing",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            Action::FullScreen => self.request(WindowRequest::ToggleFullScreen),",
+  "new": "            Action::FullScreen => {}",
+  "test": "the_full_screen_key_asks_the_window_once"
+ },
+ {
+  "id": "M13ae",
+  "what": "no hint on how to leave full screen",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            true => self.flash(Tone::Info, hint),",
+  "new": "            true => {}",
+  "test": "full_screen_says_how_to_leave_it"
+ },
+ {
+  "id": "M16",
+  "what": "History has no key on macOS (L16)",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        \"y\" if platform == KeyPlatform::MacOs => Some(Action::Panel(\"history\".into())),\n",
+  "new": "",
+  "test": "history_is_cmd_y_on_macos_and_ctrl_h_elsewhere"
+ },
+ {
+  "id": "M16b",
+  "what": "History on Cmd+H, which macOS's menu takes (L16)",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        \"h\" if platform == KeyPlatform::Other => Some(Action::Panel(\"history\".into())),",
+  "new": "        \"h\" => Some(Action::Panel(\"history\".into())),",
+  "test": "history_is_cmd_y_on_macos_and_ctrl_h_elsewhere"
+ },
+ {
+  "id": "M17",
+  "what": "a tip names Ctrl on macOS (L17)",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "    (\"{key:newtab}\", \"Ctrl+T\", \"Cmd+T\"),",
+  "new": "    (\"{key:newtab}\", \"Ctrl+T\", \"Ctrl+T\"),",
+  "test": "every_key_label_names_a_key_that_does_what_it_says"
+ },
+ {
+  "id": "M17b",
+  "what": "the shell's key tokens left unreplaced (L17)",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "    key_labels(&html, KeyPlatform::CURRENT)\n}",
+  "new": "    html\n}",
+  "test": "every_key_label_names_a_key_that_does_what_it_says"
+ },
+ {
+  "id": "M13af",
+  "what": "a reading of the window not counted on the frame line",
+  "file": "crates/gaze-shell/src/frame_stats.rs",
+  "package": "gaze-shell",
+  "old": "            WINDOW_SAVE.add(took);\n",
+  "new": "            // M13af: WINDOW_SAVE.add(took);\n",
+  "test": "a_reading_is_counted_like_a_span",
+  "target": [
+   "--lib",
+   "--features",
+   "frame-times"
+  ]
+ },
+ {
+  "id": "M13ag",
+  "what": "a reading's line without its wall-clock time",
+  "file": "crates/gaze-shell/src/frame_stats.rs",
+  "package": "gaze-shell",
+  "old": "        \"window_save epoch={epoch_ms} took={:.2} changed={}\",\n",
+  "new": "        \"window_save took={:.2} changed={}\",\n",
+  "test": "the_reading_line_says_when_how_long_and_whether_it_wrote",
+  "target": [
+   "--lib",
+   "--features",
+   "frame-times"
+  ]
+ },
+ {
+  "id": "M13ah",
+  "what": "the wall clock in seconds, not milliseconds",
+  "file": "crates/gaze-shell/src/frame_stats.rs",
+  "package": "gaze-shell",
+  "old": "        .map(|since| since.as_millis())\n",
+  "new": "        .map(|since| u128::from(since.as_secs()))\n",
+  "test": "the_wall_clock_is_in_milliseconds_since_the_epoch",
+  "target": [
+   "--lib",
+   "--features",
+   "frame-times"
+  ]
+ }
+]

@@ -18,6 +18,13 @@ os-keyring = ["gaze-shard/os-keyring"]
 # phases, Vello's frame phases, and the window's own line per frame
 # (docs/ui/README.md, "Resizing and the render loop"). Off in normal builds.
 frame-times = ["window", "blitz-dom/log-phase-times", "anyrender_vello/log_frame_times"]
+# Start-up's file operations recorded and checked against the TLA+ model
+# (docs/storage/ledger.md, S8): tests/storage_trace.rs and
+# scripts/storage-trace.sh. Off in normal builds.
+storage-trace = ["gaze-fs/trace"]
+# With F1R3GAZE_CRASH_AT=k, the k-th storage operation aborts the process: the
+# real-kill tests of S8. Never in release builds.
+crash-points = ["gaze-fs/crash-points"]
 
 [dependencies]
 blitz-dom = { workspace = true, features = ["svg", "woff", "system-fonts", "file-input"] }
@@ -30,6 +37,13 @@ winit = { workspace = true, optional = true }
 gaze-broker.workspace = true
 gaze-dom-blitz.workspace = true
 gaze-exec.workspace = true
+gaze-fs.workspace = true
+# The user's home and, on Windows, the Known Folders (profile/layout.rs).
+dirs = "6"
+# settings.toml: read with spans for diagnostics (toml), edited keeping
+# comments (toml_edit); both on the same toml_parser (profile/settings.rs).
+toml = { version = "1.1", default-features = false, features = ["std", "parse"] }
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 gaze-dom-core.workspace = true
 gaze-knf.workspace = true
 gaze-net.workspace = true
@@ -47,3 +61,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 liblevenshtein = { version = "=4.0.0-rc.4", default-features = false }
 parley = { git = "https://github.com/linebender/parley", rev = "332c1c7d9758839577e7979d211d1e3bbf4818af" }
+
+[dev-dependencies]
+k1ndl1ng-parse.workspace = true
+# MemFs, for the profile's crash tests.
+gaze-fs = { workspace = true, features = ["testing"] }

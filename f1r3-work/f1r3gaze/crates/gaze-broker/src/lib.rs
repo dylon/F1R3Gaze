@@ -20,7 +20,6 @@
 use gaze_knf::Knf;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::{Path, PathBuf};
 
 pub const DOC: &str = "rho:gaze:doc";
 pub const LOG: &str = "rho:gaze:log";
@@ -243,20 +242,11 @@ impl GrantStore for MemGrants {
     }
 }
 
-/// One line per decision, tab-separated:
-/// `site  grant-hash-hex  urn  allow|deny  class,class`. Written atomically
-/// (temporary file, then rename).
-pub struct FileGrants {
-    path: PathBuf,
-}
-
-impl FileGrants {
-    pub fn new(path: impl AsRef<Path>) -> FileGrants {
-        FileGrants {
-            path: path.as_ref().to_path_buf(),
-        }
-    }
-}
+// The grants file (`FileGrants`) moved to `gaze-shell` (`grants.rs`), which
+// writes it with `gaze-fs`: atomically, synced, readable by its owner only,
+// and never over a file it could not read. This crate stays free of file
+// I/O; the line format is defined here, by `parse_grant_line` and
+// `format_grant_line`.
 
 fn hex32(b: &[u8; 32]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -273,45 +263,39 @@ fn unhex32(s: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-impl GrantStore for FileGrants {
-    fn load(&self) -> Vec<Stored> {
-        let Ok(text) = std::fs::read_to_string(&self.path) else { return Vec::new() };
-        text.lines()
-            .filter_map(|l| {
-                let f: Vec<&str> = l.split('\t').collect();
-                if f.len() != 5 {
-                    return None;
-                }
-                Some(Stored {
-                    site: Site(f[0].to_string()),
-                    grant_hash: unhex32(f[1])?,
-                    urn: f[2].to_string(),
-                    allow: f[3] == "allow",
-                    classes: f[4].split(',').filter_map(ShardClass::parse).collect(),
-                })
-            })
-            .collect()
-    }
-    fn save(&mut self, all: &[Stored]) -> Result<(), String> {
-        let mut out = String::new();
-        for s in all {
-            let classes: Vec<&str> = s.classes.iter().map(|c| c.name()).collect();
-            out.push_str(&format!(
-                "{}\t{}\t{}\t{}\t{}\n",
-                s.site,
-                hex32(&s.grant_hash),
-                s.urn,
-                if s.allow { "allow" } else { "deny" },
-                classes.join(",")
-            ));
-        }
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        let tmp = self.path.with_extension("tmp");
-        std::fs::write(&tmp, out).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
-    }
+/// A remembered decision as one line of the grants file, without its line
+/// ending: `site TAB grant-hash-hex TAB urn TAB allow|deny TAB class,class`.
+pub fn format_grant_line(s: &Stored) -> String {
+    let classes: Vec<&str> = s.classes.iter().map(|c| c.name()).collect();
+    format!(
+        "{}\t{}\t{}\t{}\t{}",
+        s.site,
+        hex32(&s.grant_hash),
+        s.urn,
+        if s.allow { "allow" } else { "deny" },
+        classes.join(",")
+    )
+}
+
+/// One line of the grants file, read back. Unknown shard classes are left
+/// out rather than refused, so a newer browser's decisions still load.
+pub fn parse_grant_line(line: &str) -> Result<Stored, String> {
+    let f: Vec<&str> = line.split('\t').collect();
+    let [site, hash, urn, verdict, classes] = f.as_slice() else {
+        return Err(format!("{} fields, not 5", f.len()));
+    };
+    let allow = match *verdict {
+        "allow" => true,
+        "deny" => false,
+        other => return Err(format!("{other:?} is neither allow nor deny")),
+    };
+    Ok(Stored {
+        site: Site(site.to_string()),
+        grant_hash: unhex32(hash).ok_or_else(|| format!("{hash:?} is not a 64-digit hash"))?,
+        urn: urn.to_string(),
+        allow,
+        classes: classes.split(',').filter_map(ShardClass::parse).collect(),
+    })
 }
 
 pub type TabId = u64;
@@ -618,22 +602,25 @@ mod tests {
         assert!(b.grants_of(7).is_empty());
     }
 
+    // The file store's round trip moved with it to `gaze-shell`
+    // (`grants::tests::file_grants_round_trip_through_the_broker`).
+
     #[test]
-    fn file_store_round_trips() {
-        let dir = std::env::temp_dir().join(format!("gaze-broker-{}", std::process::id()));
-        let path = dir.join("grants.tsv");
-        let site = Site::of_url("https://a.example/").unwrap();
-        let k = knf("shard!(3)");
-        {
-            let mut b = Broker::new(FileGrants::new(&path));
-            let mut p = b.plan(&site, &k);
-            b.answer(&mut p, SHARD, true, true).unwrap();
-            b.install(1, &p);
-            b.allow_shard(1, ShardClass::Deploy, Some(k.grant_hash())).unwrap();
-        }
-        let b = Broker::new(FileGrants::new(&path));
-        assert!(b.plan(&site, &k).granted(SHARD));
-        assert!(b.remembered_all()[0].classes.contains(&ShardClass::Deploy));
-        let _ = std::fs::remove_dir_all(dir);
+    fn grant_lines_round_trip() {
+        let stored = Stored {
+            site: Site::of_url("https://a.example/").unwrap(),
+            grant_hash: [0xab; 32],
+            urn: SHARD.into(),
+            allow: true,
+            classes: [ShardClass::Read, ShardClass::Deploy].into_iter().collect(),
+        };
+        let line = format_grant_line(&stored);
+        assert_eq!(parse_grant_line(&line), Ok(stored));
+        assert!(parse_grant_line("a\tb").is_err());
+        assert!(parse_grant_line(&line.replace("allow", "maybe")).is_err());
+        assert!(parse_grant_line(&line.replace(&"ab".repeat(32), "xyz")).is_err());
+        // A class this version does not know is left out, not refused.
+        let newer = format!("{line},teleport");
+        assert_eq!(parse_grant_line(&newer).map(|s| s.classes.len()), Ok(2));
     }
 }

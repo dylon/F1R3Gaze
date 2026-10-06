@@ -1,0 +1,20 @@
+[package]
+name = "gaze-fs"
+description = "F1R3Gaze durable file primitives: private atomic writes, publishing without replacing, verified copies, and an in-memory file system with power cuts for crash tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# MemFs, the in-memory file system that models power cuts, for the crash
+# tests of crates that build on gaze-fs.
+testing = ["trace"]
+# TraceFs, which records every operation: for tests, and for checking real
+# runs against the TLA+ model (ledger S8).
+trace = []
+# With F1R3GAZE_CRASH_AT=k in the environment, StdFs aborts the process at
+# its k-th operation: the storage ledger's real-kill tests (S7). Never in
+# release builds.
+crash-points = []
+
+[dependencies]

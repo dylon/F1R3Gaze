@@ -1,0 +1,70 @@
+@startuml storage-roots-deployment
+skinparam defaultFontName "Noto Sans"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam ArrowFontSize 11
+title Where the five roots are, on each platform
+
+node "Linux and the BSDs\n(XDG Base Directory 0.8)" as Linux #E2EFDA {
+  folder "$XDG_CONFIG_HOME/f1r3fly-io/f1r3gaze\n(~~/.config/…)" as LConfig #DDEBF7
+  folder "$XDG_DATA_HOME/f1r3fly-io/f1r3gaze\n(~~/.local/share/…)" as LData #FCE4D6
+  folder "$XDG_STATE_HOME/f1r3fly-io/f1r3gaze\n(~~/.local/state/…)" as LState #FFF2CC
+  folder "$XDG_CACHE_HOME/f1r3fly-io/f1r3gaze\n(~~/.cache/…)" as LCache #EDEDED
+  folder "$XDG_RUNTIME_DIR/f1r3fly-io/f1r3gaze\n(else <state>/runtime, reported)" as LRuntime #F8CBAD
+  folder "$XDG_CONFIG_DIRS/f1r3fly-io/f1r3gaze/settings.toml\n$XDG_DATA_DIRS/f1r3fly-io/f1r3gaze/themes\n(read only, most important first)" as LSystem #FFFFFF
+}
+
+node "macOS\n(the bundle identifier io.f1r3fly.f1r3gaze)" as Mac #E2EFDA {
+  folder "~~/Library/Application Support/io.f1r3fly.f1r3gaze/config" as MConfig #DDEBF7
+  folder "…/io.f1r3fly.f1r3gaze/data" as MData #FCE4D6
+  folder "…/io.f1r3fly.f1r3gaze/state" as MState #FFF2CC
+  folder "~~/Library/Caches/io.f1r3fly.f1r3gaze" as MCache #EDEDED
+  folder "$TMPDIR/io.f1r3fly.f1r3gaze" as MRuntime #F8CBAD
+  folder "/Library/Application Support/io.f1r3fly.f1r3gaze\n(read only)" as MSystem #FFFFFF
+}
+
+node "Windows\n(Known Folders)" as Win #E2EFDA {
+  folder "%APPDATA%\\f1r3fly-io\\f1r3gaze\n(roams with the user)" as WConfig #DDEBF7
+  folder "%LOCALAPPDATA%\\f1r3fly-io\\f1r3gaze\\data" as WData #FCE4D6
+  folder "…\\state" as WState #FFF2CC
+  folder "…\\cache" as WCache #EDEDED
+  folder "…\\runtime" as WRuntime #F8CBAD
+  folder "%ProgramData%\\f1r3fly-io\\f1r3gaze\n(read only)" as WSystem #FFFFFF
+}
+
+node "Portable profile\n(--profile DIR or F1R3GAZE_PROFILE)" as Portable #DDEBF7 {
+  folder "DIR/config" as PConfig #DDEBF7
+  folder "DIR/data" as PData #FCE4D6
+  folder "DIR/state" as PState #FFF2CC
+  folder "DIR/cache" as PCache #EDEDED
+  folder "DIR/runtime" as PRuntime #F8CBAD
+}
+
+note bottom of Portable #FFFFFF
+  Hermetic: no system-wide layers.
+  A single-folder profile of an older
+  F1R3Gaze at DIR is migrated in place.
+end note
+
+note bottom of Linux #FFFFFF
+  A relative or empty XDG value is ignored, as the
+  specification requires, and the default is used.
+  Folders F1R3Gaze creates are 0700; files under
+  data, state, backups and runtime are 0600.
+end note
+
+Linux -[hidden]right- Mac
+Mac -[hidden]right- Win
+Win -[hidden]right- Portable
+
+legend right
+  |= Colour |= Class |= Holds |
+  |<#DDEBF7> | config | settings.toml, themes |
+  |<#FCE4D6> | data | wallets, keys, permissions, site data, trust records, replay logs |
+  |<#FFF2CC> | state | window, session, history |
+  |<#EDEDED> | cache | fetched content (regenerable) |
+  |<#F8CBAD> | runtime | the instance lock |
+  |<#FFFFFF> | system-wide | read-only defaults and packaged themes |
+  |<#E2EFDA> | platform | the operating system's conventions |
+endlegend
+@enduml

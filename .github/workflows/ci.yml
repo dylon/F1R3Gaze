@@ -24,12 +24,25 @@ jobs:
         with:
           workspaces: f1r3-work/f1r3gaze
       - run: cargo test --workspace --locked
-      - name: Headless smoke test
+      # A first start makes a private skeleton (and lights the lamp
+      # headlessly), and a second start writes nothing (ledger S14).
+      - name: Storage smoke test
         shell: bash
         run: |
-          cargo run --locked -p gaze-shell --bin f1r3gaze -- --profile "$RUNNER_TEMP/profile" \
-            --headless gaze://newtab --click "#lamp" | tee out.txt
-          grep -q 'id="lamp" class="lit"' out.txt
+          cargo build --locked -p gaze-shell --bin f1r3gaze
+          scripts/storage-smoke.sh target/debug/f1r3gaze "$RUNNER_TEMP/smoke"
+      # An old single-folder profile moved for real: on Linux across file
+      # systems (/dev/shm to the runner's disk), on macOS on one. Windows'
+      # Known Folders cannot be redirected by the environment; the kill job
+      # covers Windows.
+      - name: Moving an old profile
+        if: runner.os != 'Windows'
+        shell: bash
+        run: scripts/storage-migration-ci.sh target/debug/f1r3gaze
+      # The OS keystore builds where it is used.
+      - name: OS keyring build
+        if: runner.os != 'Linux'
+        run: cargo check --locked -p gaze-shell --features os-keyring
 
   # The whole workspace stays clippy-clean (docs/ui/ledger.md, L7). Linux
   # only: that is where the clean state is verified.
@@ -45,6 +58,12 @@ jobs:
         with:
           workspaces: f1r3-work/f1r3gaze
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The features that change what is compiled (docs/storage/ledger.md, S14).
+      - run: cargo clippy -p gaze-shell --all-targets --locked --features frame-times -- -D warnings
+      - run: cargo clippy -p gaze-shell --all-targets --locked --no-default-features --features storage-trace -- -D warnings
+      - run: >
+          cargo clippy -p gaze-shell --all-targets --locked --no-default-features
+          --features crash-points,storage-trace -- -D warnings
 
   reach:
     runs-on: ubuntu-22.04
@@ -59,3 +78,80 @@ jobs:
           workspaces: f1r3-work/f1r3gaze
       - run: cargo build --locked -p gaze-reach --target wasm32-unknown-unknown --profile reach
       - run: node --check crates/gaze-reach/web/gaze-reach.js
+
+  # The start-up protocol's TLA+ model (docs/storage/README.md, section 7.3,
+  # and ledger S2): SANY, the liveness run, every fault, hazard and control;
+  # then real start-ups checked against it (ledger S8).
+  # TLC is pinned by checksum: tla2tools 1.7.4 is TLC 2.19 of 2024-08-08, the
+  # one the ledger's runs used.
+  model:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: tla2tools 1.7.4
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/tla2tools.jar" \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $RUNNER_TEMP/tla2tools.jar" \
+            | sha256sum -c -
+      - run: >
+          scripts/storage-model.sh --quick --no-scope --workers 4 --heap 6g
+          --jar "$RUNNER_TEMP/tla2tools.jar" --out "$RUNNER_TEMP/model"
+      # Real start-ups, recorded on an in-memory file system with crashes
+      # and power cuts, checked against the same model (ledger S8).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - run: >
+          scripts/storage-trace.sh --quick
+          --jar "$RUNNER_TEMP/tla2tools.jar" --out "$RUNNER_TEMP/trace"
+
+  # The real binary killed at its k-th storage operation during start-up,
+  # started again, and the two processes' trace checked against the model
+  # (ledger S8, part 2), on every system: the real file system and kernel.
+  kill:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: tla2tools 1.7.4
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/tla2tools.jar" \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          sum="936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $RUNNER_TEMP/tla2tools.jar"
+          if command -v sha256sum >/dev/null; then
+            echo "$sum" | sha256sum -c -
+          else
+            echo "$sum" | shasum -a 256 -c -
+          fi
+      # Every kill aborts the binary: no crash dialog on Windows.
+      - name: No Windows Error Reporting dialogs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: reg add "HKCU\Software\Microsoft\Windows\Windows Error Reporting" /v DontShowUI /t REG_DWORD /d 1 /f
+      - name: Real kills
+        shell: bash
+        run: >
+          scripts/storage-kill.sh --quick
+          --jar "$RUNNER_TEMP/tla2tools.jar" --out "$RUNNER_TEMP/kill"

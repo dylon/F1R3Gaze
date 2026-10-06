@@ -9,9 +9,17 @@ paying and signing are the same act.
 
 Wallet keys are secp256k1 keys kept in the profile's keystore under
 `wallet:<address>`: the OS credential store on macOS and Windows (Keychain,
-Credential Manager), a `0600` file per key on Linux. `wallets.tsv` in the
-profile lists addresses and labels; `wallet-active` names the payer. Nothing
-else writes a key anywhere.
+Credential Manager), or a `0600` file per key on Linux,
+`wallet/keys/<hash>.key` in the data folder (`f1r3gaze paths` prints where
+it is). `wallet/wallets.tsv` lists addresses and labels, and
+`wallet/wallet-active` names the payer.
+
+A key leaves the keystore only when you export it: `f1r3gaze wallet export
+ADDRESS FILE` writes the file you name (`0600`), and the Wallet panel's
+**Export** writes `wallet/exports/<address>.json` in the data folder
+(`0600`). Start-up never writes, copies or removes a key file: a damaged
+one is reported, and left as it is (`docs/storage/README.md`, section 9.6).
+Nothing else writes a key anywhere.
 
 Wallets are interchangeable with **F1R3Sky**: a wallet file is the Embers
 SDK's format,
@@ -58,7 +66,7 @@ wallets and choose which pays.
 ## Transfers
 
 Balances, history and transfers go through the **Embers** wallet API (the
-service F1R3Sky uses; set `embers_api` in `settings.conf`). Embers prepares a
+service F1R3Sky uses; set `embers_api` under `[wallet]` in `settings.toml`). Embers prepares a
 transfer contract; the browser does not sign what it cannot read, so before
 signing it
 

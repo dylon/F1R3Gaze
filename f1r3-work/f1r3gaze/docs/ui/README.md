@@ -68,8 +68,8 @@ design is in two places:
    control looks disabled. An empty panel says what would appear there and how
    to get it.
 6. **Legible.** Text reaches a WCAG contrast of at least 4.5:1, and bars, rings,
-   and icons at least 3:1, in both built-in schemes and in any accepted custom
-   palette (§4).
+   and icons at least 3:1, in both built-in schemes and in any accepted theme
+   file (§4).
 7. **Engine-aware.** The conventions in §6 encode facts about Blitz, Vello, and
    parley that would otherwise cause defects. Tests enforce them (§12).
 
@@ -192,7 +192,7 @@ Controls carry `data-action="verb[:argument]"`. `Action::parse` accepts:
 | `site:<verb>:<arg>` | `store`, `grants`, `cache`, `session:<tab>:<label>` | Site data actions |
 | `revoke:<urn>`, `allow:<tab>:<prompt>`, `deny:…`, `remember` | — | permissions and prompts |
 | `wallet:<verb>[:<arg>]` | `new`, `import`, `send`, `confirm`, `cancel`, `use`, `copy`, `export`, `remove`, `dismiss` | Wallet |
-| `theme:<name>` | `dark`, `light`, `custom` (also re-reads the palette file), `template` (writes `palette.css`), `next` (cycles; still parsed) | Appearance |
+| `theme:<op>` | `system`, `dark`, `light`; `use:<name>`, a theme file's name as `theme::check_theme_name` allows it; `new`; `reload`. Anything else is refused: the step-9 `next`, `template` and `custom` no longer parse | Appearance: System follows the operating system's preference, Dark and Light are the built-in schemes, and `use` chooses `themes/<name>.css` (a file that cannot be used is not chosen, and the status bar says why). New theme saves the colours shown as `themes/my-theme.css` (`my-theme-2`, … when a name is taken; never over anything) and chooses it; Reload reads the theme files and the chosen theme again. A choice is saved as `theme` under `[appearance]` in `settings.toml`, and the window is asked to show its scheme (§3.6) |
 | `find:show\|next\|prev\|hide` | — | find |
 | `go`, `suggest:<url>` | url | open the typed address, or a history suggestion |
 | `tree:toggle`, `side:pages\|clear`, `console:clear`, `savelog`, `letitrun`, `dismiss` | — | the rest |
@@ -400,6 +400,108 @@ method. `#[deny(clippy::missing_trait_methods)]` fails the build if a winit
 upgrade adds one. Its `winit` dependency is pinned to the version blitz-shell
 pins, so both name the same crate.
 
+### 3.6 The scheme beyond the chrome: pages and the window
+
+The scheme shown is the resolved theme's (`theme::Resolved::scheme`): a
+built-in scheme, or a theme file's, classified by its background (§4.3).
+The chrome draws itself in its colours (§4), and gives every built-in page
+its host sheet. Two more things show the scheme, and the chrome draws
+neither of them: the pages, and the window's decorations.
+
+![A theme change: the chrome, its pages, the window's decorations and the settings file](../storage/diagrams/theme-change-sequence.svg)
+
+**Pages (ledger L13).** A page's `prefers-color-scheme` is the scheme
+shown, as in Chrome and Firefox. Blitz evaluates the media query against a
+document's viewport (`Viewport::color_scheme`). The chrome's layout pass
+copies its own viewport's scheme into the viewport of every page it holds,
+hidden tabs included, and then lays the page out (blitz-dom
+`resolve.rs:150`). So `paint_theme` sets the scheme on the chrome's own
+viewport, and every page follows at the chrome's next layout, before the
+page is painted; nothing is set on a page itself. A change restyles each
+page once, because Stylo recascades a whole document when its device's
+colour scheme changes.
+
+Stylo, as Blitz uses it, also gives an element whose `color-scheme` is
+`normal` the system colours of the preferred scheme (`Mark`, `Canvas`, …),
+which Blitz's own style sheet uses for `mark`, `dialog` and popovers. Chrome
+and Firefox draw such an element light: a page that declares no colour
+scheme is light. Every page therefore gets one more user-agent style sheet,
+`:root{color-scheme:light}` (`tab::PAGE_SCHEME_CSS`). A page's own
+`color-scheme` overrides it, since an author's rule beats a user agent's
+(§11), so a page that declares `light dark` follows the scheme shown in its
+system colours too.
+
+**The window.** Only `ChromeApplication` holds the winit window, so the
+chrome asks it through a queue of `WindowRequest`s. The application drains
+the queue (`take_window_requests`) after Blitz creates the window, after
+each of the window's events, and once per turn of the event loop:
+- **`Scheme { effective, follows_system }`**, queued by every `paint_theme`;
+  only the latest is kept. It sets Blitz's theme override
+  (`View::set_theme_override`), which keeps the window's own theme from
+  replacing the chrome's scheme. Without it, `View::init` would set the
+  chrome's scheme from `Window::theme()`, which X11 never knows, so every
+  page would be light again once the window exists, and so would each
+  `ThemeChanged` (blitz-shell `window.rs:181, 633`; winit-x11
+  `window.rs:2288-2290`). It also gives the window's decorations
+  `decoration_theme(platform, effective, follows_system)`:
+
+  | Platform | Following the system | An explicit choice |
+  |---|---|---|
+  | macOS, Windows | no theme: the window follows the system itself, and reports its changes (`ThemeChanged`) | the scheme shown |
+  | X11, Wayland | the scheme shown: nothing is reported, and a window with no theme is dark on X11 (`_GTK_THEME_VARIANT`) and the desktop's on Wayland | the scheme shown |
+
+  Each of the two is set only when it changes (`scheme_change`): Windows
+  redraws its title bar at every `set_theme`.
+- **`FollowSystem`**, when System is chosen again. macOS reports no change
+  while a window has an appearance of its own (winit-appkit
+  `window_delegate.rs:656`), so the application reads `system_theme()` and
+  reports it to the chrome.
+- **After every `ThemeChanged`** the chrome asks for the scheme again, and
+  the application forgets the decorations it gave. Windows re-applies the
+  system's theme to a window created without one whenever the system's
+  settings change (winit-win32 `event_loop.rs:2509-2520`), even while an
+  explicit choice is shown; the next request sets the decorations back.
+- **`ToggleFullScreen`**, from F11 (Ctrl+Cmd+F on macOS; §9): one request
+  per press. The application reads the window first, so that leaving full
+  screen restores what was there, then enters full screen on the window's
+  monitor (`Fullscreen::Borderless(None)`) or leaves it; the status bar says
+  how to leave (§8.5).
+
+### 3.7 The window: made where it was, and kept
+
+The window's size and place, whether it was maximized or full screen, and
+its zoom are kept in `state/window.json` (storage ledger S13; the rules, per
+platform, are in [`docs/storage/README.md`](../storage/README.md),
+section 13).
+
+![The window: made where it was left, followed, and kept in window.json](../storage/diagrams/window-geometry-sequence.svg)
+
+- **Made once the monitors can be listed.** `launch()` hands
+  `ChromeApplication` a `PendingWindow`: the chrome, the renderer, the
+  saved state and a saver (the chrome, which holds the profile, goes with
+  the window at `CloseRequested`). In `can_create_surfaces`,
+  `create_window` asks `plan_restore` where to put it, among the monitors
+  winit lists, and has Blitz make it with those attributes
+  (`WindowConfig::with_attributes`), with its decorations' theme, except on
+  Windows (`creation_theme`; §3.6).
+- **The order after `View::init`.** Blitz makes the window hidden, shows
+  it, and gives the chrome a viewport at zoom 1 with the window's theme.
+  Then come the saved zoom, the scheme shown (the window requests of §3.6),
+  maximized, and full screen on the saved monitor, in that order: a window
+  manager ignores a maximize asked of a hidden window.
+- **Followed, not read, on the resize path.** `SurfaceResized`, `Moved` and
+  `ScaleFactorChanged` only mark the window changed (`Keeper::changed`).
+  `about_to_wait` sets `ControlFlow::WaitUntil` for the save that is due;
+  Blitz never sets the control flow itself. The window is read, and
+  `window.json` written if what it holds changed, when a save is due (500 ms
+  after the last change, at least every 3 s, and 500 ms after the window is
+  made), before it closes, when it loses a focus it had, and around full
+  screen; `Drop` writes the last reading when the loop ends.
+- **The zoom.** Blitz's keys (Ctrl+=, Ctrl+−, Ctrl+0) are kept within
+  $`[0.25, 5]`$ after every key, and kept to hundredths (ledger L15).
+- **A frame-times A/B.** `F1R3GAZE_KEEP_WINDOW=0` turns the keeping off
+  (§12.3); each save is counted and timed in the frame line.
+
 ---
 
 ## 4. Colour tokens and contrast
@@ -504,20 +606,42 @@ The test `palettes_are_legible` asserts, for both schemes:
 - the accent on the surface, at least 4.5:1;
 - bg on danger, at least 4.5:1.
 
-### 4.3 Custom palettes
+### 4.3 Themes
 
-Appearance → **Create palette file** writes `palette.css` in the profile. It
-lists each token as `--gaze-token: #RRGGBB;`. `parse_palette` accepts the file
-only if:
-1. every line is such a declaration;
+The theme is a setting, `theme` under `[appearance]` in `settings.toml`:
+- **`system`**, the default, follows the operating system's light or dark
+  preference, and is dark without one ([`docs/storage/README.md`](../storage/README.md),
+  section 12);
+- **`default-dark`** and **`default-light`** are the built-in schemes;
+- **any other name** is a theme file, `themes/<name>.css`, in the settings
+  folder or one installed for everyone; a user's file hides an installed one
+  of the same name. Appearance lists them all (§8.13). **New theme** saves
+  the colours shown as a new file (`my-theme.css`, then `my-theme-2.css`, …;
+  never over anything) and chooses it, and **Reload** reads the files again
+  after editing.
+
+A theme file is a restricted CSS subset: an optional `:root { … }` holding
+`--gaze-*: #RRGGBB` declarations, and comments (the grammar is in
+`docs/storage/README.md`, section 6.2). `parse_palette` accepts it only if:
+1. every declaration is a known token with a `#RRGGBB` value;
 2. text and muted text reach 4.5:1 on the surface;
 3. accent-text reaches 4.5:1 on the accent;
 4. any of the two newest tokens (`--gaze-success`, `--gaze-danger`) present
    reaches 4.5:1 on the surface.
 
-A palette written before those tokens existed (`LEGACY_TOKENS` = 10) still
-loads: each missing token takes whichever built-in value, dark or light,
-contrasts more with the palette's surface (`legible_default`).
+A theme that leaves tokens out takes them from the built-in scheme it
+resembles: dark or light by its background's luminance (`scheme_of`,
+`palette_with`). A theme that cannot be used is reported, and the scheme
+the system prefers (or dark) is shown instead: Appearance says so at the
+top of the panel and in the file's row, and the status bar at start-up.
+
+A built-in scheme is drawn in its own colours whatever theme files exist.
+Before the switch to the five roots, a valid old `palette.css` was laid
+over Dark and Light too (ledger L14).
+
+Pages see the scheme shown in `prefers-color-scheme` (§3.6, ledger L13). A
+theme file's scheme, for pages and for the window's decorations, is the one
+its background classifies it as (`scheme_of`).
 
 ---
 
@@ -598,12 +722,12 @@ enforces it.
 | Buttons | `.btn`, `-sm`, `-xs`, `-ghost`, `-primary`, `-danger` | A disabled button uses border-coloured text; a disabled ghost button stays borderless. |
 | Icon buttons | `.icon-btn`, `-sm`, `.on` | Every icon button has a `.tip`. |
 | Chips | `.chip`, `.chip.on` | Toggles such as Tree and Page text (`aria-pressed`). |
-| Segmented control | `.segmented`, `.segment.on` | Dark, Light, Custom. |
+| Segmented control | `.segmented`, `.segment.on` | System, Dark, Light; the lit one has `aria-pressed="true"`. |
 | Checkbox | `.check`, `.check-box` | Drawn in CSS ("Remember for this site"). |
 | Badges | `.tag` (`ok`, `warn`, `err`), `.count` | Never flex boxes, because they hold bare text (R1). |
 | Hover labels | `.tip`, `-right`, `-below`, `-below-end` | `:hover > .tip { visibility: visible }`; hidden under `:disabled`. |
 | Fields | `.field`, `.field-icon`, `.ghost-hint` (`.off`), `.field-label`, `.form`, `.form-cols`, `.form-row`, `.form-actions` | A ghost hint stands in for `placeholder`, which Blitz does not draw. |
-| Lists | `.section-head`, `.row` (`.on`, `.menu-open`, `.static`), `.row-icon`, `.row-text`, `.row-label`, `.row-detail`, `.row-meta`, `.row-actions` | Row actions float over the row's end; they show on hover, on the active row, and when its menu is open. |
+| Lists | `.section-head`, `.row` (`.on`, `.menu-open`, `.static`), `.row-icon` (`.warn`, `.err`), `.row-text`, `.row-label`, `.row-detail`, `.row-desc` (`.why`), `.row-meta`, `.row-actions` | Row actions float over the row's end; they show on hover, on the active row, and when its menu is open. A reason (`.row-desc.why`) may hold a long path, so it wraps anywhere. |
 | Inline menu | `.row-menu`, `.menu-item` (`.danger`), `.menu-sep` | Opens under its row in the panel, so it never covers the page. |
 | Containers | `.card`, `.card-head`, `.facts`, `.kv`, `.notice` (`info`, `ok`, `warn`, `err`), `.empty-state`, `.footnote` | Inside a card, a notice is filled with `--gaze-surface`. |
 | Search match | `mark` inside a row label, row detail, or suggestion | Text colour plus a 2 px accent underline; neither changes any width. |
@@ -728,7 +852,9 @@ One line, in this order:
 3. the page's notice;
 4. the step-budget tag and **Let it run**;
 5. on the right, a message that expires: 4 s for information and success, 8 s
-   for warnings and errors.
+   for warnings and errors. Entering full screen shows how to leave it
+   ("Press F11 to leave full screen"; on macOS, Ctrl+Cmd+F), and leaving it
+   takes the message away.
 
 Everything is fitted to the window's width (`the_status_bar_fits_on_one_line`).
 
@@ -746,10 +872,11 @@ After: [`47-flash-shown`](../screenshots/ui/after/47-flash-shown.png),
 - **The controls bar** under the header is constant per panel. Switching panels
   or reopening the sidebar starts with an empty search (ledger L5 and S9).
 - **At startup** every window opens with the sidebar collapsed, whatever the
-  last window left. The panel is still restored from `workspace.json`, so
-  Ctrl+B or the toolbar's sidebar button reopens the panel last shown, and a
-  rail button opens its own. `restore_sidebar = true` in `settings.conf`
-  reopens the sidebar as the last window left it. The snapshot harness sets
+  last window left. The panel is still restored from `state/session.json`,
+  so Ctrl+B or the toolbar's sidebar button reopens the panel last shown, and
+  a rail button opens its own. `restore_sidebar = true` under
+  `[appearance]` in `settings.toml` reopens the sidebar as the last window
+  left it. The snapshot harness sets
   it, because every scene seeds its own sidebar
   (`ChromeDocument::new`; tests `the_sidebar_starts_collapsed`,
   `restore_sidebar_reopens_it`).
@@ -867,17 +994,39 @@ After: [`13-console-dark`](../screenshots/ui/after/13-console-dark.png).
 
 ### 8.13 Appearance
 
-From top to bottom:
-1. the scheme as a segmented control (Dark, Light, Custom), with Custom enabled
-   only for a valid palette;
-2. one sentence on what it changes;
-3. swatches of the current palette;
-4. the palette file's card: its path, its status (a notice that says what is
-   wrong with an invalid file), and Create or Reload.
+From top to bottom (ledger S12, part 3):
+1. when the chosen theme file cannot be used, an error notice that names the
+   file, says why, and says which scheme is shown instead;
+2. the scheme as a segmented control: **System**, **Dark**, **Light**. A
+   theme file lights none;
+3. one sentence. With System it first says what the system prefers ("Follows
+   your system, which prefers dark."), or that the system states no
+   preference, or that its preference could not be read, so dark is used.
+   Then what the scheme colours: the browser's controls, its built-in
+   pages, and sites that offer light and dark styles (§3.6);
+4. **Themes**, with their count: every theme file, the user's and those
+   installed for everyone (a user's file hides an installed one of the same
+   name), by name. A usable file's row can be chosen (`theme:use:<name>`),
+   shows its path and its scheme as a tag (Dark or Light), and is lit when
+   chosen. A file that cannot be used shows why, with an **Unusable** tag,
+   and does nothing. With no file: "No theme files yet.";
+5. swatches of the colours shown;
+6. **Theme files**: the user's themes folder, a note on what a theme file
+   is, and **New theme** and **Reload**.
 
-After: [`15-appearance-dark`](../screenshots/ui/after/15-appearance-dark.png),
-[`17-appearance-bad-palette`](../screenshots/ui/after/17-appearance-bad-palette.png),
-[`18-appearance-low-contrast`](../screenshots/ui/after/18-appearance-low-contrast.png).
+The list is read when the panel is shown, when the sidebar reopens on it,
+by New theme and by Reload; never at each render. New theme and Reload say
+what they did in the status bar: "Theme created at …", "Themes reloaded",
+or why the chosen theme cannot be used. A session that only reads refuses
+New theme, saying why. The theme files' format is in
+[`docs/storage/README.md`](../storage/README.md), section 6.2.
+
+Scenes 15–18 and 72–82 of the snapshot harness (§12.2) show the panel. The
+committed captures, [`15-appearance-dark`](../screenshots/ui/after/15-appearance-dark.png),
+[`17-appearance-bad-palette`](../screenshots/ui/after/17-appearance-bad-palette.png) and
+[`18-appearance-low-contrast`](../screenshots/ui/after/18-appearance-low-contrast.png),
+still show the panel as it was before step 10, with Dark, Light and Custom,
+until they are regenerated.
 
 ### 8.14 Built-in pages
 
@@ -913,17 +1062,24 @@ from Blitz (§3.4).
 
 ## 9. Keyboard
 
-Ctrl means Ctrl on Linux and Windows, and Cmd on macOS.
+Ctrl means Ctrl on Linux and Windows, and Cmd on macOS (`KeyPlatform::command`).
+Blitz reports Cmd as the `SUPER` modifier, so that is the one the macOS
+bindings test (ledger L12). Ctrl+Tab and Ctrl+Shift+Tab keep Ctrl on every
+platform: on macOS, Cmd+Tab is the system's application switcher. The hover
+tips name each key as the platform has it (`KEY_LABELS`; ledger L17).
 
 | Keys | Where | Action |
 |---|---|---|
 | Ctrl+T, Ctrl+W, Ctrl+Shift+T | anywhere | new tab, close tab, reopen the last closed tab |
-| Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+1…8, Ctrl+9 | anywhere | next and previous tab, tab N, last tab |
+| Ctrl+Tab, Ctrl+Shift+Tab (Ctrl on every platform) | anywhere | next and previous tab |
+| Ctrl+1…8, Ctrl+9 | anywhere | tab N, last tab |
 | Ctrl+L | anywhere | focus the address box, its text selected |
 | Ctrl+F | anywhere | open find, its query selected |
 | Ctrl+R | anywhere | reload |
-| Ctrl+H | anywhere | History panel (again: hide the sidebar) |
+| Ctrl+H (Cmd+Y on macOS) | anywhere | History panel (again: hide the sidebar). On macOS the system's menu takes Cmd+H for Hide before the window sees it, so History is Cmd+Y there, as in Safari and Chrome (ledger L16) |
 | Ctrl+B | anywhere | show or hide the sidebar |
+| F11 (Ctrl+Cmd+F on macOS) | anywhere | enter or leave full screen; the status bar says how to leave. Checked before Find, and a chord held down toggles once |
+| Ctrl+=, Ctrl+−, Ctrl+0 (Blitz's own) | anywhere | zoom the window by a tenth, from 25 % to 500 %, or back to 100 %; kept in `window.json` (ledger L15) |
 | ↓ ↑ | address box, dropdown open | move through the suggestions and back to the text |
 | Enter | address box | open the highlighted suggestion or what was typed |
 | Esc | address box | put the page's address back and select it |
@@ -1232,6 +1388,19 @@ sources.
 | Fact | Consequence in the chrome | Source |
 |---|---|---|
 | No rendering of `placeholder`, `text-overflow`, `title` tooltips, `:focus-within`, `content: attr()`. A `<label for>` click does not focus the input. | Ghost hints, exact fitting (R5), `.tip` labels, `#urlwrap.focus` set from Rust. | Blitz source review |
+| winit reports the system's light or dark preference only on macOS and Windows (`ActiveEventLoop::system_theme`, `WindowEvent::ThemeChanged`); on X11 and Wayland it reports nothing. | The chrome asks the XDG desktop portal on Linux (`system_theme.rs`, through `dbus-send`), again when the window gains the focus; `application.rs` hands the window's reports to the chrome elsewhere. | winit-core 0.31.0-beta.3 `event_loop/mod.rs:177`, `event.rs:484` |
+| A document's `prefers-color-scheme` is its viewport's `color_scheme`, light by default. Changing it restyles the whole document once. | The chrome sets the scheme shown on its own viewport (§3.6, L13). | blitz-traits `shell.rs:78-90`; blitz-dom `stylo_device.rs:38-56`, `document.rs:2072`; stylo 0.22.0 `servo/media_features.rs:66` |
+| The parent's `resolve` copies its viewport's `color_scheme` into every sub-document's viewport, hidden ones included. | Pages follow the chrome's scheme at its next layout; nothing is set on a page (L13). | `resolve.rs:150` |
+| `View::init` sets the document's scheme from `Window::theme()` (unknown, so light, on X11 and Wayland), and `ThemeChanged` from the system's, unless the view has a theme override. | `ChromeApplication` sets the override to the scheme shown (§3.6, L13). | `blitz-shell/src/window.rs:181, 268-272, 633-637` |
+| Stylo gives `color-scheme: normal` the preferred scheme's system colours. Blitz's style sheet colours `mark`, `dialog` and popovers with system colours and form controls with fixed ones, and Blitz paints no `Canvas` behind a page ([DioxusLabs/blitz#1078](https://github.com/DioxusLabs/blitz/issues/1078)) nor reads `<meta name="color-scheme">` ([#1077](https://github.com/DioxusLabs/blitz/issues/1077)). | Every page gets `:root{color-scheme:light}`, which its own `color-scheme` overrides (L13, H2). | stylo 0.22.0 `device/servo.rs:336-351`; blitz-dom `assets/default.css:703-704, 968-969, 1129-1130` |
+| `set_theme(None)` means dark on X11 (`_GTK_THEME_VARIANT`); `theme()` and `system_theme()` are always `None` on X11 and Wayland. macOS stops reporting `ThemeChanged` while a window has an appearance of its own. Windows' `set_theme` leaves the window's creation preference as it was, and a settings change re-applies the system's theme to a window created without one. | `decoration_theme`, `FollowSystem`, and the scheme asked for again after every report (§3.6). | winit-x11 `window.rs:980-1004, 2288-2290`, `event_loop.rs:785-787`; winit-wayland `event_loop/mod.rs:741-743`; winit-appkit `window_delegate.rs:636-658`; winit-win32 `window.rs:1163-1169`, `event_loop.rs:2509-2520` |
+| blitz-paint draws scrollbars only with its `scrollbars` feature, which nothing in F1R3Gaze enables. | No scrollbar follows the scheme: none is drawn. | `blitz-paint/Cargo.toml:23`; `cargo tree -e features -i blitz-paint` |
+| `View::init` makes the window hidden (`with_visible(false)`), shows it, and replaces the document's viewport (zoom 1, the window's theme). `BlitzApplication::add_window` and `can_create_surfaces` are public. | The window is made by Blitz's own code from `ChromeApplication`, and the zoom, scheme, maximize and full screen are set after `View::init` (§3.7). | `blitz-shell/src/window.rs:135-236`; `application.rs:33-35, 113-128` |
+| Blitz's zoom keys add or take a tenth with no bound, and the viewport's logical size divides by the zoom. | The zoom is set back within $`[0.25, 5]`$ after every key (L15). | `blitz-shell/src/window.rs:646-666`; blitz-traits `shell.rs:118-124, 144-146` |
+| X11: maximize and full screen are client messages that only a window manager carries out; full screen asked of a hidden window waits for it to be shown; `Moved` comes only from a window manager's synthetic ConfigureNotify; a window being mapped gets `Focused(false)`. | The window is read, not only watched (§3.7); a focus loss saves only after the window has had the focus. | winit-x11 `window.rs:1006-1058, 1151-1155, 1179-1198, 1312-1346`; `event_processor.rs:703-763, 879-890` |
+| `with_position` places the frame's corner on X11 and Windows, the content's corner (in points) on macOS, and nothing on Wayland; `outer_position` is unsupported on Wayland. | `window_attributes` and `Sample::from_platform` use each platform's units (storage README §13). | winit-core `window.rs:237-261, 808-849`; winit-appkit `window_delegate.rs:714-731, 1284-1308` |
+| winit-wayland's monitor scale is the whole-number `wl_output` scale; the compositor bounds a new window (`configure_bounds`). | No monitor clamp on Wayland (storage README §13). | winit-wayland `output.rs:53-56`, `window/state.rs:454-463, 534-551` |
+| Windows keeps a theme given at creation for good; macOS's Quit closes the windows and drops the handler with no `CloseRequested`. | No creation theme on Windows (§3.6); `ChromeApplication`'s `Drop` writes the last reading. | winit-win32 `event_loop.rs:2508-2523`; winit-appkit `app_state.rs:188-192` |
 | Bare text in a flex box becomes an anonymous block that is never restyled. | R1 (ledger L2). | `blitz-dom/src/layout/construct.rs`; `stylo.rs` |
 | `add_user_agent_stylesheet` adds a sheet of the user-agent origin. Stylo compares importance and origin before specificity, and reverses the origin order for important declarations: an important user-agent declaration beats every author declaration ([CSS-Cascade-4] §6.1). | `builtin_css` overrides the built-in pages' own rules, so it styles their states too: `button.lit` (L11). | `blitz-dom/src/document.rs:1149-1153`; stylo 0.21.0 `rule_tree/level.rs:144-165` |
 | Only a positioned element with z-index ≠ 0 is hoisted, above sub-documents, hit-tested first, unclipped. | R2 and the layer table. | `blitz-paint` `paint_tree.rs` |
@@ -1272,7 +1441,11 @@ sub-document hover behind §3.4, reproduced on `main` too.
 
 ### 12.1 Tests
 
-`cargo test -p gaze-shell -p gaze-dom-blitz` runs 105 + 8 tests (107 + 8 with `--features frame-times`). By area:
+`cargo test -p gaze-shell -p gaze-dom-blitz` runs 368 + 8 tests (373 + 8 with
+`--features frame-times`); 87 of gaze-shell's are the chrome's own
+(`chrome/tests.rs`), and the rest test the profile, the engine and the
+command line (`docs/storage/README.md`, section 15). By area, for the
+chrome:
 
 | Area | Tests |
 |---|---|
@@ -1280,27 +1453,36 @@ sub-document hover behind §3.4, reproduced on `main` too.
 | Markup | `chrome_markup_has_stable_ids`, `removed_toolbar_buttons_stay_commented`, `labels_are_never_bare_text_in_flex_boxes` (R1), `side_controls_are_constant` (R4) |
 | Layout | `text_budgets_match_laid_out_boxes`, `the_status_bar_fits_on_one_line`, `measured_width_matches_blitz_layout` |
 | Builders | the strip, tab attention, history groups and counts, search highlights, prompts, the error page |
-| Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge, the sidebar collapsed at startup and `restore_sidebar`, the new-tab page's lamp lighting and going out in both schemes (L11) |
+| Behaviour | find (L1, H7), theme switches (L2), closed tabs (L3), Remember (X1), panel switches, the tab menu, the wallet review, suggestion clicks, select-all, the badge, the sidebar collapsed at startup and `restore_sidebar`, the new-tab page's lamp lighting and going out in both schemes (L11), a built-in scheme ignoring the custom theme (L14) |
+| State and themes (storage S14) | the session and the history in their own files; a tab switch never rewrites the history, which is written once per delay and on closing; Clear history removes its backups; System follows the OS, an explicit choice ignores it, no preference is dark, an OS change leaves no stale label colour, a portal answer applies on the next poll, the override ignores the window's reports; a chosen scheme is saved (comments kept), or applies to this session only; start-up's notices are shown once; replay logs and exports go to the data folder; a read-only window saves nothing and creates no theme file |
+| Appearance and the scheme beyond the chrome (storage S12, part 3; L13) | pages follow the chrome's scheme, hidden ones and new tabs too, and a page that declares no colour scheme keeps light system colours (L13); the window is asked to show the scheme, only the latest request kept, and asked again after every report; choosing System asks the system again; the panel's markup (the lit segment, the System sentence, the theme rows and their tags, the notice for a theme that cannot be used); a theme file chosen, reloaded after editing and dropped when broken; a file that cannot be used is never chosen; New theme copies the colours shown, never replaces anything, and is refused in a read-only session; the list is read again when Appearance is shown; installed themes are listed, and a user's file hides one |
 | The pointer over pages (L8) | through a recording window provider and real pointer events: a fresh page never hides the cursor; the cursor follows links and text; leaving a page ends its hover; hover changes are repainted; a page loaded, or a tab switched, under a resting pointer gets its cursor; `cursor: none`; background pages; no redundant cursor requests; built-in buttons |
 | Resizing (L9) | through a recording window provider, with frames bracketed as the window brackets them: a relayout hovers again at the pointer's last position (the mechanism); once the mouse has left, resizing hovers nothing and asks for no extra frame; a page's new viewport asks for a frame (the mechanism); a frame answers its pages' requests unless a hover changed during it, and then asks for one more |
-| Pure helpers | `display` (13), `text_fit` (14, with the shaping face), `theme` (7, with the bundled faces' names and the lit lamp's contrast), `ui_state` (6), `cursor` (6: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants, requests set aside during a paint, and never another thread's), `application` (2: which events poll at once, which end the hover), `renderer` (4: coalescing, pass-through, delegation, a size asked for while the renderer resumes), `frame_stats` (2, with `--features frame-times`) |
+| Window state and full screen (storage S13, part 2; L15–L17) | `window.json` written only when what it holds changed, a failed write tried again, a zoom change saved when due; readings in each platform's units (macOS points, X11's frame and surface, Wayland's none, Windows' minimized place); monitors in desktop units; Wayland's size left to the compositor; sizes capped where no monitor bounds them; Blitz's zoom kept in range (L15) and to hundredths; the full-screen chord on each platform, checked before Find, a held chord ignored, one request per press, and the hint on how to leave; History on Cmd+Y on macOS (L16); every key a tip names does what the tip says (L17) |
+| Pure helpers | `display` (13), `text_fit` (14, with the shaping face), `theme` (7, with the bundled faces' names and the lit lamp's contrast), `ui_state` (6), `cursor` (6: the `None` rule, `page_point`, `WindowShell` forwarding, `PageShell` grants, requests set aside during a paint, and never another thread's), `application` (12: which events poll at once, report a scheme, ask the portal again, end the hover, or mark the window changed; a focus loss saves only after the window had the focus; the window system from the display handle; no creation theme on Windows; the window's size and place in each platform's units; the loop woken when a save is due; the decorations' theme on each platform; a scheme request changes only what differs), `renderer` (4: coalescing, pass-through, delegation, a size asked for while the renderer resumes), `frame_stats` (2, with `--features frame-times`) |
 
 Each fix in the ledger has a **mutation check**: the fix is commented out, its
 test must fail, and then the fix is restored.
 
 CI (`.github/workflows/ci.yml`) runs:
 - the workspace tests on Linux, macOS, and Windows;
-- the headless smoke test;
+- the storage smoke test, which also lights the new-tab page's lamp
+  headlessly (`scripts/storage-smoke.sh`), and, on Linux and macOS, an old
+  profile moved for real (`scripts/storage-migration-ci.sh`);
 - a `lint` job: `cargo clippy --workspace --all-targets --locked -- -D
-  warnings` with Rust 1.95.
+  warnings` with Rust 1.95, and `-p gaze-shell` with `frame-times`,
+  `storage-trace`, and `crash-points,storage-trace`;
+- the storage model, its traces and the real kills (`model` and `kill`;
+  `docs/storage/README.md`, section 15).
 
 ### 12.2 The snapshot harness
 
 `scripts/ui-snapshots.sh` drives the real binary under a virtual X server
 (Xvfb). It uses `xdotool` for keys and pointer, and ImageMagick 7 for captures
-and measurements. Every one of the 71 scenes starts from a seeded throwaway
+and measurements. Every one of the 99 scenes starts from a seeded throwaway
 profile, with the pointer parked on the status bar before the window opens,
-so no scene depends on where the previous one left it.
+and with the fake colour-scheme portal answering 0 (no preference), so no
+scene depends on where the previous one left either.
 
 **Cursor scenes (61–68, ledger L8).** A screen capture does not contain the X
 cursor, so these scenes read it from the server. `scripts/x-cursor.py` uses
@@ -1312,8 +1494,12 @@ sprites in the same run:
 - the text cursor, over the address field;
 - the arrow, over the rail's empty middle.
 
-The checks then compare hashes, so they do not depend on the cursor theme. The
-sprites are saved in `cursors/`. The pages are `site/cursor.html` and
+The checks then compare hashes, so they do not depend on which cursor theme
+is installed. They need one, though: with no theme found, the X server draws
+one fallback sprite for every shape, and `cursor_refs_distinct` fails. The
+theme is found through `$XDG_DATA_DIRS`, which the harness points into its
+work directory, so the harness names the search path in `XCURSOR_PATH`
+first (ledger S14, H0). The sprites are saved in `cursors/`. The pages are `site/cursor.html` and
 `site/cursor-next.html`: large boxes at fixed places, the second with its link
 where the first has a plain block.
 
@@ -1327,6 +1513,70 @@ captures the unlit lamp as a reference before the first click.
   reference pixel for pixel. Blitz outlines only focused inputs and text
   areas, so the clicked button has no focus ring.
 
+**System-scheme, theme-file and page-scheme scenes (72–84; storage ledger
+S12, part 3, and L13).** They need the current seed format and are skipped
+with the legacy one (`FORMAT_IN`).
+- **72–75**: theme System, Appearance open, the fake portal answering 1
+  (dark), 2 (light), 0 (no preference) or failing. The strip must match
+  scene 15's or 16's exactly (System looks like the scheme it follows), the
+  System segment must differ from those scenes' (it is lit), and a portal
+  that fails must be told apart from one that states no preference (the
+  sentence). Scene 72 also checks the arguments `dbus-send` was given.
+- **76**: the portal turns from dark to light while the window is open. The
+  scene waits past start-up's query, takes the focus away and gives it
+  back (python-xlib), and the sidebar and the strip must then match scene
+  73's exactly: the window asked again and showed the answer.
+- **77**: a portal that never answers. The title must appear within 3 s
+  (start-up waits at most 100 ms), dark is shown, and no `dbus-send` is left
+  running after its 1 s deadline.
+- **78–82**: three theme files (`three_themes`: one that cannot be used, a
+  dark one and a light one). The list (78); a row clicked (79), which must
+  look like a start with that theme (80, the same profile path); New theme,
+  then the file edited and reloaded (81, scrolled to the card's buttons); a
+  chosen file that cannot be used (82), whose notice comes first.
+- **83, 84**: a page with its own light and dark styles
+  (`site/scheme.html`), in a dark and a light chrome. With the step-9 binary
+  scene 83 showed the page light (`dark_page_px` 0): the red run of L13.
+
+**The window and the storage scenes (85–99; storage ledger S13, part 2).**
+They need the current seed format. The X server's monitor is named as
+`xrandr` names it (`screen` under Xvfb), and `window.json` is seeded
+(`seed_window`) and read (`wjson`) with jq. With no window manager, X11
+reports no move and carries out no maximize, so these scenes read the
+window as the X server has it (`xdotool getwindowgeometry`).
+- **85–89**: the first start (the default size at the screen's corner, and
+  the first save with no event to report the window, written before the
+  history's save: without the loop's own wake-up, the history's would carry
+  it, just in time for the other checks; it must look exactly like scene
+  19, made at 800×600 and resized); a window made where it was
+  left, which writes nothing; a window left off screen on a monitor that is
+  gone, centred on the primary; a 4 s drag, saved during it (the 3 s
+  bound) and after it; a move and resize closed within 500 ms
+  (`close_window`, `WM_DELETE_WINDOW`), saved as read before the window
+  went.
+- **90–93**: Blitz's zoom keys, kept; a zoom restored; twelve presses of
+  Ctrl+−, kept at 25 % (L15); F11 into `window.json` and back, with the
+  hint. A window's rendering at a zoom depends a little on the zoom it
+  started at (Blitz keeps the border widths of its first scale:
+  [DioxusLabs/blitz#1076](https://github.com/DioxusLabs/blitz/issues/1076);
+  ledger S13 part 2, E3), so a restored zoom is compared
+  with the same window after Ctrl+0 and the keys, which match only if the
+  zoom restored is exactly the keys'.
+- **94–97**: storage scenes. An old single-folder profile found through
+  HOME and moved by a start with no `--profile`, in a HOME and XDG folders
+  of the scene's own (`new_machine`), whose `paths` must name only them
+  (`machine_self_test`); a move that meets a file already there; damaged
+  `session.json` and `window.json`, backed up and made anew; and a second
+  F1R3Gaze on one profile, whose window and headless run are refused and
+  whose reading command goes on.
+- **98, 99**: with a window manager, openbox (`start_wm`; its configuration
+  has no key or mouse bindings): full screen and back, made full screen
+  again, and no creep by the frame; maximized, kept so with the size before
+  it, made maximized again after the window is shown, and back. They run
+  last, so no scene without a window manager runs after one. Without
+  openbox the harness exits 2 when they are selected; leave them out with
+  `--only '^([0-8][0-9]|9[0-7])-'`, which `run.txt` and `runs.tsv` record.
+
 ```sh
 scripts/ui-snapshots.sh --after                  # all scenes → docs/screenshots/ui/after/
 scripts/ui-snapshots.sh --before --bin OLD_BINARY
@@ -1338,11 +1588,14 @@ scripts/ui-snapshots.sh --compare                # side by side, into the work d
 The options and exit codes:
 - **Options.** `--size 1280x800` (the default), `--timeout SECS`, `--work DIR`
   (the work directory; default `target/ui-snapshots`), `--keep` (keep the
-  profiles in the work directory), and `--calibrate` (draw the coordinate table
-  on a capture).
+  profiles in the work directory), `--calibrate` (draw the coordinate table
+  on a capture, points as crosses and crops as boxes; in after mode also on
+  the Appearance panel with three theme files, at its top and scrolled to
+  its end), `--seed-format current|legacy` and `--check-isolation`
+  (below).
 - **Exit codes.** 0 for success; 1 when a scene or check failed; 2 when a tool,
-  the binary, or a display is missing; 3 for an unsafe profile path; 64 for
-  usage.
+  the binary, or a display is missing; 3 for an unsafe path, or an isolation
+  self-test that failed; 64 for usage.
 
 **Safety.**
 - The harness works in `target/ui-snapshots` under a lock. The directory is
@@ -1351,8 +1604,34 @@ The options and exit codes:
   Runs before 2026-10-04 used `${TMPDIR:-/tmp}/f1r3gaze-ui-snapshots`, so
   `file://` URLs in older captures show that path. Each run records its work
   directory in `run.txt`.
-- It refuses to use the real profile.
-- It sets `XDG_DATA_HOME` inside the work directory.
+- **Isolation** (`scripts/lib/storage-isolation.bash`, shared with the
+  resize scripts). Every profile is a portable root under the work
+  directory. Every XDG variable points into the work directory, and so does
+  `F1R3GAZE_PROFILE`. There is no session bus: a fake `dbus-send` answers the
+  colour-scheme question from `$WORK/portal/scheme` and logs what it was
+  asked. Every new profile resets the answer to 0 (no preference), and the
+  system-scheme scenes set 1 (dark), 2 (light), `hang` or `fail` (`portal`). What the XDG folders also locate for
+  other programs is named directly: the Vulkan driver (`VK_DRIVER_FILES`)
+  and the X cursor theme (`XCURSOR_PATH`).
+- **The guard.** A work directory or profile that is, holds or is inside a
+  real F1R3Gaze folder is refused (exit 3) before anything is written. The
+  real folders are computed from the real environment first: the five roots,
+  both places of the old single-folder profile, the macOS folders, and
+  `F1R3GAZE_PROFILE`.
+- **The self-test.** Before Xvfb starts, `f1r3gaze paths` must name only the
+  work directory, both with `--profile` and without it (with `HOME` in the
+  work directory: an old profile is found through `HOME`, and a start
+  without `--profile` would move it), and `dbus-send` must be the fake.
+  `--check-isolation` runs only the guard and the self-test.
+- **Seeding.** `--seed-format current` (the default) seeds
+  `config/settings.toml` (`[appearance]` with `restore_sidebar` and the
+  scene's `theme`, `[shard] observers = []`, and `[wallet] embers_api` when a
+  scene asks for it), `state/session.json` and `state/history.json`, and a
+  scene's palette as `config/themes/custom.css`, and theme files as
+  `config/themes/<name>.css` (`write_theme`, `three_themes`). `--seed-format legacy` seeds
+  the single folder's `settings.conf`, `workspace.json` and `palette.css`, for
+  binaries from before the five-root layout (the S1 baseline), and skips the
+  self-test, which needs `paths`.
 - It runs a mock Embers server for wallet scenes.
 - The wallet key is a fixed test key that is never funded.
 
@@ -1383,14 +1662,49 @@ for `--after`. Every check names a crop of the screen and a limit:
 | `hidden_opaque_px`, `back_opaque_px`, `back_is_arrow`: `cursor: none`, then off it | 68 | 0, 0, 0 | 0, 272, 1 | = 0, ≥ 1, = 1 |
 | `lamp_lit_px`, `lit_fill_px` (pixels of `#FFCF3F` in the 52 × 22 `CROP_LAMP`), `lit_label_contrast`: the lamp after one click, in dark / in light | 69, 70 | 0, 0, 13.05 / 0, 0, 15.23 | 584.6, 926, 10.67 / 319.0, 926, 10.67 | ≥ 1, ≥ 500, ≥ 4.5 |
 | `out_fill_px`, `out_px_vs_unlit`: the lamp after two clicks | 71 | 0, 0 | 0, 0 | = 0, ≤ 0 |
+| `portal_argv_ok`: the fake portal was asked with `ReadOne`'s exact arguments | 72 | — | 1 | = 1 |
+| `strip_px_vs_15` / `strip_px_vs_16`: System, or a theme that fell back, looks exactly like the scheme shown | 72, 74, 75, 77, 82 / 73 | — | 0 | ≤ 0 |
+| `system_segment_vs_15` / `_vs_16`: System is lit, not Dark or Light | 72 / 73 | — | 330.7 / 217.7 | ≥ 1 |
+| `note_px_vs_74`: "could not be read" is not "states no preference" | 75 | — | 594.8 | ≥ 1 |
+| `portal_queries`, `sidebar_px_vs_73`, `strip_px_vs_73`: the refocus flip | 76 | — | 2, 0, 0 | ≥ 2, ≤ 0, ≤ 0 |
+| `title_ms`, `hung_children`: a portal that never answers | 77 | — | 633, 0 | ≤ 3 000, = 0 |
+| `broken_icon_px` (pixels of `#FF8A80` in the theme rows) | 78 | — | 81 | ≥ 40 |
+| `solar_bg_px`, `stale_colour_px_vs_79`: a theme file chosen in place, then started with | 79, 80 | — | 38 020, 0 | ≥ 20 000, ≤ 0 |
+| `new_theme_file`, `new_theme_chosen`, `reloaded_bg_px`: New theme, then Reload | 81 | — | 1, 1, 38 020 | = 1, = 1, ≥ 20 000 |
+| `error_notice_px` (pixels of `#FF8A80` at the panel's top) | 82 | — | 223 | ≥ 100 |
+| `dark_page_px` / `dark_page_px`, `white_page_px` (in `CROP_PAGE_LEFT`, 396 800 px): the page's own styles in a dark / a light chrome | 83 / 84 | 0 / 0, 392 688 | 392 688 / 0, 392 688 | ≥ 300 000 / = 0, ≥ 300 000 |
+| `default_size_and_place`, `first_save`, `first_save_before_history` (the window's state written before `history.json`), `first_start_px_vs_19` (over `CROP_ALL`) | 85 | 0, 0, 0, 511 593 | 1, 1, 1, 0 | = 1, = 1, = 1, ≤ 0 |
+| `restored_size_and_place`, `restored_writes_nothing` | 86 | 0, 1 | 1, 1 | = 1, = 1 |
+| `centred_on_primary`, `saved_where_shown` | 87 | 0, 0 | 1, 1 | = 1, = 1 |
+| `saved_during_drag`, `saved_after_drag` (the width) | 88 | 0, 900 | 1, 1 095 | = 1, = 1 095 |
+| `closed_cleanly` (exit status), `saved_at_close`, `session_kept` (tabs) | 89 | 0, 0, 6 | 0, 1, 6 | = 0, = 1, = 6 |
+| `zoom_saved`, `zoomed_px_vs_19` | 90 | 1.0, 70 145 | 1.2, 70 145 | = 1.2, ≥ 1 |
+| `zoomed_px_vs_19`, `zoom_restored_px_vs_keys` | 91 | — | 70 034.8, 0 | ≥ 1, ≤ 0 |
+| `alive_after_zoom_out`, `zoom_floor_saved`, `zoom_floor_px_vs_keys` (L15) | 92 | 1, 1.0, — | 1, 0.25, 0 | = 1, = 0.25, ≤ 0 |
+| `fullscreen_saved`, `fullscreen_hint_px`, `fullscreen_left_saved` | 93 | 0, 0, 0 | 1, 306.3, 1 | = 1, ≥ 1, = 1 |
+| `migrated_note`, `user_id_moved`, `originals_kept`, `old_files_left`, `settings_converted`, `session_tabs`, `history_visits` (from before the start) | 94 | 1, 1, 2, 0, 2, 6, 8 | 1, 1, 2, 0, 2, 6, 8 | = 1, = 1, = 2, = 0, = 2, = 6, = 8 |
+| `strip_px_vs_02`, `sidebar_px_vs_02`, `notice_px_vs_02` | 94 | 18 128.6, 52 533.4, 27 155.3 | 0, 0, 968.9 | ≤ 0, ≤ 0, ≥ 1 |
+| `both_ids_kept`, `conflict_listed`, `marker_written`, `warning_px` (`#EFBF75` in the status bar) | 95 | 2, 1, 1, 0 | 2, 1, 1, 43 | = 2, = 1, = 1, ≥ 21 |
+| `session_backup_kept`, `window_backup_kept`, `default_window`, `warning_px`, `session_restarted` | 96 | 1, 1, 0, 0, 1 | 1, 1, 1, 43, 1 | = 1, = 1, = 1, ≥ 21, = 1 |
+| `second_window_refused`, `holder_named`, `headless_refused`, `reader_goes_on`, `first_unchanged_px_vs_19` | 97 | 1, 1, 1, 1, 0 | 1, 1, 1, 1, 0 | = 1, ≥ 1, = 1, = 1, ≤ 0 |
+| `framed_place`, `fullscreen_state`, `fullscreen_geometry`, `fullscreen_px_vs_19` (`CROP_ABOVE_STATUS`), `left_fullscreen_place`, `no_creep`, `restored_fullscreen_state`, `restored_fullscreen_geometry`, `restored_then_left_place` | 98 | 0, 0, 0, 493 914, 0, 1, 0, 0, 0 | 1, 1, 1, 0, 1, 1, 1, 1, 1 | = 1 each, `fullscreen_px_vs_19` ≤ 0 |
+| `maximized_state`, `maximized_geometry`, `normal_kept_while_maximized`, `restored_maximized_state`, `restored_maximized_geometry`, `unmaximized_place` | 99 | 1, 1, 0, 0, 0, 0 | 1 each | = 1 each |
 
 The "Before" column of the cursor rows is the release binary from before the
 L8 fix (`635ed212…`), run with `--out` in a scratch directory, not the
-`before/` capture. That of the lamp rows is likewise the binary from before the
-L11 fix (`56c385c1…`, built from `d2bfc05`). With it a click changed no pixel
-of the lamp, and its label contrasts are those of the unlit lamp. The limit of
-500 yellow pixels is about half the crop: the lit lamp fills 926, and the
-label takes the rest.
+`before/` capture. That of the lamp rows is likewise the binary from before
+the L11 fix (`56c385c1…`, built from `d2bfc05`). With it a click changed no
+pixel of the lamp, and its label contrasts are those of the unlit lamp. The
+limit of 500 yellow pixels is about half the crop: the lit lamp fills 926,
+and the label takes the rest. That of scenes 83 and 84 is the step-9 binary
+(`0dc5c59c…`), before L13; scenes 72–82 are new with step 10. That of scenes
+85–99 is the step-10 binary (`f48811d8…`), before S13 part 2: its window
+opened at winit's 800×600, so the storage scenes' window checks failed
+there too, and scenes 94–97 otherwise check behaviour of steps 9 and 10.
+In scene 99 the window manager maximizes that window too, and `no_creep`
+passes in 98 because a binary that saves nothing leaves the seeded place;
+a hand mutation that saves the surface's corner instead of the frame's
+makes it fail (storage ledger S13, part 3).
 
 How the less obvious checks measure:
 - **Effect checks** (`≥ 1`) compare a capture taken just before an interaction
@@ -1407,11 +1721,19 @@ How the less obvious checks measure:
 - **The theme checks** compare colour histograms of a screen switched to a
   scheme with one started in it. A label left in the old colour shows up even
   if a glyph moved by a pixel. Both captures of a pair use the same profile
-  path, so the palette path the Appearance panel shows is the same text in both
-  (ledger L10).
+  path, so the themes folder the Appearance panel shows is the same text in
+  both (ledger L10). Scenes 76 and 80 use their comparison scene's profile
+  path for the same reason.
 - **`edge_artifact`** takes a band across an edge. It counts pixels that are not
   a blend of the colour outside (the band's first row) and the colour inside
   (its last row).
+
+**On other desktops.** The window's keeping, full screen and the colour
+scheme were checked on KDE Plasma's Wayland session of the development
+machine (storage ledger S18, part 1). What only macOS and Windows show (Cmd
+shortcuts and their tips, the title bar's scheme, sizes in points or at a
+display scale, maximize and minimize) is a checklist for a person at each:
+[`docs/storage/manual-checks.md`](../storage/manual-checks.md).
 
 ### 12.3 Profiling the render loop
 
@@ -1427,12 +1749,19 @@ wait`) print next to it. The frame line's fields:
 | `render`, `latency` | the time in Vello's `render`; from the first resize since the previous frame to the end of this one |
 | `polls`, `poll`, `chrome_renders`, `chrome_render`, `events`, `event` | the chrome's polls, render passes, and event handling, counted and timed (`crate::frame_stats`) |
 | `page_redraws`, `chrome_redraws`, `cursor_sets` | redraws asked for by pages and by the chrome, and cursors sent to the window, counted |
+| `window_saves`, `window_save` | the window's readings since the previous frame, each of which writes `window.json` if it changed, counted and timed (§3.7). A reading made while the window sits still shows on the next frame, however much later |
 | `coalesce` | whether resizes are coalesced |
 
-In a `frame-times` build, four environment variables turn one behaviour off,
+Each reading of the window also prints a line of its own when it ends,
+`window_save epoch=… took=… changed=0|1`: its wall-clock time in
+milliseconds, how long it took, and whether `window.json` was written
+(`frame_stats::WindowSave`). Only this line says when a reading happened.
+
+In a `frame-times` build, five environment variables turn one behaviour off,
 so one binary measures before and after: `F1R3GAZE_COALESCE_RESIZE=0`,
-`F1R3GAZE_POLL_ON_RESIZE=0`, `F1R3GAZE_END_HOVER_ON_LEAVE=0`, and
-`F1R3GAZE_ANSWER_IN_PAINT=0`.
+`F1R3GAZE_POLL_ON_RESIZE=0`, `F1R3GAZE_END_HOVER_ON_LEAVE=0`,
+`F1R3GAZE_ANSWER_IN_PAINT=0`, and `F1R3GAZE_KEEP_WINDOW=0` (no
+`window.json` kept; `resize-bench.sh --keep-window 0`).
 
 ```sh
 # A profiling build, kept out of the normal target directory.
@@ -1446,6 +1775,9 @@ scripts/resize-bench.sh --bin target/scratch/profiling/release/f1r3gaze
 scripts/resize-bench.sh --bin … --rate 10 --step 20
 # A build that restores no tabs: the page on the command line.
 scripts/resize-bench.sh --bin … --single-tab
+# Without window.json kept, and the writes of window.json counted
+# (storage ledger S13, part 2).
+scripts/resize-bench.sh --bin … --keep-window 0 --watch-saves
 # Fold and summarise a log taken anywhere.
 scripts/resize-bench.sh --analyze LOG
 
@@ -1453,13 +1785,32 @@ scripts/resize-bench.sh --analyze LOG
 scripts/resize-live.sh --bin … --no-perf --label NAME
 ```
 
-`resize-bench.sh` writes one row per frame (`frames-N.tsv`), one row per run
-(`runs.tsv`), and medians over the runs (`summary.txt`). Among the columns,
-`resize_frames` counts the frames that applied a size and `extra_frames` those
-painted without one. Xvfb renders with software Vulkan on X11: it measures the
-CPU side and the pattern of events, not a GPU or a Wayland compositor.
+`resize-bench.sh` writes one row per frame (`frames-N.tsv`), one row per
+reading of the window (`saves-N.tsv`), each sweep's start and end
+(`sweeps.tsv`), one row per run (`runs.tsv`), and medians over the runs
+(`summary.txt`). With `--watch-saves` it also counts, with inotify, the
+writes of `window.json` during each sweep and in the whole run
+(`watch.tsv`).
 
-`resize-live.sh` records the same log while you drag. Without `--no-perf` it
+A run's row covers its sweep: the frames from the first one with a resize to
+the last one with a resize, among those painted from the sweep's start until
+a second after its end. A log given to `--analyze` has no sweep times, so its
+row runs from its first frame with a resize to its last. Among the columns:
+- `resize_frames` counts the frames that applied a size, and `extra_frames`
+  those painted without one.
+- `saves` counts the readings of the window made while it was being resized,
+  from the first resize's arrival (its frame's `epoch` less its `latency`) to
+  the last resize frame; `save_writes` counts those that wrote `window.json`,
+  and `save_max_ms` is the longest. They come from the `window_save` lines,
+  not from the frame line, which would put a reading made in the wait before
+  a sweep on the sweep's first frame (storage ledger S13, part 2).
+
+Xvfb renders with software Vulkan on X11: it measures the CPU side and the
+pattern of events, not a GPU or a Wayland compositor.
+
+`resize-live.sh` records the same log while you drag. Since S13 part 2 its
+throwaway profile's window opens at 1280×800 logical pixels, the default
+size, rather than winit's 800×600. Without `--no-perf` it
 also attaches `perf record` and writes `perf-report.txt`,
 `perf-children.txt` and `flamegraph.svg`.
 

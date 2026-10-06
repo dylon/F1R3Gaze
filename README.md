@@ -20,9 +20,13 @@ f1r3gaze [URL]                      open a window (default: gaze://newtab)
 f1r3gaze --headless URL [--allow] [--click SELECTOR]... [--timeout SECS] [--wait SECS] [--log FILE.gzlog]
                                     run a page without a window; print its committed
                                     document and console (CI smoke tests)
-f1r3gaze --profile DIR ...          use DIR as the profile (also: F1R3GAZE_PROFILE)
+f1r3gaze --profile DIR ...          keep every folder under DIR: DIR/{config,data,state,cache,runtime}
+                                    (also: F1R3GAZE_PROFILE)
 f1r3gaze wallet new|import|export|use|list|balance|send|remove ...
                                     the wallets that pay for deploys (docs/wallet.md)
+f1r3gaze paths                      print where the folders are
+f1r3gaze profile check|backups ...  what a start would change; start-up's backups
+f1r3gaze trust list|forget ...      this shard's freshness records
 
 f1r3c compile app.rho [-o app.knf] [--level k1g] [--import IDENT=URN]...
 f1r3c inspect app.knf               manifest, hashes, program text
@@ -54,11 +58,12 @@ Addresses: `https://…` and `http://…` (plain HTTP can be switched off),
 `f1r3h://blake2b-256/<hex>` for content by hash, `file://…`, and the
 built-in `gaze://newtab` and `gaze://about`.
 
-Settings live in `settings.conf` in the profile directory
-(`~/Library/Application Support/F1R3Gaze`, `%APPDATA%\F1R3Gaze`,
-`$XDG_DATA_HOME/f1r3gaze`): shard observers, the validator, the shard id,
-the quorum, blob mirrors, `https_only`, and for the wallet `embers_api` and
-`max_fee`.
+Settings live in `settings.toml` in the settings folder (`f1r3gaze paths`
+prints it): one table per area, `[appearance]`, `[browsing]`, `[shard]`,
+`[wallet]`, `[content]` and `[site_data]`. Where each kind of file is kept
+on Linux, macOS and Windows, and how an older single-folder profile is
+moved on the first start: `f1r3-work/f1r3gaze/README.md`, sections "Where
+F1R3Gaze keeps its files" and "Upgrading from a single-folder profile".
 
 ### The wallet: the agent driving the browser pays
 
@@ -66,7 +71,8 @@ Every deploy the browser makes (a page's program, a session message) is
 signed by the **active wallet**, whose account pays for it. Wallets are
 created, imported and exported in the same file format as **F1R3Sky**, and
 their addresses are the F1R3Cap addresses F1R3Sky shows. Keys live in the OS
-keychain (macOS, Windows) or a `0600` file per key (Linux).
+keychain (macOS, Windows) or a `0600` file per key in the data folder's
+`wallet/keys/` (Linux).
 
 A program deployed under the user's key could otherwise take the deployer's
 identity and spend from the wallet, so the browser renders every deploy
@@ -235,7 +241,7 @@ End-to-end, on the real binary:
   `/api/explore-deploy`, `/ws/events`) rather than Embers' gRPC
   `firefly-client`, which needs `protoc` and `tonic` at build time. Deploys are
   byte-for-byte what the node verifies.
-- **Linux keys** are in a `0600` file in the profile; macOS and Windows use
+- **Linux keys** are in a `0600` file in the data folder's `wallet/keys/`; macOS and Windows use
   the OS keychain (`os-keyring`, on in release builds).
 - **One wallet signs for every site** (the spec's per-site keys are gone:
   the account that pays is the deployer). Sites can therefore link a user's

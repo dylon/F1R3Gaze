@@ -1,0 +1,227 @@
+[
+ {
+  "id": "M12r",
+  "what": "the chrome never shows its scheme to pages (L13)",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        self.inner.viewport_mut().color_scheme = color_scheme_of(self.resolved.scheme);\n",
+  "new": "",
+  "test": "pages_follow_the_chrome_scheme"
+ },
+ {
+  "id": "M12s",
+  "what": "a request never sets Blitz's theme override (L13 in the window)",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        override_to: (has_override != Some(page)).then_some(page),",
+  "new": "        override_to: None,",
+  "test": "a_scheme_request_changes_only_what_differs"
+ },
+ {
+  "id": "M12t",
+  "what": "decorations set while following the system on macOS and Windows (no more ThemeChanged)",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        (DecorationPlatform::FollowsSystem, true) => None,\n",
+  "new": "",
+  "test": "the_title_bar_follows_the_system_only_where_the_os_reports_changes"
+ },
+ {
+  "id": "M12u",
+  "what": "X11 and Wayland decorations left without a theme (dark on X11)",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        (DecorationPlatform::FollowsSystem, true) => None,\n        _ => Some(theme_of(effective)),",
+  "new": "        (DecorationPlatform::FollowsSystem, true) => None,\n        (_, true) => None,\n        _ => Some(theme_of(effective)),",
+  "test": "the_title_bar_follows_the_system_only_where_the_os_reports_changes"
+ },
+ {
+  "id": "M12v",
+  "what": "decorations set again when unchanged",
+  "file": "crates/gaze-shell/src/application.rs",
+  "package": "gaze-shell",
+  "old": "        decorations_to: (has_decorations != Some(decorations)).then_some(decorations),",
+  "new": "        decorations_to: Some(decorations),",
+  "test": "a_scheme_request_changes_only_what_differs"
+ },
+ {
+  "id": "M12w",
+  "what": "scheme requests not coalesced",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            WindowRequest::Scheme { .. } => self\n                .window_requests\n                .retain(|queued| !matches!(queued, WindowRequest::Scheme { .. })),",
+  "new": "            WindowRequest::Scheme { .. } => {}",
+  "test": "the_window_is_asked_to_show_the_scheme"
+ },
+ {
+  "id": "M12x",
+  "what": "a window's report not answered with the scheme shown",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                self.inner.shell_provider.request_redraw();\n            }\n        }\n        self.request_scheme();\n",
+  "new": "                self.inner.shell_provider.request_redraw();\n            }\n        }\n",
+  "test": "the_window_is_asked_to_show_the_scheme"
+ },
+ {
+  "id": "M12y",
+  "what": "System chosen without asking the window for the system's scheme",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                self.request(WindowRequest::FollowSystem);\n",
+  "new": "",
+  "test": "the_window_is_asked_to_show_the_scheme"
+ },
+ {
+  "id": "M12z",
+  "what": "System chosen without asking the portal again",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                self.system.refresh(now);\n                self.request(WindowRequest::FollowSystem);\n",
+  "new": "                self.request(WindowRequest::FollowSystem);\n",
+  "test": "choosing_system_asks_the_system_again"
+ },
+ {
+  "id": "M12aa",
+  "what": "a theme file that fell back not counted as following the system",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            ThemeChoice::Named(_) => self.resolved.file.is_none(),",
+  "new": "            ThemeChoice::Named(_) => false,",
+  "test": "the_window_is_asked_to_show_the_scheme"
+ },
+ {
+  "id": "M12ab",
+  "what": "theme:next parsed again",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                \"reload\" => Some(ThemeOp::Reload),\n                _ => None,",
+  "new": "                \"reload\" => Some(ThemeOp::Reload),\n                \"next\" => Some(ThemeOp::Dark),\n                _ => None,",
+  "test": "actions_parse"
+ },
+ {
+  "id": "M12ac",
+  "what": "theme:use: without the name check",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            Some((\"use\", name)) if theme::check_theme_name(name).is_ok() => Some(ThemeOp::Use(name.to_string())),",
+  "new": "            Some((\"use\", name)) => Some(ThemeOp::Use(name.to_string())),",
+  "test": "actions_parse"
+ },
+ {
+  "id": "M12ad",
+  "what": "New theme writes over what is in the way",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                .and_then(|_| gaze_fs::write_new(fs, &path, css.as_bytes(), Perm::Private));",
+  "new": "                .and_then(|_| gaze_fs::write_atomic(fs, &path, css.as_bytes(), Perm::Private));",
+  "test": "new_theme_copies_the_current_colors"
+ },
+ {
+  "id": "M12ae",
+  "what": "New theme writes in a read-only session",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        if let Some(why) = profile.read_only_reason() {\n            self.flash(Tone::Err, format!(\"Could not create the theme: {why}\"));",
+  "new": "        if let Some(why) = None::<&str> {\n            self.flash(Tone::Err, format!(\"Could not create the theme: {why}\"));",
+  "test": "new_theme_is_refused_in_a_read_only_session"
+ },
+ {
+  "id": "M12af",
+  "what": "New theme stops at a name taken by something the list does not show",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => taken.push(ThemeFile {",
+  "new": "                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && false => taken.push(ThemeFile {",
+  "test": "new_theme_copies_the_current_colors"
+ },
+ {
+  "id": "M12ag",
+  "what": "Reload keeps the old list",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        self.themes = Some(theme::list_themes(profile.fs(), &profile.theme_dirs()));\n        self.apply_theme();\n",
+  "new": "        self.apply_theme();\n",
+  "test": "a_theme_file_is_chosen_reloaded_and_dropped_when_broken"
+ },
+ {
+  "id": "M12ah",
+  "what": "Reload does not read the chosen theme again",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        self.themes = Some(theme::list_themes(profile.fs(), &profile.theme_dirs()));\n        self.apply_theme();\n",
+  "new": "        self.themes = Some(theme::list_themes(profile.fs(), &profile.theme_dirs()));\n",
+  "test": "a_theme_file_is_chosen_reloaded_and_dropped_when_broken"
+ },
+ {
+  "id": "M12ai",
+  "what": "a theme file that cannot be used is choosable",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "                r#\"<div class=\"row static\"><i class=\"fa-solid fa-triangle-exclamation row-icon err\"></i>",
+  "new": "                r#\"<div class=\"row static\" data-action=\"theme:use:{label}\"><i class=\"fa-solid fa-triangle-exclamation row-icon err\"></i>",
+  "test": "the_appearance_panel_lists_theme_files"
+ },
+ {
+  "id": "M12aj",
+  "what": "no notice for a chosen theme that cannot be used",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "    if let (ThemeChoice::Named(name), Some(problem)) = (view.choice, view.problem) {",
+  "new": "    if let (ThemeChoice::Named(name), Some(problem)) = (view.choice, None::<&str>) {",
+  "test": "an_unusable_choice_says_which_scheme_is_shown"
+ },
+ {
+  "id": "M12ak",
+  "what": "the System sentence says nothing of a system with no preference",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        (ThemeChoice::System, Known::Answered(None)) => \"Your system states no preference, so the dark scheme is used. \",",
+  "new": "        (ThemeChoice::System, Known::Answered(None)) => \"\",",
+  "test": "the_system_sentence_reports_the_preference"
+ },
+ {
+  "id": "M12al",
+  "what": "System never lit",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        ThemeChoice::System => \"system\",\n        ThemeChoice::BuiltIn(Scheme::Dark) => \"dark\",",
+  "new": "        ThemeChoice::System => \"\",\n        ThemeChoice::BuiltIn(Scheme::Dark) => \"dark\",",
+  "test": "the_appearance_panel_lists_theme_files"
+ },
+ {
+  "id": "M12am",
+  "what": "the theme files not read again when Appearance is shown",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        if self.panel == \"appearance\" {\n            self.themes = None;\n        }\n        if self.panel == \"tabs\" {",
+  "new": "        if self.panel == \"tabs\" {",
+  "test": "opening_appearance_lists_the_theme_files_again"
+ },
+ {
+  "id": "M12an",
+  "what": "the theme files not read again when the sidebar reopens on Appearance",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "        if opening && self.panel == \"appearance\" {\n            self.themes = None;\n        }\n",
+  "new": "",
+  "test": "opening_appearance_lists_the_theme_files_again"
+ },
+ {
+  "id": "M12ao",
+  "what": "a theme file that cannot be used is chosen",
+  "file": "crates/gaze-shell/src/chrome.rs",
+  "package": "gaze-shell",
+  "old": "            Some(ThemeFile { colours: Ok(_), .. }) => self.choose_theme(ThemeChoice::Named(name)),",
+  "new": "            Some(_) => self.choose_theme(ThemeChoice::Named(name)),",
+  "test": "an_unusable_theme_cannot_be_chosen"
+ },
+ {
+  "id": "M12ap",
+  "what": "a page that declares no colour scheme gets the dark scheme's system colours (L13, H2)",
+  "file": "crates/gaze-shell/src/tab.rs",
+  "package": "gaze-shell",
+  "old": "            ua_stylesheets: Some(vec![blitz_dom::DEFAULT_CSS.to_string(), PAGE_SCHEME_CSS.to_string()]),\n",
+  "new": "",
+  "test": "pages_keep_light_system_colours_unless_they_support_dark"
+ }
+]
