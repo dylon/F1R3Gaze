@@ -10,7 +10,7 @@ How the captures are made and checked is in
 | Folder | What it shows | Binary (sha256) |
 |---|---|---|
 | [`before/`](before/) | The browser before the UIX work. 60 scenes. Its checks are recorded only. | `f7a6d0b3…c55a5` |
-| [`after/`](after/) | The finished chrome. 60 scenes, every check enforced and passing. | `635ed212…ba30` |
+| [`after/`](after/) | The finished chrome, with the storage work. 99 scenes, every check enforced and passing (98 and 99 with a window manager). | `7eb838af…76d1` |
 | [`review-1/`](review-1/) | The first complete "after" capture: the 15 scenes cited as evidence in [ledger L5](../../ui/ledger.md#l5--review-of-the-first-complete-after-capture). | `c7faee73…a7027` |
 
 Each capture folder holds:

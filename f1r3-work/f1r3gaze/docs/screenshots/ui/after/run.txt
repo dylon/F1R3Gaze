@@ -1,8 +1,12 @@
 mode	after
-date	2026-10-04T16:23:23-04:00
-git	f6ee26a (dirty)
-binary	62f4282bcafee0bb500568047ec8fe0d263bc7828aa727ae85049bbb0d2dac27
+date	2026-10-06T05:53:04-04:00
+git	3d5ba26 (dirty)
+binary	7eb838afd20c6105c8cfc32aad093c435878d2d654d93ac2469f0e05cf4b76d1
 imagemagick	Version: ImageMagick 7.1.2-32 Q16-HDRI x86_64 68f8d115a:20260926 https://imagemagick.org
 size	1280x800
 work	/home/dylon/Workspace/f1r3fly.io/F1R3Gaze/f1r3-work/f1r3gaze/target/ui-snapshots
-only	cursor
+only	all scenes
+seed_format	current
+xvfb_output	screen
+window_manager	Openbox 3.6.1
+isolation	xdg+home+no-bus+fake-portal; VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json
