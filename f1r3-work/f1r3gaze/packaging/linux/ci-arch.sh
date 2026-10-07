@@ -35,7 +35,7 @@ cp /etc/makepkg.conf /tmp/gaze-arch-older/makepkg.conf
 printf "\nPKGEXT='.pkg.tar.zst'\n" >> /tmp/gaze-arch-older/makepkg.conf
 chown -R gaze-builder:gaze-builder /tmp/gaze-arch-older
 su gaze-builder -s /bin/bash -c \
-  "cd /tmp/gaze-arch-older && F1R3GAZE_BIN_DIR='$project/target/release' F1R3GAZE_PROJECT_DIR='$project' F1R3GAZE_VERSION='$older' PKGDEST=/tmp/gaze-arch-older makepkg --config /tmp/gaze-arch-older/makepkg.conf --nodeps --noconfirm --force"
+  "cd /tmp/gaze-arch-older && F1R3GAZE_BIN_DIR='$project/target/release' F1R3GAZE_PROJECT_DIR='$project' F1R3GAZE_VERSION='$older' PKGDEST=/tmp/gaze-arch-older SRCDEST=/tmp/gaze-arch-older SRCPKGDEST=/tmp/gaze-arch-older BUILDDIR=/tmp/gaze-arch-older LOGDEST=/tmp/gaze-arch-older makepkg --config /tmp/gaze-arch-older/makepkg.conf --nodeps --noconfirm --force"
 older_package=/tmp/gaze-arch-older/f1r3gaze-$older-1-$arch.pkg.tar.zst
 package=/tmp/gaze-arch-output/f1r3gaze-$version-1-$arch.pkg.tar.zst
 test -s "$older_package"
