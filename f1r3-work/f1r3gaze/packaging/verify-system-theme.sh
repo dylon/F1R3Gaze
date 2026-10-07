@@ -21,3 +21,6 @@ test_theme chrome::tests::an_explicit_choice_ignores_the_os
 test_theme chrome::tests::no_preference_means_dark
 test_theme chrome::tests::the_override_ignores_window_reports
 test_theme chrome::tests::a_portal_answer_applies_on_the_next_poll
+test_theme chrome::tests::the_window_is_asked_to_show_the_scheme
+test_theme chrome::tests::choosing_system_asks_the_system_again
+test_theme chrome::tests::pages_follow_the_chrome_scheme
