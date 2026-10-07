@@ -6,9 +6,18 @@
 set -euo pipefail
 cd "${1:-dist}"
 rm -f SHA256SUMS SHA256SUMS.asc
-sha256sum -- * > SHA256SUMS
+checksums=$(mktemp)
+gpg_home=''
+trap 'rm -f "$checksums"; [[ -z "$gpg_home" ]] || rm -rf "$gpg_home"' EXIT
+find . -maxdepth 1 -type f ! -name SHA256SUMS ! -name SHA256SUMS.asc -print0 |
+  LC_ALL=C sort -z | xargs -0 -r sha256sum > "$checksums"
+[[ -s "$checksums" ]] || { echo "no release artifacts to checksum" >&2; exit 2; }
+mv "$checksums" SHA256SUMS
+chmod 644 SHA256SUMS
 if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
-  export GNUPGHOME="$(mktemp -d)"
+  gpg_home=$(mktemp -d)
+  GNUPGHOME=$gpg_home
+  export GNUPGHOME
   printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import 2>/dev/null
   gpg --batch --yes --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE:-}" \
       --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS

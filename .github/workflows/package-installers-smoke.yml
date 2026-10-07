@@ -1,0 +1,165 @@
+name: Native installer smoke test
+
+on:
+  push:
+    branches: [feature/additional-packages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: f1r3-work/f1r3gaze
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: Build both native architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --locked --release --target "$target" -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+          done
+      - name: Build DMG and component PKG
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          DIST=dist packaging/macos/package.sh "$version" \
+            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
+      - name: Mount DMG and install PKG
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          dmg="dist/F1R3Gaze-$version-macos-universal.dmg"
+          pkg="dist/F1R3Gaze-$version-macos-universal.pkg"
+          hdiutil verify "$dmg"
+          mount="$RUNNER_TEMP/f1r3gaze-dmg"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          app="$mount/F1R3Gaze.app"
+          test -x "$app/Contents/MacOS/f1r3gaze"
+          test -x "$app/Contents/MacOS/f1r3c"
+          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/f1r3gaze"
+          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/f1r3c"
+          "$app/Contents/MacOS/f1r3gaze" --version
+          "$app/Contents/MacOS/f1r3c" --version
+          if find "$app" -iname '*f1r3node*' -o -iname '*embers*' | grep -q .; then
+            echo 'Unexpected separate product in the F1R3Gaze app' >&2
+            exit 1
+          fi
+          hdiutil detach "$mount"
+          trap - EXIT
+          sudo installer -pkg "$pkg" -target /
+          installed="/Applications/F1R3Gaze.app"
+          test -x "$installed/Contents/MacOS/f1r3gaze"
+          test -x "$installed/Contents/MacOS/f1r3c"
+          "$installed/Contents/MacOS/f1r3gaze" --version
+          "$installed/Contents/MacOS/f1r3c" --version
+          pkgutil --pkg-info io.f1r3fly.f1r3gaze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-installers
+          path: f1r3-work/f1r3gaze/dist/*
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: Build Windows executables
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+          if ($LASTEXITCODE) { throw 'cargo build failed' }
+          python packaging/verify_binary.py target/release/f1r3gaze.exe target/release/f1r3c.exe
+          if ($LASTEXITCODE) { throw 'binary verification failed' }
+      - name: Install WiX and build MSI and portable ZIP
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          if ($LASTEXITCODE) { throw 'WiX installation failed' }
+          $version = $null
+          $inWorkspacePackage = $false
+          foreach ($line in Get-Content Cargo.toml) {
+            if ($line -match '^\[workspace\.package\]') { $inWorkspacePackage = $true; continue }
+            if ($line -match '^\[') { $inWorkspacePackage = $false }
+            if ($inWorkspacePackage -and $line -match '^version\s*=\s*"([^"]+)"') {
+              $version = $Matches[1]
+              break
+            }
+          }
+          if (-not $version) { throw 'Workspace version was not found' }
+          .\packaging\windows\package.ps1 -Version $version -Bin target\release -Dist dist
+          if ($LASTEXITCODE) { throw 'Windows package build failed' }
+      - name: Install and remove MSI; check ZIP
+        shell: pwsh
+        run: |
+          $version = $null
+          $inWorkspacePackage = $false
+          foreach ($line in Get-Content Cargo.toml) {
+            if ($line -match '^\[workspace\.package\]') { $inWorkspacePackage = $true; continue }
+            if ($line -match '^\[') { $inWorkspacePackage = $false }
+            if ($inWorkspacePackage -and $line -match '^version\s*=\s*"([^"]+)"') {
+              $version = $Matches[1]
+              break
+            }
+          }
+          $msi = (Resolve-Path "dist\F1R3Gaze-$version-x64.msi").Path
+          $zip = (Resolve-Path "dist\f1r3gaze-$version-windows-x64.zip").Path
+          $portable = Join-Path $env:RUNNER_TEMP 'f1r3gaze-portable'
+          Expand-Archive -LiteralPath $zip -DestinationPath $portable
+          foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE')) {
+            if (-not (Test-Path (Join-Path $portable $name))) { throw "Missing $name in ZIP" }
+          }
+          & (Join-Path $portable 'f1r3gaze.exe') --version
+          if ($LASTEXITCODE) { throw 'Portable executable failed' }
+          $installLog = Join-Path $env:RUNNER_TEMP 'f1r3gaze-msi-install.log'
+          & msiexec.exe /i $msi /qn /norestart "/L*v" $installLog
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "MSI install failed: $LASTEXITCODE" }
+          $installed = Join-Path $env:ProgramFiles 'F1R3Gaze'
+          foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE')) {
+            if (-not (Test-Path (Join-Path $installed $name))) { throw "Missing installed $name" }
+          }
+          & (Join-Path $installed 'f1r3gaze.exe') --version
+          if ($LASTEXITCODE) { throw 'Installed executable failed' }
+          & (Join-Path $installed 'f1r3c.exe') --version
+          if ($LASTEXITCODE) { throw 'Installed compiler failed' }
+          foreach ($scheme in @('f1r3', 'f1r3h')) {
+            if (-not (Test-Path "Registry::HKEY_LOCAL_MACHINE\Software\Classes\$scheme")) {
+              throw "Missing $scheme URL registration"
+            }
+          }
+          $removeLog = Join-Path $env:RUNNER_TEMP 'f1r3gaze-msi-remove.log'
+          & msiexec.exe /x $msi /qn /norestart "/L*v" $removeLog
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "MSI removal failed: $LASTEXITCODE" }
+          if (Test-Path (Join-Path $installed 'f1r3gaze.exe')) { throw 'MSI left the executable installed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-installers-and-logs
+          path: |
+            f1r3-work/f1r3gaze/dist/*
+            ${{ runner.temp }}/f1r3gaze-msi-*.log

@@ -112,11 +112,13 @@ publishes a draft GitHub release with:
 
 | platform | artifacts | signing |
 | --- | --- | --- |
-| macOS | `F1R3Gaze-<v>-macos-universal.dmg` (arm64 + x86_64) | Developer ID, hardened runtime with **no** exceptions (no JIT entitlement: there is no JavaScript), notarised and stapled |
+| macOS | `F1R3Gaze-<v>-macos-universal.dmg` and component `.pkg` (arm64 + x86_64) | Developer ID, hardened runtime with **no** exceptions (no JIT entitlement: there is no JavaScript), notarised and stapled when credentials are configured |
 | Windows | `F1R3Gaze-<v>-x64.msi`, portable `.zip` | Authenticode (`signtool`, SHA-256, RFC 3161 timestamp) on both executables and the MSI |
-| Linux | `.deb`, `.AppImage`, `.tar.gz` | GPG-signed `SHA256SUMS` covering every artifact of every platform |
+| Linux x86_64 and arm64 | `.deb`, Arch `.pkg.tar.zst`, distro-specific `.rpm`, `.AppImage`, `.tar.gz` | GPG-signed `SHA256SUMS` covering every artifact of every platform when a key is configured |
 
 Secrets: `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`,
+`MACOS_INSTALLER_CERT_P12`, `MACOS_INSTALLER_CERT_PASSWORD`,
+`MACOS_INSTALLER_SIGN_IDENTITY`,
 `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`; `WINDOWS_CERT_PFX`,
 `WINDOWS_CERT_PASSWORD`; `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`. A platform whose
 secrets are missing still builds, unsigned, with a warning. The Windows
@@ -125,6 +127,10 @@ installer and the Linux packages register `f1r3://` and `f1r3h://`. Scripts:
 `packaging/icons/`.
 
 Verify a download: `gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c SHA256SUMS`.
+See [the distribution build guide](docs/distribution.md) for local builds,
+repository staging, Homebrew and WinGet manifests, and the current limits of
+native installer validation. Gaze packages include `f1r3c` and its in-process
+RSpace; F1R3Node remains a separate optional service and Embers is excluded.
 
 ## Reach tier
 

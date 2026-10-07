@@ -24,24 +24,139 @@ env:
   CARGO_TERM_COLOR: always
   VERSION: ${{ inputs.version || github.ref_name }}
 jobs:
+  source_checks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck libxml2-utils
+      - run: packaging/verify-source.sh
+
   linux:
-    runs-on: ubuntu-22.04   # glibc 2.35, the .deb's floor
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.95" }
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: f1r3-work/f1r3gaze }
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libvulkan-dev
       - run: cargo build --locked --release -p gaze-shell -p f1r3c
-      - name: Package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries-${{ matrix.arch }}
+          path: |
+            f1r3-work/f1r3gaze/target/release/f1r3gaze
+            f1r3-work/f1r3gaze/target/release/f1r3c
+      - name: Package Debian, tarball and AppImage
         run: |
           V="${VERSION#v}"
-          curl -sSL -o /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x /tmp/appimagetool
-          printf '#!/bin/sh\nexec /tmp/appimagetool --appimage-extract-and-run "$@"\n' > /tmp/ait && chmod +x /tmp/ait
-          APPIMAGETOOL=/tmp/ait DIST=dist packaging/linux/package.sh "$V" target/release
+          packaging/linux/build.sh --format deb --version "$V" --out dist
+          packaging/linux/build.sh --format tar --version "$V" --out dist
+          packaging/linux/fetch-appimagetool.sh "$RUNNER_TEMP/appimagetool"
+          APPIMAGETOOL=packaging/linux/appimagetool-wrapper.sh \
+            APPIMAGETOOL_IMAGE="$RUNNER_TEMP/appimagetool/appimagetool-${{ matrix.arch }}.AppImage" \
+            APPIMAGETOOL_RUNTIME_FILE="$RUNNER_TEMP/appimagetool/runtime-${{ matrix.arch }}" \
+            packaging/linux/build.sh --format appimage --version "$V" --out dist
+          dpkg-deb --field "dist/f1r3gaze_${V}_$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64).deb"
       - uses: actions/upload-artifact@v4
-        with: { name: linux, path: f1r3-work/f1r3gaze/dist/* }
+        with:
+          name: linux-packages-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*
+
+  arch:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64, image: "archlinux:base-devel" }
+          - { runner: ubuntu-22.04-arm, arch: aarch64, image: "menci/archlinuxarm:base-devel" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - run: chmod +x target/release/f1r3gaze target/release/f1r3c
+      - name: Build native Arch package
+        run: |
+          docker run --rm --platform "linux/$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64)" \
+            -v "$PWD:/src" -w /src ${{ matrix.image }} \
+            packaging/linux/ci-arch.sh "${VERSION#v}"
+          test -f "dist/f1r3gaze-${VERSION#v}-1-${{ matrix.arch }}.pkg.tar.zst"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.pkg.tar.zst
+
+  debian_lifecycle:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:12" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:12" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:13" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:13" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:26.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:26.04" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+          path: f1r3-work/f1r3gaze/dist
+      - name: Install, launch and remove on target distro
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            -v "$PWD:/src" -w /src ${{ matrix.image }} \
+            bash packaging/linux/ci-deb.sh "${VERSION#v}"
+
+  rpm:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04, image: "rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04, image: "opensuse/leap:16.0", channel: opensuse16 }
+          - { runner: ubuntu-22.04-arm, image: "opensuse/leap:16.0", channel: opensuse16 }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install checkout prerequisites
+        working-directory: /
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf -y install git tar gzip
+          else
+            zypper --non-interactive install git tar gzip
+          fi
+      - uses: actions/checkout@v4
+      - name: Build RPM on its target distro
+        run: packaging/linux/ci-rpm.sh "${VERSION#v}"
+      - run: rpm -qip dist/*.rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.channel }}-${{ runner.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.rpm
 
   macos:
     runs-on: macos-14
@@ -62,6 +177,9 @@ jobs:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_INSTALLER_CERT_P12: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
+          MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_INSTALLER_SIGN_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -75,28 +193,79 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.95" }
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: f1r3-work/f1r3gaze }
+      - name: Check PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("packaging/windows/package.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors) { throw ($errors | Out-String) }
       - run: cargo build --locked --release -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+      - run: python packaging/verify_binary.py target/release/f1r3gaze.exe target/release/f1r3c.exe
       - run: dotnet tool install --global wix --version 4.0.5
       - name: Package and sign
         shell: pwsh
         env:
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
+        run: .\packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: f1r3-work/f1r3gaze/dist/* }
 
+  repository_staging:
+    needs: [linux, arch, rpm]
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    steps:
+      - name: Install repository index tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "arch-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - name: Stage unsigned APT, pacman and RPM repositories
+        run: |
+          python packaging/repository/stage.py --dist dist --out repository-staging
+          tar -czf "repository-staging-${VERSION#v}.tar.gz" repository-staging
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repository-staging
+          path: f1r3-work/f1r3gaze/repository-staging-*.tar.gz
+
   publish:
-    needs: [linux, macos, windows]
+    needs: [source_checks, linux, debian_lifecycle, arch, rpm, repository_staging, macos, windows]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+        with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "arch-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: macos, path: f1r3-work/f1r3gaze/dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows, path: f1r3-work/f1r3gaze/dist }
+      - name: Generate catalog and package-manager manifests
+        run: |
+          V="${VERSION#v}"
+          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
+          python3 packaging/release_metadata.py catalog --version "$V" --dist dist --base-url "$URL" --out dist/catalog.json --require-complete
+          python3 packaging/release_metadata.py homebrew --version "$V" --dist dist --base-url "$URL" --out metadata/Casks/f1r3gaze.rb
+          python3 packaging/release_metadata.py winget --version "$V" --dist dist --base-url "$URL" --out metadata/winget
+      - uses: actions/upload-artifact@v4
+        with: { name: package-manager-manifests, path: f1r3-work/f1r3gaze/metadata }
       - name: Checksums and signature
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}

@@ -1,0 +1,17 @@
+<!-- Future organization bootstrapper. Only Gaze is enabled until independent
+     Node installers and compatibility tests exist. Build with the WiX Bal
+     extension after substituting __VERSION__ and __GAZE_MSI__. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="F1R3FLY Systems" Manufacturer="F1R3FLY.io"
+          Version="__VERSION__"
+          UpgradeCode="5AD8942F-00E7-4AB4-A417-85764F572A2D">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense"
+          LicenseUrl="https://github.com/F1R3FLY-io/F1R3Gaze/blob/main/LICENSE" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage SourceFile="__GAZE_MSI__" Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

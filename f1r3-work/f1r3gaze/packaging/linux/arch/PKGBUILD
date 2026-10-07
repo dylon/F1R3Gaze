@@ -1,0 +1,28 @@
+# Run through packaging/linux/build.sh, or set the three F1R3GAZE_* variables.
+pkgname=f1r3gaze
+pkgver=${F1R3GAZE_VERSION:-0.1.0}
+pkgrel=1
+pkgdesc='Browser with in-process RSpace and f1r3c'
+arch=('x86_64' 'aarch64')
+url='https://github.com/F1R3FLY-io/F1R3Gaze'
+license=('Apache-2.0')
+depends=('glibc' 'gcc-libs' 'fontconfig' 'libxkbcommon' 'vulkan-icd-loader' 'hicolor-icon-theme')
+optdepends=('f1r3node: optional separately deployed node service')
+source=()
+sha256sums=()
+options=('!debug')
+
+package() {
+  local root="${F1R3GAZE_PROJECT_DIR:?set F1R3GAZE_PROJECT_DIR}"
+  local bin="${F1R3GAZE_BIN_DIR:?set F1R3GAZE_BIN_DIR}"
+  local icons="$root/packaging/icons"
+  local size
+  install -Dm755 "$bin/f1r3gaze" "$pkgdir/usr/bin/f1r3gaze"
+  install -Dm755 "$bin/f1r3c" "$pkgdir/usr/bin/f1r3c"
+  install -Dm644 "$root/packaging/linux/f1r3gaze.desktop" "$pkgdir/usr/share/applications/f1r3gaze.desktop"
+  install -Dm644 "$root/../../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  for size in 16 32 48 64 128 256 512; do
+    install -Dm644 "$icons/$size.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/f1r3gaze.png"
+  done
+  install -Dm644 "$icons/f1r3gaze.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/f1r3gaze.svg"
+}

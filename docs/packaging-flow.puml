@@ -1,0 +1,19 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam rectangle {
+  RoundCorner 12
+}
+rectangle "Cargo workspace\nGaze + f1r3c" as source #DCEEFF
+rectangle "Linux native builds\nx86_64 + aarch64" as linux #D8F4E6
+rectangle "macOS native build\nuniversal app" as mac #EBDFFF
+rectangle "Windows native build\nx64 binaries" as win #FFE8D2
+rectangle "Draft release\nartifacts + catalog + checksums" as draft #F4F2D0
+rectangle "Signed repositories and stores\nexternal prerequisites" as publish #FFE3E3
+source --> linux
+source --> mac
+source --> win
+linux --> draft
+mac --> draft
+win --> draft
+draft --> publish : verified signatures\nand account approvals
+@enduml
