@@ -13,6 +13,7 @@ $portable = Join-Path $scratch 'portable'
 $oldMsi = Join-Path $scratch 'older.msi'
 $installed = Join-Path $env:ProgramFiles 'F1R3Gaze'
 $windowProcess = $null
+$session = $null
 $windowStdout = Join-Path $temp 'f1r3gaze-msi-window-stdout.log'
 $windowStderr = Join-Path $temp 'f1r3gaze-msi-window-stderr.log'
 
@@ -89,7 +90,7 @@ try {
   if ($second.ExitCode -ne 0) { throw "Running-instance URL handoff failed: $($second.ExitCode)" }
   $session = Join-Path $handoffProfile 'state\session.json'
   $delivered = $false
-  for ($attempt = 0; $attempt -lt 100; $attempt++) {
+  for ($attempt = 0; $attempt -lt 300; $attempt++) {
     if ((Test-Path $session) -and ((Get-Content -Raw $session) -match [regex]::Escape($link))) {
       $delivered = $true
       break
@@ -117,6 +118,7 @@ try {
   if (Test-Path $upgradeLog) { Get-Content -Tail 80 $upgradeLog }
   if (Test-Path $removeLog) { Get-Content -Tail 80 $removeLog }
   if (Test-Path $windowStderr) { Get-Content -Tail 80 $windowStderr }
+  if ($session -and (Test-Path $session)) { Write-Host "Session snapshot: $(Get-Content -Raw $session)" }
   throw
 } finally {
   if ($windowProcess -and -not $windowProcess.HasExited) {

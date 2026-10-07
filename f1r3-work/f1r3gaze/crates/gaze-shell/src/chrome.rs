@@ -2919,6 +2919,9 @@ impl ChromeDocument {
     #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn open_external_url(&mut self, url: &str) {
         self.open_tab(url);
+        // Delivery can precede the first surface, when no document poll has
+        // run yet. Persist the tab now so it survives a slow or failed paint.
+        self.save_state(Instant::now());
     }
 
     fn add_tab(&mut self, url: &str, parent: Option<u64>, load: bool, title: &str) {
