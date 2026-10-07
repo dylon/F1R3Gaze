@@ -1,4 +1,4 @@
-# Install an older WiX MSI, upgrade to this release, remove it, and launch ZIP.
+# Install an older WiX MSI, upgrade, exercise URL handoff, remove, and launch ZIP.
 param([Parameter(Mandatory)][string]$Version, [string]$Dist = 'dist')
 $ErrorActionPreference = 'Stop'
 $distPath = (Resolve-Path $Dist).Path
@@ -12,6 +12,9 @@ $scratch = Join-Path $temp ("f1r3gaze-smoke-" + [guid]::NewGuid().ToString('N'))
 $portable = Join-Path $scratch 'portable'
 $oldMsi = Join-Path $scratch 'older.msi'
 $installed = Join-Path $env:ProgramFiles 'F1R3Gaze'
+$windowProcess = $null
+$windowStdout = Join-Path $temp 'f1r3gaze-msi-window-stdout.log'
+$windowStderr = Join-Path $temp 'f1r3gaze-msi-window-stderr.log'
 
 function RegisteredProducts {
   @(Get-ItemProperty 'Registry::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
@@ -71,6 +74,34 @@ try {
     if ($key.GetValue('') -ne $expectedCommand) { throw "$scheme URL command is incorrect: $($key.GetValue(''))" }
   }
 
+  $handoffProfile = Join-Path $scratch 'url-profile'
+  $windowProcess = Start-Process -FilePath (Join-Path $installed 'f1r3gaze.exe') -ArgumentList @('--profile', "`"$handoffProfile`"") -PassThru -RedirectStandardOutput $windowStdout -RedirectStandardError $windowStderr
+  $endpoint = Join-Path $handoffProfile 'runtime\url-handoff.json'
+  $ready = $false
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
+    if (Test-Path $endpoint) { $ready = $true; break }
+    if ($windowProcess.HasExited) { throw "Installed browser exited before opening its URL handoff endpoint: $($windowProcess.ExitCode)" }
+    Start-Sleep -Milliseconds 100
+  }
+  if (-not $ready) { throw 'Installed browser did not open its URL handoff endpoint' }
+  $link = 'f1r3://abcd/ci-smoke'
+  $second = Start-Process -FilePath (Join-Path $installed 'f1r3gaze.exe') -ArgumentList @('--profile', "`"$handoffProfile`"", $link) -Wait -PassThru
+  if ($second.ExitCode -ne 0) { throw "Running-instance URL handoff failed: $($second.ExitCode)" }
+  $session = Join-Path $handoffProfile 'state\session.json'
+  $delivered = $false
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
+    if ((Test-Path $session) -and ((Get-Content -Raw $session) -match [regex]::Escape($link))) {
+      $delivered = $true
+      break
+    }
+    if ($windowProcess.HasExited) { throw "Installed browser exited before saving the delivered URL: $($windowProcess.ExitCode)" }
+    Start-Sleep -Milliseconds 100
+  }
+  if (-not $delivered) { throw 'Installed browser did not save the delivered URL in its session' }
+  Stop-Process -Id $windowProcess.Id -Force
+  $windowProcess.WaitForExit()
+  $windowProcess = $null
+
   $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$removeLog`"") -Wait -PassThru
   if ($remove.ExitCode -notin @(0, 3010)) { throw "MSI removal failed: $($remove.ExitCode)" }
   if (Test-Path (Join-Path $installed 'f1r3gaze.exe')) { throw 'MSI left the executable installed' }
@@ -85,7 +116,12 @@ try {
   if (Test-Path $oldInstallLog) { Get-Content -Tail 80 $oldInstallLog }
   if (Test-Path $upgradeLog) { Get-Content -Tail 80 $upgradeLog }
   if (Test-Path $removeLog) { Get-Content -Tail 80 $removeLog }
+  if (Test-Path $windowStderr) { Get-Content -Tail 80 $windowStderr }
   throw
 } finally {
+  if ($windowProcess -and -not $windowProcess.HasExited) {
+    Stop-Process -Id $windowProcess.Id -Force -ErrorAction SilentlyContinue
+    $windowProcess.WaitForExit()
+  }
   Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue
 }
