@@ -89,21 +89,8 @@ impl Drop for Registration {
     }
 }
 
-/// Only the two registered schemes enter browser navigation. Parse through
-/// `url` first to normalize the scheme, then use the same address
-/// validators as the fetch pipeline.
-fn accepted_url(raw: &str) -> Option<String> {
-    let parsed = url::Url::parse(raw).ok()?;
-    let canonical = parsed.as_str();
-    match parsed.scheme() {
-        "f1r3" if gaze_shard::SiteAddr::parse(canonical).is_some() => Some(canonical.to_string()),
-        "f1r3h" if gaze_net::content_hash(canonical).is_some() => Some(canonical.to_string()),
-        _ => None,
-    }
-}
-
 fn queue(raw: &str) {
-    if let Some(url) = accepted_url(raw) {
+    if let Some(url) = crate::external_url::accepted_url(raw) {
         DELIVERY.with(|delivery| {
             let mut delivery = delivery.borrow_mut();
             delivery.pending.push_back(url);

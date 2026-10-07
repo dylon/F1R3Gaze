@@ -2915,8 +2915,8 @@ impl ChromeDocument {
         self.add_tab(url, parent, true, "");
     }
 
-    /// Open a URL delivered to the running macOS app by Launch Services.
-    #[cfg(target_os = "macos")]
+    /// Open a URL delivered by the OS to the running browser window.
+    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn open_external_url(&mut self, url: &str) {
         self.open_tab(url);
     }
@@ -5353,6 +5353,11 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
     event_loop.set_control_flow(ControlFlow::Wait);
     #[cfg(target_os = "macos")]
     let _url_delegate = crate::macos_url::install(event_loop.create_proxy())?;
+    #[cfg(windows)]
+    let (_url_server, windows_urls) = {
+        let url_proxy = event_loop.create_proxy();
+        crate::windows_url::start(&eng.profile.layout.runtime, move || url_proxy.wake_up())?
+    };
     let (proxy, rx) = BlitzShellProxy::new(event_loop.create_proxy());
     let app = BlitzApplication::new(proxy, rx);
     // `window.json` as start-up left it, and how to write it: the chrome,
@@ -5377,8 +5382,15 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
         save: Box::new(move |state: &WindowState| keeps.profile.write_state(state)),
     };
     // A resize is painted once, with the chrome already fitted to it (L9, H7).
+    let application = ChromeApplication::new(app, window);
+    #[cfg(windows)]
+    let application = {
+        let mut application = application;
+        application.receive_windows_urls(windows_urls);
+        application
+    };
     event_loop
-        .run_app(ChromeApplication::new(app, window))
+        .run_app(application)
         .map_err(|e| e.to_string())
 }
 

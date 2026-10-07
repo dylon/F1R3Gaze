@@ -303,6 +303,13 @@ jobs:
         env:
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Test Windows URL handoff
+        shell: pwsh
+        run: |
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib windows_url::tests::
+          if ($LASTEXITCODE) { throw 'Windows URL handoff test failed' }
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib external_url::tests::
+          if ($LASTEXITCODE) { throw 'External URL validation test failed' }
       - run: python packaging/verify_binary.py target/release/f1r3gaze.exe target/release/f1r3c.exe
       - run: dotnet tool install --global wix --version 4.0.5
       - name: Package and sign

@@ -122,6 +122,13 @@ jobs:
         env:
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Test Windows URL handoff
+        shell: pwsh
+        run: |
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib windows_url::tests::
+          if ($LASTEXITCODE) { throw 'Windows URL handoff test failed' }
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib external_url::tests::
+          if ($LASTEXITCODE) { throw 'External URL validation test failed' }
       - name: Install WiX and build MSI and portable ZIP
         shell: pwsh
         run: |

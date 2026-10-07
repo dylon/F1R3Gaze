@@ -355,9 +355,23 @@ fn main() {
     if command == Command::ProfileCheck {
         std::process::exit(profile_check(&layout, fs));
     }
+    #[cfg(all(windows, feature = "window"))]
+    let handoff_runtime = layout.runtime.clone();
     let profile = match Profile::open(layout, command.locking(), StartEnv::real(fs)) {
         Ok(profile) => profile,
         Err(e) => {
+            #[cfg(all(windows, feature = "window"))]
+            if let (
+                Command::Window { url: Some(url) },
+                profile::OpenError::Held(profile::lock::LockError::Held { holder, .. }),
+            ) = (&command, &e)
+            {
+                if holder.mode.as_deref() == Some("window")
+                    && gaze_shell::windows_url::forward(&handoff_runtime, url)
+                {
+                    return;
+                }
+            }
             eprintln!("f1r3gaze: {e}");
             std::process::exit(1);
         }
