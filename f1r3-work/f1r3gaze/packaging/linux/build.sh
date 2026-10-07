@@ -94,12 +94,16 @@ EOF
     command -v makepkg >/dev/null || { echo "makepkg is required" >&2; exit 2; }
     mkdir -p "$work/arch"
     cp "$here/arch/PKGBUILD" "$work/arch/PKGBUILD"
+    cp /etc/makepkg.conf "$work/arch/makepkg.conf"
+    # Arch Linux ARM images can still default to xz; releases use one
+    # predictable pacman artifact name on both architectures.
+    printf "\nPKGEXT='.pkg.tar.zst'\n" >> "$work/arch/makepkg.conf"
     (
       cd "$work/arch"
       F1R3GAZE_BIN_DIR="$bin" F1R3GAZE_PROJECT_DIR="$project" \
         F1R3GAZE_VERSION="$version" PKGDEST="$out" \
         SRCDEST="$work/arch" SRCPKGDEST="$work/arch" BUILDDIR="$work/arch" LOGDEST="$work/arch" \
-        makepkg --nodeps --noconfirm --force
+        makepkg --config "$work/arch/makepkg.conf" --nodeps --noconfirm --force
     )
     ;;
   rpm)

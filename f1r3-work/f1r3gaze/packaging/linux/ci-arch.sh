@@ -3,6 +3,8 @@
 set -euo pipefail
 version=${1:?version required}
 project=$(pwd -P)
+pacman -Sy --noconfirm
+command -v zstd >/dev/null || pacman -S --noconfirm zstd
 useradd --create-home --shell /bin/bash gaze-builder
 mkdir -p /tmp/gaze-arch-output
 chown gaze-builder:gaze-builder /tmp/gaze-arch-output
@@ -10,7 +12,6 @@ su gaze-builder -s /bin/bash -c \
   "cd '$project' && packaging/linux/build.sh --format arch --version '$version' --bin '$project/target/release' --out /tmp/gaze-arch-output"
 mkdir -p "$project/dist"
 cp /tmp/gaze-arch-output/f1r3gaze-*.pkg.tar.zst "$project/dist/"
-pacman -Sy --noconfirm
 pacman -U --noconfirm /tmp/gaze-arch-output/f1r3gaze-*.pkg.tar.zst
 [[ "$(f1r3gaze --version)" == "f1r3gaze $version" ]]
 test -x /usr/bin/f1r3c

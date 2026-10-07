@@ -83,7 +83,17 @@ fi
 
 ln -s /Applications "$WORK/stage/Applications"
 DMG="$OUT/F1R3Gaze-$VER-macos-universal.dmg"
-hdiutil create -volname "F1R3Gaze $VER" -srcfolder "$WORK/stage" -ov -format UDZO "$DMG" >/dev/null
+for attempt in 1 2 3 4; do
+  if hdiutil create -volname "F1R3Gaze $VER" -srcfolder "$WORK/stage" -ov -format UDZO "$DMG" \
+    >/dev/null 2>"$WORK/hdiutil-create.err"; then
+    break
+  fi
+  cat "$WORK/hdiutil-create.err" >&2
+  if ! grep -q 'Resource busy' "$WORK/hdiutil-create.err" || [[ "$attempt" -eq 4 ]]; then
+    exit 1
+  fi
+  sleep "$((attempt * 5))"
+done
 hdiutil verify "$DMG" >/dev/null
 if [[ -n "$SIGN" ]]; then
   codesign --force --timestamp --identifier io.f1r3fly.f1r3gaze.dmg --keychain "$KC" --sign "$SIGN" "$DMG"

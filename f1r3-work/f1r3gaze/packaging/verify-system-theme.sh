@@ -13,5 +13,6 @@ test_theme() {
 
 test_theme system_theme::tests::
 test_theme theme::tests::a_theme_that_cannot_be_used_falls_back_and_says_why
+test_theme application::tests::only_theme_changes_report_a_scheme
 test_theme application::tests::the_title_bar_follows_the_system_only_where_the_os_reports_changes
 test_theme application::tests::a_scheme_request_changes_only_what_differs
