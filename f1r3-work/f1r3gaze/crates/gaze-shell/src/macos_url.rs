@@ -35,6 +35,7 @@ define_class!(
 
     unsafe impl NSApplicationDelegate for AppDelegate {
         #[unsafe(method(application:openURLs:))]
+        #[allow(non_snake_case)] // The Objective-C protocol fixes this selector spelling.
         fn application_openURLs(&self, _application: &NSApplication, urls: &NSArray<NSURL>) {
             for url in urls.iter() {
                 if let Some(absolute) = url.absoluteString() {
@@ -89,7 +90,7 @@ impl Drop for Registration {
 }
 
 /// Only the two registered schemes enter browser navigation. Parse through
-/// `url` first to normalize scheme and host case, then use the same address
+/// `url` first to normalize the scheme, then use the same address
 /// validators as the fetch pipeline.
 fn accepted_url(raw: &str) -> Option<String> {
     let parsed = url::Url::parse(raw).ok()?;
@@ -129,7 +130,7 @@ mod tests {
         queue("f1r3://not-hex/project");
         queue("f1r3h://blake2b-256/not-a-hash");
         queue(&content);
-        assert_eq!(take_pending(), ["f1r3://abcd/project", content.as_str()]);
+        assert_eq!(take_pending(), ["f1r3://ABCD/project", content.as_str()]);
         assert!(take_pending().is_empty());
     }
 }
