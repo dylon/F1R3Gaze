@@ -103,7 +103,7 @@ jobs:
         with:
           name: linux-smoke-packages-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
           path: f1r3-work/f1r3gaze/dist
-      - name: Install, launch and remove on target distro
+      - name: Install older DEB, upgrade, launch and remove on target distro
         run: |
           docker run --rm --platform linux/${{ matrix.arch }} \
             -v "$PWD:/src" -w /src ${{ matrix.image }} \
