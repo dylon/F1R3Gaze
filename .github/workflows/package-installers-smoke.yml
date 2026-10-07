@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
 defaults:
   run:
     working-directory: f1r3-work/f1r3gaze
