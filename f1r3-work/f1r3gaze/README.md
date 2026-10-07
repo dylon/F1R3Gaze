@@ -288,6 +288,12 @@ demo page to GitHub Pages. A page opts in with
 <script type="module" src="gaze-reach.js"></script>
 ```
 
+## Framework design plan
+
+The [F1-R3 design and implementation plan](../../../f1-r3/docs/design/framework-plan.md)
+describes the general-purpose Rholang reactive framework and the F1R3Gaze
+migration. Its canonical home is the separate `f1-r3` repository.
+
 ## Crates
 
 | crate | spec | contents |
