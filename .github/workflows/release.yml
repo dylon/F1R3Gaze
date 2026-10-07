@@ -311,7 +311,7 @@ jobs:
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: .\packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
-      - name: Install and remove MSI; check ZIP
+      - name: Install older MSI, upgrade, remove and check ZIP
         shell: pwsh
         run: .\packaging\windows\ci-smoke.ps1 -Version ("$env:VERSION" -replace '^v','')
       - uses: actions/upload-artifact@v4

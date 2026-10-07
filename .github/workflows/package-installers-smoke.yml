@@ -138,9 +138,17 @@ jobs:
             }
           }
           if (-not $version) { throw 'Workspace version was not found' }
+          $invalidAccepted = $false
+          try {
+            .\packaging\windows\package.ps1 -Version '256.0.0' -Bin target\release -Dist dist
+            $invalidAccepted = $true
+          } catch {
+            if ($_.Exception.Message -notmatch '^MSI ProductVersion field 1 exceeds') { throw }
+          }
+          if ($invalidAccepted) { throw 'MSI accepted a version Windows Installer cannot upgrade' }
           .\packaging\windows\package.ps1 -Version $version -Bin target\release -Dist dist
           if ($LASTEXITCODE) { throw 'Windows package build failed' }
-      - name: Install and remove MSI; check ZIP
+      - name: Install older MSI, upgrade, remove and check ZIP
         shell: pwsh
         run: |
           $version = $null

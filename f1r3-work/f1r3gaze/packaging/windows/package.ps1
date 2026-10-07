@@ -7,8 +7,16 @@
 param([Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][string]$Bin,
       [string]$Dist = "dist", [switch]$ZipOnly)
 $ErrorActionPreference = "Stop"
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
   throw "MSI releases require a stable numeric X.Y.Z version: $Version"
+}
+$versionParts = $Version.Split('.')
+$msiLimits = @(255, 255, 65535)
+for ($i = 0; $i -lt 3; $i++) {
+  [long]$value = 0
+  if (-not [long]::TryParse($versionParts[$i], [ref]$value) -or $value -gt $msiLimits[$i]) {
+    throw "MSI ProductVersion field $($i + 1) exceeds $($msiLimits[$i]): $Version"
+  }
 }
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $workspaceVersion = $null
