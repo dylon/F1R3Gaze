@@ -7,9 +7,13 @@ description: |
   F1R3Node is a separate optional service. Embers is not bundled.
 grade: devel
 confinement: strict
-architectures:
-  - build-on: amd64
-  - build-on: arm64
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+  arm64:
+    build-on: [arm64]
+    build-for: [arm64]
 apps:
   f1r3gaze:
     command: usr/bin/f1r3gaze
@@ -22,6 +26,17 @@ parts:
   f1r3gaze:
     plugin: nil
     source: .
+    stage-packages:
+      - dbus-bin
+      - libfontconfig1
+      - libxkbcommon0
+      - libvulkan1
+      - libgl1
+      - libegl1
+      - libwayland-client0
+      - libwayland-cursor0
+      - libx11-6
+      - libxcb1
     override-build: |
       install -Dm755 "$CRAFT_PART_SRC/f1r3gaze" "$CRAFT_PART_INSTALL/usr/bin/f1r3gaze"
       install -Dm755 "$CRAFT_PART_SRC/f1r3c" "$CRAFT_PART_INSTALL/usr/bin/f1r3c"
