@@ -66,6 +66,29 @@ jobs:
             f1r3-work/f1r3gaze/dist/*
             ${{ runner.temp }}/f1r3gaze-macos-package.log
 
+  macos_intel_theme:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: Build and launch native Intel binaries
+        shell: bash
+        run: |
+          cargo build --locked --release --target x86_64-apple-darwin -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+          test "$(target/x86_64-apple-darwin/release/f1r3gaze --version)" = "f1r3gaze $(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+      - name: Test native Intel system theme selection
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
+
   windows:
     runs-on: windows-2022
     steps:

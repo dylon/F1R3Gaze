@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run the preference-source, transition, palette and window-decoration tests
-# on each supported host OS. Native desktop settings are covered separately.
+# Run the preference-source, displayed palette and window-decoration tests
+# on each supported host OS and architecture.
 set -euo pipefail
 
 test_theme() {
@@ -16,3 +16,8 @@ test_theme theme::tests::a_theme_that_cannot_be_used_falls_back_and_says_why
 test_theme application::tests::only_theme_changes_report_a_scheme
 test_theme application::tests::the_title_bar_follows_the_system_only_where_the_os_reports_changes
 test_theme application::tests::a_scheme_request_changes_only_what_differs
+test_theme chrome::tests::system_follows_the_os
+test_theme chrome::tests::an_explicit_choice_ignores_the_os
+test_theme chrome::tests::no_preference_means_dark
+test_theme chrome::tests::the_override_ignores_window_reports
+test_theme chrome::tests::a_portal_answer_applies_on_the_next_poll
