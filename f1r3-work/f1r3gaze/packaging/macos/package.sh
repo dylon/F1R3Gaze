@@ -20,7 +20,14 @@ EXPECTED="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} secti
 [[ "$VER" == "$EXPECTED" ]] ||
   { echo "version $VER differs from Cargo workspace version $EXPECTED" >&2; exit 2; }
 OUT="${DIST:-dist}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"; [ -n "${KC:-}" ] && security delete-keychain "$KC" 2>/dev/null || true' EXIT
+WORK="$(mktemp -d)"
+cleanup() {
+  local code=$?
+  rm -rf "$WORK"
+  if [[ -n "${KC:-}" ]]; then security delete-keychain "$KC" 2>/dev/null || true; fi
+  exit "$code"
+}
+trap cleanup EXIT
 for arch_dir in "$ARM" "$X86"; do
   for binary in f1r3gaze f1r3c; do
     [[ -f "$arch_dir/$binary" ]] || { echo "missing $arch_dir/$binary" >&2; exit 2; }
@@ -83,13 +90,18 @@ if [[ -n "$SIGN" ]]; then
 fi
 
 PKG="$OUT/F1R3Gaze-$VER-macos-universal.pkg"
-pkg_args=()
+PKG_SIGNED=0
 if [[ -n "${MACOS_INSTALLER_CERT_P12:-}" ]]; then
   [[ -n "$SIGN" ]] || { echo "Installer signing requires application signing" >&2; exit 2; }
-  pkg_args=(--sign "${MACOS_INSTALLER_SIGN_IDENTITY:?Installer identity required}" --keychain "$KC")
+  pkgbuild --component "$APP" --install-location /Applications \
+    --identifier io.f1r3fly.f1r3gaze --version "$VER" \
+    --sign "${MACOS_INSTALLER_SIGN_IDENTITY:?Installer identity required}" --keychain "$KC" "$PKG"
+  PKG_SIGNED=1
+else
+  pkgbuild --component "$APP" --install-location /Applications \
+    --identifier io.f1r3fly.f1r3gaze --version "$VER" "$PKG"
 fi
-pkgbuild --component "$APP" --install-location /Applications \
-  --identifier io.f1r3fly.f1r3gaze --version "$VER" "${pkg_args[@]}" "$PKG"
+[[ -s "$DMG" && -s "$PKG" ]] || { echo "macOS package output is missing or empty" >&2; exit 2; }
 pkgutil --payload-files "$PKG" > "$WORK/pkg-files"
 grep -q 'MacOS/f1r3gaze' "$WORK/pkg-files"
 grep -q 'MacOS/f1r3c' "$WORK/pkg-files"
@@ -97,10 +109,10 @@ if grep -Eiq 'f1r3node|embers' "$WORK/pkg-files"; then
   echo "unexpected product in macOS component PKG" >&2
   exit 2
 fi
-pkgutil --check-signature "$PKG" >/dev/null 2>&1 || [[ "${#pkg_args[@]}" -eq 0 ]]
+pkgutil --check-signature "$PKG" >/dev/null 2>&1 || [[ "$PKG_SIGNED" -eq 0 ]]
 
 if [ -n "$SIGN" ] && [ -n "${APPLE_ID:-}" ]; then
-  [[ "${#pkg_args[@]}" -gt 0 ]] || { echo "notarisation requires an Installer-signed PKG" >&2; exit 2; }
+  [[ "$PKG_SIGNED" -eq 1 ]] || { echo "notarisation requires an Installer-signed PKG" >&2; exit 2; }
   for artifact in "$DMG" "$PKG"; do
     xcrun notarytool submit "$artifact" --apple-id "$APPLE_ID" \
       --team-id "${APPLE_TEAM_ID:?Apple team ID required}" \
