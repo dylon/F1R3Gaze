@@ -32,7 +32,7 @@ mkdir -p "$C/MacOS" "$C/Resources"
 lipo -create "$ARM/f1r3gaze" "$X86/f1r3gaze" -output "$C/MacOS/f1r3gaze"
 lipo -create "$ARM/f1r3c" "$X86/f1r3c" -output "$C/MacOS/f1r3c"
 for binary in f1r3gaze f1r3c; do
-  lipo -verify_arch arm64 x86_64 "$C/MacOS/$binary"
+  lipo "$C/MacOS/$binary" -verify_arch arm64 x86_64
 done
 sed -e "s/__VERSION__/$VER/g" -e "s/__BUNDLE_VERSION__/$VER/g" \
   "$HERE/Info.plist" > "$C/Info.plist"
