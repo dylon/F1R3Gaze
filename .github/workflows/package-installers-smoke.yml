@@ -3,6 +3,7 @@ name: Native installer smoke test
 on:
   push:
     branches: [feature/additional-packages]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
