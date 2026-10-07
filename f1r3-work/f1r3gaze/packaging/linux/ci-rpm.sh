@@ -6,13 +6,14 @@ version=${1:?version required}
 source /etc/os-release
 case "$ID" in
   fedora|rocky)
-    dnf -y install curl git gcc gcc-c++ pkgconf-pkg-config \
+    dnf -y install git gcc gcc-c++ pkgconf-pkg-config python3 \
       fontconfig-devel libxkbcommon-devel vulkan-loader-devel rpm-build \
       tar gzip perl-core make
+    command -v curl >/dev/null || dnf -y install curl-minimal
     ;;
   opensuse-leap)
     zypper --non-interactive refresh
-    zypper --non-interactive install curl git gcc gcc-c++ pkg-config \
+    zypper --non-interactive install curl git gcc gcc-c++ pkg-config python3 \
       fontconfig-devel libxkbcommon-devel vulkan-devel rpm-build \
       tar gzip perl make
     ;;

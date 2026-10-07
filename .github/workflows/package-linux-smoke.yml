@@ -131,7 +131,7 @@ jobs:
       - name: Build, install, launch and remove on Arch
         run: |
           docker run --rm --platform "linux/$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64)" \
-            -v "$PWD:/src" -w /src ${{ matrix.image }} \
+            -v "$GITHUB_WORKSPACE:/src" -w /src/f1r3-work/f1r3gaze ${{ matrix.image }} \
             packaging/linux/ci-arch.sh "$VERSION"
           test -s "dist/f1r3gaze-$VERSION-1-${{ matrix.arch }}.pkg.tar.zst"
       - uses: actions/upload-artifact@v4
@@ -152,8 +152,8 @@ jobs:
           - { runner: ubuntu-22.04-arm, image: "fedora:44", channel: fc44 }
           - { runner: ubuntu-22.04, image: "rockylinux:9", channel: el9 }
           - { runner: ubuntu-22.04-arm, image: "rockylinux:9", channel: el9 }
-          - { runner: ubuntu-22.04, image: "rockylinux:10", channel: el10 }
-          - { runner: ubuntu-22.04-arm, image: "rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04, image: "rockylinux/rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux/rockylinux:10", channel: el10 }
           - { runner: ubuntu-22.04, image: "opensuse/leap:16.0", channel: opensuse16 }
           - { runner: ubuntu-22.04-arm, image: "opensuse/leap:16.0", channel: opensuse16 }
     runs-on: ${{ matrix.runner }}

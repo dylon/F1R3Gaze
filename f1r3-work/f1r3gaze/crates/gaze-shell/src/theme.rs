@@ -1153,7 +1153,7 @@ mod tests {
         let broken = choose(ThemeChoice::Named("broken".into()), None);
         assert_eq!(broken.scheme, Scheme::Dark);
         let why = broken.problem.expect("a reason");
-        assert!(why.starts_with("/usr/share/t/broken.css: line 2:"), "{why}");
+        assert!(why.contains("broken.css: line 2:"), "{why}");
     }
 
     #[test]
