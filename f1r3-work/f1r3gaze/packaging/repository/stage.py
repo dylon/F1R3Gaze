@@ -129,7 +129,20 @@ def rpm_index(files: list[Path], root: Path) -> None:
         copy_packages([file], dest)
         destinations.add(dest)
     for dest in sorted(destinations):
-        subprocess.run(["createrepo_c", "."], cwd=dest, check=True)
+        # Pin gzip for older RPM clients and for deterministic verification;
+        # createrepo_c's default varies by distribution and version.
+        subprocess.run(
+            [
+                "createrepo_c",
+                "--compress-type",
+                "gz",
+                "--general-compress-type",
+                "gz",
+                ".",
+            ],
+            cwd=dest,
+            check=True,
+        )
 
 
 def main() -> None:

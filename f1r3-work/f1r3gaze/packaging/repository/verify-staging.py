@@ -85,9 +85,8 @@ def verify_rpm(tree: Path, version: str) -> None:
                 f"RPM primary index missing: {channel}/{arch}",
             )
             path = root / str(primary.get("href"))
-            raw = path.read_bytes()
-            if path.suffix == ".gz":
-                raw = gzip.decompress(raw)
+            check(path.suffix == ".gz", f"RPM primary index is not gzip: {path}")
+            raw = gzip.decompress(path.read_bytes())
             document = ElementTree.fromstring(raw)
             locations = [
                 element.get("href")
