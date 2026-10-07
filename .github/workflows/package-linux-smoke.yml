@@ -200,7 +200,7 @@ jobs:
           name: linux-smoke-binaries-${{ matrix.arch }}
           path: f1r3-work/f1r3gaze/target/release
       - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder
-      - name: Build, install, launch and remove Flatpak
+      - name: Build, install, exercise sandbox and remove Flatpak
         run: bash packaging/flatpak/ci-smoke.sh "$VERSION"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -231,7 +231,7 @@ jobs:
         id: snapcraft
         with:
           path: f1r3-work/f1r3gaze/dist/snap-input
-      - name: Install, launch and remove snap
+      - name: Install, exercise sandbox and remove snap
         run: bash packaging/snap/ci-smoke.sh '${{ steps.snapcraft.outputs.snap }}' "$VERSION"
       - uses: actions/upload-artifact@v4
         if: always()
