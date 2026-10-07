@@ -69,6 +69,21 @@ class ReleaseMetadataTests(unittest.TestCase):
         )
         self.assertIn("MinimumOSVersion: 10.0.22000.0", installer)
 
+    def test_sandbox_bundles_keep_their_native_architecture_and_digest(self) -> None:
+        names = (
+            "F1R3Gaze-0.1.0-aarch64.flatpak",
+            "f1r3gaze_0.1.0_arm64.snap",
+        )
+        for name in names:
+            (self.dist / name).write_bytes(name.encode())
+        entries = {entry["name"]: entry for entry in self.entries()}
+        self.assertEqual(entries[names[0]]["format"], "flatpak")
+        self.assertEqual(entries[names[0]]["architecture"], "aarch64")
+        self.assertEqual(entries[names[1]]["format"], "snap")
+        self.assertEqual(entries[names[1]]["architecture"], "arm64")
+        for name in names:
+            self.assertEqual(entries[name]["sha256"], hashlib.sha256(name.encode()).hexdigest())
+
     def test_rejects_mixed_versions_and_incomplete_release(self) -> None:
         with self.assertRaisesRegex(ValueError, "incomplete"):
             release_metadata.require_complete_release(self.entries(), "0.1.0")

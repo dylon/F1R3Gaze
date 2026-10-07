@@ -18,6 +18,7 @@ apps:
   f1r3gaze:
     command: usr/bin/f1r3gaze
     desktop: usr/share/applications/f1r3gaze.desktop
+    extensions: [gpu]
     plugs: [network, home, x11, wayland, opengl, desktop]
   f1r3c:
     command: usr/bin/f1r3c
@@ -30,9 +31,6 @@ parts:
       - dbus-bin
       - libfontconfig1
       - libxkbcommon0
-      - libvulkan1
-      - libgl1
-      - libegl1
       - libwayland-client0
       - libwayland-cursor0
       - libx11-6

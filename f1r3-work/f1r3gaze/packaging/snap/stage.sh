@@ -10,6 +10,9 @@ version=${3:?version required}
 here=$(cd "$(dirname "$0")" && pwd)
 "$here/../flatpak/stage.sh" "$bin" "$out"
 cp "$here/../linux/f1r3gaze.desktop" "$out/f1r3gaze.desktop"
+snap_icon="Icon=\${SNAP}/usr/share/icons/hicolor/256x256/apps/f1r3gaze.png"
+sed -i "s|^Icon=f1r3gaze$|$snap_icon|" \
+  "$out/f1r3gaze.desktop"
 mkdir -p "$out/snap"
 sed "s/^version: '.*'/version: '$version'/" "$here/snapcraft.yaml" \
   > "$out/snap/snapcraft.yaml"

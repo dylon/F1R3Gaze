@@ -16,6 +16,8 @@ ARTIFACTS = (
     (re.compile(r"f1r3gaze-(?P<v>.+)-1-(?P<a>x86_64|aarch64)\.pkg\.tar\.zst"), "linux", "arch"),
     (re.compile(r"f1r3gaze-(?P<v>.+)-1\.(?P<c>fc[0-9]+|el[0-9]+|opensuse[0-9]+)\.(?P<a>x86_64|aarch64)\.rpm"), "linux", "rpm"),
     (re.compile(r"F1R3Gaze-(?P<v>.+)-(?P<a>x86_64|aarch64)\.AppImage"), "linux", "appimage"),
+    (re.compile(r"F1R3Gaze-(?P<v>.+)-(?P<a>x86_64|aarch64)\.flatpak"), "linux", "flatpak"),
+    (re.compile(r"f1r3gaze_(?P<v>[^_]+)_(?P<a>amd64|arm64)\.snap"), "linux", "snap"),
     (re.compile(r"f1r3gaze-(?P<v>.+)-linux-(?P<a>x86_64|aarch64)\.tar\.gz"), "linux", "tar"),
     (re.compile(r"F1R3Gaze-(?P<v>.+)-macos-universal\.(?P<f>dmg|pkg)"), "macos", None),
     (re.compile(r"F1R3Gaze-(?P<v>.+)-x64\.msi"), "windows", "msi"),
@@ -86,6 +88,9 @@ def require_complete_release(entries: list[dict[str, str | int]], version: str) 
     for arch in ("x86_64", "aarch64"):
         expected.add(f"f1r3gaze-{version}-linux-{arch}.tar.gz")
         expected.add(f"F1R3Gaze-{version}-{arch}.AppImage")
+        expected.add(f"F1R3Gaze-{version}-{arch}.flatpak")
+    for arch in ("amd64", "arm64"):
+        expected.add(f"f1r3gaze_{version}_{arch}.snap")
     expected.update(
         {
             f"F1R3Gaze-{version}-macos-universal.dmg",
