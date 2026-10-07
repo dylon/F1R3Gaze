@@ -29,8 +29,8 @@ import sys
 
 with open(sys.argv[1], "rb") as stream:
     info = plistlib.load(stream)
-assert len(info["CFBundleURLTypes"]) == 1
-assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["f1r3", "f1r3h"]
+assert [entry["CFBundleURLSchemes"] for entry in info["CFBundleURLTypes"]] == [["f1r3"], ["f1r3h"]]
+assert all(entry["CFBundleTypeRole"] == "Editor" for entry in info["CFBundleURLTypes"])
 PY
 lipo "$app/Contents/MacOS/f1r3gaze" -verify_arch arm64 x86_64
 lipo "$app/Contents/MacOS/f1r3c" -verify_arch arm64 x86_64

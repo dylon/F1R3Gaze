@@ -342,7 +342,8 @@ jobs:
         with: { pattern: "rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
       - name: Stage unsigned APT, pacman and RPM repositories
         run: |
-          python packaging/repository/stage.py --dist dist --out repository-staging
+          python packaging/repository/stage.py --dist dist --out repository-staging --version "${VERSION#v}" --require-complete
+          python packaging/repository/verify-staging.py --tree repository-staging --version "${VERSION#v}"
           tar -czf "repository-staging-${VERSION#v}.tar.gz" repository-staging
       - uses: actions/upload-artifact@v4
         with:

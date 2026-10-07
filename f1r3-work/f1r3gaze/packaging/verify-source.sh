@@ -26,9 +26,8 @@ for source in (
 with (project / "packaging/macos/Info.plist").open("rb") as stream:
     info = plistlib.load(stream)
 assert info["CFBundleExecutable"] == "f1r3gaze"
-assert len(info["CFBundleURLTypes"]) == 1
-assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["f1r3", "f1r3h"]
-assert info["CFBundleURLTypes"][0]["CFBundleURLRole"] == "Viewer"
+assert [entry["CFBundleURLSchemes"] for entry in info["CFBundleURLTypes"]] == [["f1r3"], ["f1r3h"]]
+assert all(entry["CFBundleTypeRole"] == "Editor" for entry in info["CFBundleURLTypes"])
 tree = ElementTree.parse(project / "packaging/windows/f1r3gaze.wxs")
 sources = [
     element.attrib.get("Source", "")

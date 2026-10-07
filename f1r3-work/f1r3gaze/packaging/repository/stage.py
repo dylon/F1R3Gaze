@@ -6,10 +6,38 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+RPM_CHANNELS = ("fc43", "fc44", "el9", "el10", "opensuse16")
+
+
+def require_complete_packages(dist: Path, version: str) -> None:
+    """Require every supported repository package before release staging."""
+    if not VERSION.fullmatch(version):
+        raise ValueError("version must be stable X.Y.Z")
+    expected = {f"f1r3gaze_{version}_{arch}.deb" for arch in ("amd64", "arm64")}
+    expected.update(
+        f"f1r3gaze-{version}-1-{arch}.pkg.tar.zst" for arch in ("x86_64", "aarch64")
+    )
+    expected.update(
+        f"f1r3gaze-{version}-1.{channel}.{arch}.rpm"
+        for channel in RPM_CHANNELS
+        for arch in ("x86_64", "aarch64")
+    )
+    actual = {
+        path.name
+        for path in dist.iterdir()
+        if path.is_file() and path.name.endswith((".deb", ".pkg.tar.zst", ".rpm"))
+    }
+    if missing := sorted(expected - actual):
+        raise ValueError("repository packages are incomplete: " + ", ".join(missing))
+    if unexpected := sorted(actual - expected):
+        raise ValueError("unexpected repository packages: " + ", ".join(unexpected))
 
 
 def require_tool(name: str) -> None:
@@ -29,7 +57,9 @@ def apt_index(files: list[Path], root: Path) -> None:
     require_tool("dpkg-scanpackages")
     pool = root / "pool/main/f/f1r3gaze"
     copy_packages(files, pool)
-    architectures = sorted({file.name.rsplit("_", 1)[-1].removesuffix(".deb") for file in files})
+    architectures = sorted(
+        {file.name.rsplit("_", 1)[-1].removesuffix(".deb") for file in files}
+    )
     indexed: list[Path] = []
     for arch in architectures:
         dest = root / "dists/stable/main" / f"binary-{arch}"
@@ -59,7 +89,9 @@ def apt_index(files: list[Path], root: Path) -> None:
     for path in indexed:
         content = path.read_bytes()
         relative = path.relative_to(release.parent)
-        lines.append(f" {hashlib.sha256(content).hexdigest()} {len(content):16d} {relative}")
+        lines.append(
+            f" {hashlib.sha256(content).hexdigest()} {len(content):16d} {relative}"
+        )
     release.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -91,7 +123,7 @@ def rpm_index(files: list[Path], root: Path) -> None:
         if len(parts) < 3:
             raise ValueError(f"RPM lacks distro channel: {file.name}")
         channel, arch = parts[-2:]
-        if not (channel.startswith("fc") or channel.startswith("el") or channel.startswith("opensuse")):
+        if not channel.startswith(("fc", "el", "opensuse")):
             raise ValueError(f"unrecognized RPM channel: {file.name}")
         dest = root / channel / arch
         copy_packages([file], dest)
@@ -105,19 +137,39 @@ def main() -> None:
     parser.add_argument("--dist", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--limit-bytes", type=int, default=900_000_000)
+    parser.add_argument(
+        "--version", help="stable release version, required with --require-complete"
+    )
+    parser.add_argument("--require-complete", action="store_true")
     args = parser.parse_args()
     if not args.dist.is_dir():
         parser.error(f"artifact directory does not exist: {args.dist}")
     if args.out.exists():
         parser.error(f"output must be a fresh directory: {args.out}")
+    if args.require_complete:
+        if not args.version:
+            parser.error("--version is required with --require-complete")
+        try:
+            require_complete_packages(args.dist, args.version)
+        except ValueError as error:
+            parser.error(str(error))
+    if not any(
+        next(args.dist.glob(pattern), None) is not None
+        for pattern in ("*.deb", "*.pkg.tar.zst", "*.rpm")
+    ):
+        parser.error("no repository packages found")
     args.out.mkdir(parents=True)
     try:
         apt_index(sorted(args.dist.glob("*.deb")), args.out / "apt")
         arch_index(sorted(args.dist.glob("*.pkg.tar.zst")), args.out / "arch")
         rpm_index(sorted(args.dist.glob("*.rpm")), args.out / "rpm")
-        size = sum(path.stat().st_size for path in args.out.rglob("*") if path.is_file())
+        size = sum(
+            path.stat().st_size for path in args.out.rglob("*") if path.is_file()
+        )
         if size > args.limit_bytes:
-            raise ValueError(f"repository tree is too large: {size} > {args.limit_bytes}")
+            raise ValueError(
+                f"repository tree is too large: {size} > {args.limit_bytes}"
+            )
         (args.out / "UNSIGNED-STAGING").write_text(
             "Repository metadata must be signed and verified before publication.\n",
             encoding="utf-8",

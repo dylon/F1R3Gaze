@@ -15,10 +15,14 @@
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
-      <key>CFBundleURLName</key><string>io.f1r3fly.f1r3gaze.site</string>
-      <key>CFBundleURLSchemes</key>
-      <array><string>f1r3</string><string>f1r3h</string></array>
-      <key>CFBundleURLRole</key><string>Viewer</string>
+      <key>CFBundleURLName</key><string>io.f1r3fly.f1r3gaze.f1r3</string>
+      <key>CFBundleURLSchemes</key><array><string>f1r3</string></array>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+    </dict>
+    <dict>
+      <key>CFBundleURLName</key><string>io.f1r3fly.f1r3gaze.f1r3h</string>
+      <key>CFBundleURLSchemes</key><array><string>f1r3h</string></array>
+      <key>CFBundleTypeRole</key><string>Editor</string>
     </dict>
   </array>
   <key>NSHighResolutionCapable</key><true/>
