@@ -36,8 +36,16 @@ jobs:
         run: |
           set -euo pipefail
           version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
-          DIST=dist packaging/macos/package.sh "$version" \
-            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
+          log="$RUNNER_TEMP/f1r3gaze-macos-package.log"
+          if DIST=dist bash -x packaging/macos/package.sh "$version" \
+            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release >"$log" 2>&1; then
+            cat "$log"
+          else
+            tail -n 80 "$log"
+            summary="$(tail -n 12 "$log" | tr '\n' ' ' | sed 's/%/%25/g;s/\r/%0D/g')"
+            echo "::error::macOS package build failed: $summary"
+            exit 1
+          fi
       - name: Mount DMG and install PKG
         shell: bash
         run: |
@@ -74,7 +82,9 @@ jobs:
         if: always()
         with:
           name: macos-installers
-          path: f1r3-work/f1r3gaze/dist/*
+          path: |
+            f1r3-work/f1r3gaze/dist/*
+            ${{ runner.temp }}/f1r3gaze-macos-package.log
 
   windows:
     runs-on: windows-2022
@@ -117,6 +127,7 @@ jobs:
       - name: Install and remove MSI; check ZIP
         shell: pwsh
         run: |
+          try {
           $version = $null
           $inWorkspacePackage = $false
           foreach ($line in Get-Content Cargo.toml) {
@@ -137,8 +148,8 @@ jobs:
           & (Join-Path $portable 'f1r3gaze.exe') --version
           if ($LASTEXITCODE) { throw 'Portable executable failed' }
           $installLog = Join-Path $env:RUNNER_TEMP 'f1r3gaze-msi-install.log'
-          & msiexec.exe /i $msi /qn /norestart "/L*v" $installLog
-          if ($LASTEXITCODE -notin @(0, 3010)) { throw "MSI install failed: $LASTEXITCODE" }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$installLog`"") -Wait -PassThru
+          if ($install.ExitCode -notin @(0, 3010)) { throw "MSI install failed: $($install.ExitCode)" }
           $installed = Join-Path $env:ProgramFiles 'F1R3Gaze'
           foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE')) {
             if (-not (Test-Path (Join-Path $installed $name))) { throw "Missing installed $name" }
@@ -153,9 +164,15 @@ jobs:
             }
           }
           $removeLog = Join-Path $env:RUNNER_TEMP 'f1r3gaze-msi-remove.log'
-          & msiexec.exe /x $msi /qn /norestart "/L*v" $removeLog
-          if ($LASTEXITCODE -notin @(0, 3010)) { throw "MSI removal failed: $LASTEXITCODE" }
+          $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$removeLog`"") -Wait -PassThru
+          if ($remove.ExitCode -notin @(0, 3010)) { throw "MSI removal failed: $($remove.ExitCode)" }
           if (Test-Path (Join-Path $installed 'f1r3gaze.exe')) { throw 'MSI left the executable installed' }
+          } catch {
+            Write-Host "::error::Windows installer smoke failure: $($_.Exception.Message)"
+            if ($installLog -and (Test-Path $installLog)) { Get-Content -Tail 80 $installLog }
+            if ($removeLog -and (Test-Path $removeLog)) { Get-Content -Tail 80 $removeLog }
+            throw
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
