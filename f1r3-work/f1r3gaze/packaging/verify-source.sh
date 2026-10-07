@@ -3,16 +3,10 @@
 set -euo pipefail
 project=$(cd "$(dirname "$0")/.." && pwd)
 command -v shellcheck >/dev/null || { echo "shellcheck is required" >&2; exit 2; }
-command -v xmllint >/dev/null || { echo "xmllint is required" >&2; exit 2; }
 while IFS= read -r -d '' script; do
   bash -n "$script"
   shellcheck "$script"
 done < <(find "$project/packaging" -name '*.sh' -print0)
-xmllint --noout "$project/packaging/macos/Info.plist" \
-  "$project/packaging/macos/entitlements.plist" \
-  "$project/packaging/windows/f1r3gaze.wxs" \
-  "$project/packaging/windows/organization.wxs.in" \
-  "$project/packaging/macos/organization-distribution.xml.in"
 python3 -m unittest discover -s "$project/packaging" -p 'test_*.py'
 python3 - "$project" <<'PY'
 import plistlib
@@ -21,6 +15,14 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 project = Path(sys.argv[1])
+for source in (
+    "packaging/macos/Info.plist",
+    "packaging/macos/entitlements.plist",
+    "packaging/windows/f1r3gaze.wxs",
+    "packaging/windows/organization.wxs.in",
+    "packaging/macos/organization-distribution.xml.in",
+):
+    ElementTree.parse(project / source)
 with (project / "packaging/macos/Info.plist").open("rb") as stream:
     info = plistlib.load(stream)
 assert info["CFBundleExecutable"] == "f1r3gaze"
