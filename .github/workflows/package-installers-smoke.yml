@@ -57,7 +57,7 @@ jobs:
             echo "::error::macOS package build failed: $summary"
             exit 1
           fi
-      - name: Mount DMG and install PKG
+      - name: Mount DMG, upgrade PKG and deliver URL
         shell: bash
         run: |
           version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
@@ -155,7 +155,7 @@ jobs:
           if ($invalidAccepted) { throw 'MSI accepted a version Windows Installer cannot upgrade' }
           .\packaging\windows\package.ps1 -Version $version -Bin target\release -Dist dist
           if ($LASTEXITCODE) { throw 'Windows package build failed' }
-      - name: Install older MSI, upgrade, remove and check ZIP
+      - name: Install older MSI, upgrade, deliver URL, remove and check ZIP
         shell: pwsh
         run: |
           $version = $null

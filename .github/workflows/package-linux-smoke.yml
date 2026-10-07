@@ -127,7 +127,7 @@ jobs:
           name: linux-smoke-binaries-${{ matrix.arch }}
           path: f1r3-work/f1r3gaze/target/release
       - run: chmod +x target/release/f1r3gaze target/release/f1r3c
-      - name: Build, install, launch and remove on Arch
+      - name: Build Arch package, upgrade, launch and remove
         run: |
           docker run --rm --platform "linux/$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64)" \
             -v "$GITHUB_WORKSPACE:/src" -w /src/f1r3-work/f1r3gaze ${{ matrix.image }} \
@@ -169,7 +169,7 @@ jobs:
             zypper --non-interactive install git tar gzip
           fi
       - uses: actions/checkout@v4
-      - name: Build RPM, install, launch and remove
+      - name: Build RPM, upgrade, launch and remove
         run: packaging/linux/ci-rpm.sh "$VERSION"
       - run: rpm -qip dist/*.rpm
       - uses: actions/upload-artifact@v4

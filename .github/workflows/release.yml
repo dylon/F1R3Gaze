@@ -87,7 +87,7 @@ jobs:
           name: linux-binaries-${{ matrix.arch }}
           path: f1r3-work/f1r3gaze/target/release
       - run: chmod +x target/release/f1r3gaze target/release/f1r3c
-      - name: Build native Arch package
+      - name: Build Arch package, upgrade, launch and remove
         run: |
           docker run --rm --platform "linux/$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64)" \
             -v "$GITHUB_WORKSPACE:/src" -w /src/f1r3-work/f1r3gaze ${{ matrix.image }} \
@@ -154,7 +154,7 @@ jobs:
             zypper --non-interactive install git tar gzip
           fi
       - uses: actions/checkout@v4
-      - name: Build RPM on its target distro
+      - name: Build RPM, upgrade, launch and remove on target distro
         run: packaging/linux/ci-rpm.sh "${VERSION#v}"
       - run: rpm -qip dist/*.rpm
       - uses: actions/upload-artifact@v4
@@ -251,7 +251,7 @@ jobs:
         run: |
           DIST=dist packaging/macos/package.sh "${VERSION#v}" \
             target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
-      - name: Mount DMG and install PKG
+      - name: Mount DMG, upgrade PKG and deliver URL
         run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -318,7 +318,7 @@ jobs:
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: .\packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
-      - name: Install older MSI, upgrade, remove and check ZIP
+      - name: Install older MSI, upgrade, deliver URL, remove and check ZIP
         shell: pwsh
         run: .\packaging\windows\ci-smoke.ps1 -Version ("$env:VERSION" -replace '^v','')
       - uses: actions/upload-artifact@v4

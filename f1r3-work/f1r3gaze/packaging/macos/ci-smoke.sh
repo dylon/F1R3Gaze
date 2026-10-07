@@ -11,10 +11,12 @@ pkg="$dist/F1R3Gaze-$version-macos-universal.pkg"
 hdiutil verify "$dmg"
 mount=$(mktemp -d "$RUNNER_TEMP/f1r3gaze-dmg.XXXXXX")
 attached=0
+old_dir=
 cleanup() {
   local code=$?
   if [[ "$attached" == 1 ]]; then hdiutil detach "$mount" || true; fi
   rmdir "$mount" 2>/dev/null || true
+  if [[ -n "$old_dir" ]]; then rm -rf "$old_dir"; fi
   exit "$code"
 }
 trap cleanup EXIT
@@ -40,11 +42,34 @@ if find "$app" \( -iname '*f1r3node*' -o -iname '*embers*' \) | grep -q .; then
   echo 'unexpected separate product in the F1R3Gaze app' >&2
   exit 2
 fi
+# A lower-version component package exercises the macOS Installer upgrade
+# transaction with this exact application payload.
+IFS=. read -r major minor patch <<< "$version"
+if ((patch > 0)); then
+  older="$major.$minor.$((patch - 1))"
+elif ((minor > 0)); then
+  older="$major.$((minor - 1)).1"
+elif ((major > 0)); then
+  older="$((major - 1)).1.1"
+else
+  echo 'macOS package 0.0.0 has no earlier version for upgrade testing' >&2
+  exit 2
+fi
+old_dir=$(mktemp -d "$RUNNER_TEMP/f1r3gaze-old-pkg.XXXXXX")
+old_pkg="$old_dir/F1R3Gaze-$older.pkg"
+pkgbuild --component "$app" --install-location /Applications \
+  --identifier io.f1r3fly.f1r3gaze --version "$older" "$old_pkg"
+sudo installer -pkg "$old_pkg" -target /
+[[ "$(pkgutil --pkg-info io.f1r3fly.f1r3gaze | awk '/^version:/ {print $2}')" == "$older" ]]
 hdiutil detach "$mount"
+attached=0
 rmdir "$mount"
-trap - EXIT
 
 sudo installer -pkg "$pkg" -target /
+[[ "$(pkgutil --pkg-info io.f1r3fly.f1r3gaze | awk '/^version:/ {print $2}')" == "$version" ]]
+rm -rf "$old_dir"
+old_dir=
+trap - EXIT
 installed=/Applications/F1R3Gaze.app
 test -x "$installed/Contents/MacOS/f1r3gaze"
 test -x "$installed/Contents/MacOS/f1r3c"
