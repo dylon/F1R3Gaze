@@ -368,6 +368,39 @@ impl<R: WindowRenderer> ChromeApplication<R> {
         }
     }
 
+    /// Launch Services may deliver a URL before the first surface exists or
+    /// while this app is already running. Keep the original delivery order.
+    #[cfg(target_os = "macos")]
+    fn open_macos_urls(&mut self) {
+        if let Some(pending) = self.pending.as_mut() {
+            for url in crate::macos_url::take_pending() {
+                pending.chrome.open_external_url(&url);
+            }
+            return;
+        }
+        let id = self
+            .kept
+            .as_ref()
+            .and_then(|kept| kept.id)
+            .or_else(|| self.blitz.windows.keys().next().copied());
+        let Some(id) = id else {
+            return;
+        };
+        let urls = crate::macos_url::take_pending();
+        if urls.is_empty() {
+            return;
+        }
+        if let Some(chrome) = self.chrome(id) {
+            for url in urls {
+                chrome.open_external_url(&url);
+            }
+        }
+        if let Some(view) = self.blitz.windows.get_mut(&id) {
+            view.poll();
+            view.request_redraw();
+        }
+    }
+
     /// Shows `effective` in `window_id`: to its pages and in its decorations,
     /// each only if it changes.
     fn show_scheme(&mut self, window_id: WindowId, effective: Scheme, follows_system: bool) {
@@ -644,6 +677,8 @@ impl<R: WindowRenderer> ApplicationHandler for ChromeApplication<R> {
     }
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        self.open_macos_urls();
         // The system's scheme before the first frame (macOS and Windows; None
         // elsewhere, where the chrome reads the portal instead).
         let preference = event_loop.system_theme().map(scheme_of);
@@ -664,6 +699,8 @@ impl<R: WindowRenderer> ApplicationHandler for ChromeApplication<R> {
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        self.open_macos_urls();
         self.blitz.proxy_wake_up(event_loop);
     }
 

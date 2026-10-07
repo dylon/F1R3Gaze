@@ -50,6 +50,8 @@ pub mod system_theme;
 pub mod frame_stats;
 #[cfg(feature = "window")]
 pub mod renderer;
+#[cfg(all(feature = "window", target_os = "macos"))]
+mod macos_url;
 
 #[cfg(test)]
 mod test_support;

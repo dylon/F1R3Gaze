@@ -26,8 +26,9 @@ for source in (
 with (project / "packaging/macos/Info.plist").open("rb") as stream:
     info = plistlib.load(stream)
 assert info["CFBundleExecutable"] == "f1r3gaze"
-# macOS must not advertise custom schemes until the app handles Apple URL events.
-assert "CFBundleURLTypes" not in info
+assert len(info["CFBundleURLTypes"]) == 1
+assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["f1r3", "f1r3h"]
+assert info["CFBundleURLTypes"][0]["CFBundleURLRole"] == "Viewer"
 tree = ElementTree.parse(project / "packaging/windows/f1r3gaze.wxs")
 sources = [
     element.attrib.get("Source", "")

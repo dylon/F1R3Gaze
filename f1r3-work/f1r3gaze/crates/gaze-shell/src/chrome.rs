@@ -2915,6 +2915,12 @@ impl ChromeDocument {
         self.add_tab(url, parent, true, "");
     }
 
+    /// Open a URL delivered to the running macOS app by Launch Services.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn open_external_url(&mut self, url: &str) {
+        self.open_tab(url);
+    }
+
     fn add_tab(&mut self, url: &str, parent: Option<u64>, load: bool, title: &str) {
         self.next_id += 1;
         let main = self.id("main").expect("chrome has #main");
@@ -5345,6 +5351,8 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
         format!("cannot open a window ({e}); use --headless to run pages without one")
     })?;
     event_loop.set_control_flow(ControlFlow::Wait);
+    #[cfg(target_os = "macos")]
+    let _url_delegate = crate::macos_url::install(event_loop.create_proxy())?;
     let (proxy, rx) = BlitzShellProxy::new(event_loop.create_proxy());
     let app = BlitzApplication::new(proxy, rx);
     // `window.json` as start-up left it, and how to write it: the chrome,

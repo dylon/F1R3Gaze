@@ -12,6 +12,15 @@
   <key>CFBundleVersion</key><string>__BUNDLE_VERSION__</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>io.f1r3fly.f1r3gaze.site</string>
+      <key>CFBundleURLSchemes</key>
+      <array><string>f1r3</string><string>f1r3h</string></array>
+      <key>CFBundleURLRole</key><string>Viewer</string>
+    </dict>
+  </array>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>© F1R3FLY.io. Apache-2.0.</string>
 </dict>
