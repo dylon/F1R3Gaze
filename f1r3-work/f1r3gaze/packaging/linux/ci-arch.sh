@@ -3,6 +3,9 @@
 set -euo pipefail
 version=${1:?version required}
 project=$(pwd -P)
+# The container runtime blocks Landlock, which pacman uses for downloads.
+# This changes only the disposable CI image's pacman configuration.
+sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
 pacman -Sy --noconfirm
 command -v zstd >/dev/null || pacman -S --noconfirm zstd
 useradd --create-home --shell /bin/bash gaze-builder
