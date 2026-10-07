@@ -70,9 +70,12 @@ jobs:
         if: always()
         with:
           name: macos-installers
-          path: |
-            f1r3-work/f1r3gaze/dist/*
-            ${{ runner.temp }}/f1r3gaze-macos-package.log
+          path: f1r3-work/f1r3gaze/dist/*
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-package-log
+          path: ${{ runner.temp }}/f1r3gaze-macos-package.log
 
   macos_intel_theme:
     runs-on: macos-15-intel
@@ -100,6 +103,21 @@ jobs:
         shell: bash
         run: |
           cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
+
+  macos_intel_installer:
+    needs: macos
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-installers
+          path: f1r3-work/f1r3gaze/dist
+      - name: Upgrade PKG and deliver URLs on Intel Mac
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-smoke.sh "$version"
 
   windows:
     runs-on: windows-2022

@@ -280,6 +280,18 @@ jobs:
         run: |
           cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
 
+  macos_intel_installer:
+    needs: macos
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: f1r3-work/f1r3gaze/dist
+      - name: Upgrade PKG and deliver URLs on Intel Mac
+        run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
+
   windows:
     runs-on: windows-latest
     steps:
@@ -358,7 +370,7 @@ jobs:
           path: f1r3-work/f1r3gaze/repository-staging-*.tar.gz
 
   publish:
-    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, macos, macos_intel_theme, windows]
+    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, macos, macos_intel_theme, macos_intel_installer, windows]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
