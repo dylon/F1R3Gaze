@@ -1,0 +1,180 @@
+name: Native Linux package smoke test
+
+on:
+  push:
+    branches: [feature/additional-packages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: f1r3-work/f1r3gaze
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      value: ${{ steps.read.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  source_checks:
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck libxml2-utils
+      - run: packaging/verify-source.sh
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.95" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: f1r3-work/f1r3gaze }
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libvulkan-dev
+      - name: Build native binaries and test system theme selection
+        run: |
+          cargo build --locked --release -p gaze-shell -p f1r3c
+          bash packaging/verify-system-theme.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-smoke-binaries-${{ matrix.arch }}
+          path: |
+            f1r3-work/f1r3gaze/target/release/f1r3gaze
+            f1r3-work/f1r3gaze/target/release/f1r3c
+      - name: Build and launch DEB, tarball and AppImage
+        run: |
+          packaging/linux/build.sh --format deb --version "$VERSION" --out dist
+          packaging/linux/build.sh --format tar --version "$VERSION" --out dist
+          packaging/linux/fetch-appimagetool.sh "$RUNNER_TEMP/appimagetool"
+          APPIMAGETOOL=packaging/linux/appimagetool-wrapper.sh \
+            APPIMAGETOOL_IMAGE="$RUNNER_TEMP/appimagetool/appimagetool-${{ matrix.arch }}.AppImage" \
+            APPIMAGETOOL_RUNTIME_FILE="$RUNNER_TEMP/appimagetool/runtime-${{ matrix.arch }}" \
+            packaging/linux/build.sh --format appimage --version "$VERSION" --out dist
+          dpkg-deb --field "dist/f1r3gaze_${VERSION}_$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64).deb"
+          bash packaging/linux/ci-portable.sh "$VERSION"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-packages-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*
+
+  debian_lifecycle:
+    needs: [version, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:12" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:12" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:13" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:13" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:22.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:22.04" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:26.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:26.04" }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-smoke-packages-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+          path: f1r3-work/f1r3gaze/dist
+      - name: Install, launch and remove on target distro
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            -v "$PWD:/src" -w /src ${{ matrix.image }} \
+            bash packaging/linux/ci-deb.sh "$VERSION"
+
+  arch:
+    needs: [version, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64, image: "archlinux:base-devel" }
+          - { runner: ubuntu-22.04-arm, arch: aarch64, image: "menci/archlinuxarm:base-devel" }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-smoke-binaries-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - run: chmod +x target/release/f1r3gaze target/release/f1r3c
+      - name: Build, install, launch and remove on Arch
+        run: |
+          docker run --rm --platform "linux/$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64)" \
+            -v "$PWD:/src" -w /src ${{ matrix.image }} \
+            packaging/linux/ci-arch.sh "$VERSION"
+          test -s "dist/f1r3gaze-$VERSION-1-${{ matrix.arch }}.pkg.tar.zst"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-arch-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.pkg.tar.zst
+
+  rpm:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04, image: "rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04, image: "opensuse/leap:16.0", channel: opensuse16 }
+          - { runner: ubuntu-22.04-arm, image: "opensuse/leap:16.0", channel: opensuse16 }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - name: Install checkout prerequisites
+        working-directory: /
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf -y install git tar gzip
+          else
+            zypper --non-interactive install git tar gzip
+          fi
+      - uses: actions/checkout@v4
+      - name: Build RPM, install, launch and remove
+        run: packaging/linux/ci-rpm.sh "$VERSION"
+      - run: rpm -qip dist/*.rpm
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-rpm-${{ matrix.channel }}-${{ runner.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.rpm

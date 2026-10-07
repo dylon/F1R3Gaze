@@ -227,3 +227,36 @@ fn the_effective_scheme_is_dark_unless_light_is_preferred() {
     reported.set(Some(Scheme::Light));
     assert_eq!(reported.effective(), Scheme::Light);
 }
+
+#[test]
+fn platform_source_and_preference_changes_resolve_the_displayed_palette() {
+    use crate::theme::{self, ThemeChoice, ThemeDirs};
+
+    let reports_through_window = cfg!(any(target_os = "macos", windows));
+    let source = Source::choose(None, reports_through_window).expect("each supported platform has a source");
+    match source {
+        Source::Window => assert!(reports_through_window),
+        Source::Portal(ref program) => {
+            assert!(cfg!(target_os = "linux"));
+            assert_eq!(program, Path::new("dbus-send"));
+        }
+        Source::Fixed(_) => panic!("no override was requested"),
+    }
+
+    let fs = gaze_fs::MemFs::new();
+    let dirs = ThemeDirs { user: PathBuf::from("/unused/themes"), packaged: vec![] };
+    let system = SystemScheme::fixed(Known::Unknown(None));
+    for (preference, expected) in [
+        (Some(Scheme::Light), Scheme::Light),
+        (Some(Scheme::Dark), Scheme::Dark),
+        (None, Scheme::Dark),
+        (Some(Scheme::Light), Scheme::Light),
+    ] {
+        system.set(preference);
+        let resolved = theme::resolve(&ThemeChoice::System, preference, &fs, &dirs);
+        assert_eq!(system.effective(), expected);
+        assert_eq!(resolved.scheme, expected);
+        assert_eq!(resolved.colours, theme::builtin_palette(expected));
+        assert_eq!(theme::resolve(&ThemeChoice::BuiltIn(Scheme::Dark), preference, &fs, &dirs).scheme, Scheme::Dark);
+    }
+}

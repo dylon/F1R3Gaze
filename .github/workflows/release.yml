@@ -46,7 +46,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: f1r3-work/f1r3gaze }
       - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libvulkan-dev
-      - run: cargo build --locked --release -p gaze-shell -p f1r3c
+      - run: |
+          cargo build --locked --release -p gaze-shell -p f1r3c
+          bash packaging/verify-system-theme.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux-binaries-${{ matrix.arch }}
@@ -64,6 +66,7 @@ jobs:
             APPIMAGETOOL_RUNTIME_FILE="$RUNNER_TEMP/appimagetool/runtime-${{ matrix.arch }}" \
             packaging/linux/build.sh --format appimage --version "$V" --out dist
           dpkg-deb --field "dist/f1r3gaze_${V}_$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64).deb"
+          bash packaging/linux/ci-portable.sh "$V"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-packages-${{ matrix.arch }}
@@ -106,6 +109,8 @@ jobs:
           - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:12" }
           - { runner: ubuntu-22.04, arch: amd64, image: "debian:13" }
           - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:13" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:22.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:22.04" }
           - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:24.04" }
           - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:24.04" }
           - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:26.04" }
@@ -172,6 +177,11 @@ jobs:
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
             cargo build --locked --release --target $t -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
           done
+      - name: Test native system theme selection
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
       - name: Package, sign, notarise
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
@@ -186,7 +196,10 @@ jobs:
         run: |
           DIST=dist packaging/macos/package.sh "${VERSION#v}" \
             target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
+      - name: Mount DMG and install PKG
+        run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
       - uses: actions/upload-artifact@v4
+        if: always()
         with: { name: macos, path: f1r3-work/f1r3gaze/dist/* }
 
   windows:
@@ -207,6 +220,11 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("packaging/windows/package.ps1", [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors) { throw ($errors | Out-String) }
       - run: cargo build --locked --release -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+      - name: Test native system theme selection
+        shell: bash
+        env:
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
       - run: python packaging/verify_binary.py target/release/f1r3gaze.exe target/release/f1r3c.exe
       - run: dotnet tool install --global wix --version 4.0.5
       - name: Package and sign
@@ -215,8 +233,19 @@ jobs:
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: .\packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
+      - name: Install and remove MSI; check ZIP
+        shell: pwsh
+        run: .\packaging\windows\ci-smoke.ps1 -Version ("$env:VERSION" -replace '^v','')
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: f1r3-work/f1r3gaze/dist/* }
+        if: always()
+        with:
+          name: windows
+          path: f1r3-work/f1r3gaze/dist/*
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-install-logs
+          path: ${{ runner.temp }}/f1r3gaze-msi-*.log
 
   repository_staging:
     needs: [linux, arch, rpm]
