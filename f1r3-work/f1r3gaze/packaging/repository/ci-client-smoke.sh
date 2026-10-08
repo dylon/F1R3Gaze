@@ -40,8 +40,20 @@ EOF
     printf '\n[f1r3gaze]\nSigLevel = Required DatabaseRequired\nServer = file://%s/arch/$arch\n' "$repo" >> /etc/pacman.conf
     pacman -Sy --noconfirm f1r3gaze
     [[ $(pacman -Q f1r3gaze) == "f1r3gaze $version-1" ]]
-    pacman -Fy --noconfirm
-    pacman -Fl f1r3gaze | grep -F 'usr/bin/f1r3gaze'
+    # Refresh only our signed files index; the image's upstream mirrors are
+    # unrelated to this check and may be unavailable during a release.
+    # shellcheck disable=SC2016
+    cat > /tmp/f1r3gaze-files-pacman.conf <<EOF
+[options]
+Architecture = auto
+SigLevel = Required DatabaseRequired
+DisableSandbox
+[f1r3gaze]
+Server = file://$repo/arch/\$arch
+EOF
+    pacman --config /tmp/f1r3gaze-files-pacman.conf -Fy --noconfirm
+    pacman --config /tmp/f1r3gaze-files-pacman.conf -Fl f1r3gaze |
+      grep -F 'usr/bin/f1r3gaze'
     ;;
   fedora|rocky)
     if [[ $ID == fedora ]]; then channel=fc${VERSION_ID%%.*}; else channel=el${VERSION_ID%%.*}; fi
