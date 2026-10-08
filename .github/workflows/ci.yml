@@ -163,5 +163,5 @@ jobs:
           path: |
             ${{ runner.temp }}/kill/test.log
             ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/users_profile_1/events.ndjson
-            ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/tlc/Trace_users_profile_1.tla
-            ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/tlc/Trace_users_profile_1.cfg
+            ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/tlc/users_profile_1/Trace_users_profile_1.tla
+            ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/tlc/users_profile_1/Trace_users_profile_1.cfg

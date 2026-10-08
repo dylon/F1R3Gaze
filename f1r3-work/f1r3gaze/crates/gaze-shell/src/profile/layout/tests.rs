@@ -253,7 +253,8 @@ fn the_skeleton_and_the_description_cover_every_root() {
         }
     }
     let description = l.describe();
-    assert!(description.starts_with("config\t/p/config\ndata\t/p/data\n"), "{description}");
+    let expected = format!("config\t{}\ndata\t{}\n", l.config.display(), l.data.display());
+    assert!(description.starts_with(&expected), "{description}");
     assert!(description.contains("legacy\t/p\n"));
 }
 
@@ -275,5 +276,5 @@ fn a_profile_argument_is_a_portable_root_made_absolute() {
     assert_eq!(l.kind, Kind::Portable(root.clone()));
     assert_eq!(l.config, root.join("config"));
     let l = locate(Some(PathBuf::from("/abs/profile")), &m).expect("a layout");
-    assert_eq!(l.data, Path::new("/abs/profile/data"));
+    assert_eq!(l.data, Path::new("/abs/profile").join("data"));
 }
