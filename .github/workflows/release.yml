@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - run: python3 -m pip install --user -r packaging/winget/requirements.txt
       - run: packaging/verify-source.sh
 
   linux:
@@ -375,6 +376,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - run: python3 -m pip install --user -r packaging/winget/requirements.txt
       - uses: actions/download-artifact@v4
         with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
       - uses: actions/download-artifact@v4
@@ -396,6 +398,7 @@ jobs:
           python3 packaging/release_metadata.py catalog --version "$V" --dist dist --base-url "$URL" --out dist/catalog.json --require-complete
           python3 packaging/release_metadata.py homebrew --version "$V" --dist dist --base-url "$URL" --out metadata/Casks/f1r3gaze.rb
           python3 packaging/release_metadata.py winget --version "$V" --dist dist --base-url "$URL" --out metadata/winget
+          python3 packaging/winget/validate.py "metadata/winget/F1R3FLY.F1R3Gaze/$V" --dist dist
       - uses: actions/upload-artifact@v4
         with: { name: package-manager-manifests, path: f1r3-work/f1r3gaze/metadata }
       - name: Checksums and signature

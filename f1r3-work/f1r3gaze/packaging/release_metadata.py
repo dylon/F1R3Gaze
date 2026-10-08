@@ -13,12 +13,34 @@ from urllib.parse import quote
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 ARTIFACTS = (
     (re.compile(r"f1r3gaze_(?P<v>[^_]+)_(?P<a>amd64|arm64)\.deb"), "linux", "deb"),
-    (re.compile(r"f1r3gaze-(?P<v>.+)-1-(?P<a>x86_64|aarch64)\.pkg\.tar\.zst"), "linux", "arch"),
-    (re.compile(r"f1r3gaze-(?P<v>.+)-1\.(?P<c>fc[0-9]+|el[0-9]+|opensuse[0-9]+)\.(?P<a>x86_64|aarch64)\.rpm"), "linux", "rpm"),
-    (re.compile(r"F1R3Gaze-(?P<v>.+)-(?P<a>x86_64|aarch64)\.AppImage"), "linux", "appimage"),
-    (re.compile(r"F1R3Gaze-(?P<v>.+)-(?P<a>x86_64|aarch64)\.flatpak"), "linux", "flatpak"),
+    (
+        re.compile(r"f1r3gaze-(?P<v>.+)-1-(?P<a>x86_64|aarch64)\.pkg\.tar\.zst"),
+        "linux",
+        "arch",
+    ),
+    (
+        re.compile(
+            r"f1r3gaze-(?P<v>.+)-1\.(?P<c>fc[0-9]+|el[0-9]+|opensuse[0-9]+)\.(?P<a>x86_64|aarch64)\.rpm"
+        ),
+        "linux",
+        "rpm",
+    ),
+    (
+        re.compile(r"F1R3Gaze-(?P<v>.+)-(?P<a>x86_64|aarch64)\.AppImage"),
+        "linux",
+        "appimage",
+    ),
+    (
+        re.compile(r"F1R3Gaze-(?P<v>.+)-(?P<a>x86_64|aarch64)\.flatpak"),
+        "linux",
+        "flatpak",
+    ),
     (re.compile(r"f1r3gaze_(?P<v>[^_]+)_(?P<a>amd64|arm64)\.snap"), "linux", "snap"),
-    (re.compile(r"f1r3gaze-(?P<v>.+)-linux-(?P<a>x86_64|aarch64)\.tar\.gz"), "linux", "tar"),
+    (
+        re.compile(r"f1r3gaze-(?P<v>.+)-linux-(?P<a>x86_64|aarch64)\.tar\.gz"),
+        "linux",
+        "tar",
+    ),
     (re.compile(r"F1R3Gaze-(?P<v>.+)-macos-universal\.(?P<f>dmg|pkg)"), "macos", None),
     (re.compile(r"F1R3Gaze-(?P<v>.+)-x64\.msi"), "windows", "msi"),
     (re.compile(r"f1r3gaze-(?P<v>.+)-windows-x64\.zip"), "windows", "zip"),
@@ -65,7 +87,9 @@ def artifacts(dist: Path, version: str, base_url: str) -> list[dict[str, str | i
     return result
 
 
-def require_artifact(entries: list[dict[str, str | int]], name: str) -> dict[str, str | int]:
+def require_artifact(
+    entries: list[dict[str, str | int]], name: str
+) -> dict[str, str | int]:
     for entry in entries:
         if entry["name"] == name:
             return entry
@@ -73,12 +97,9 @@ def require_artifact(entries: list[dict[str, str | int]], name: str) -> dict[str
 
 
 def require_complete_release(entries: list[dict[str, str | int]], version: str) -> None:
-    expected = {
-        f"f1r3gaze_{version}_{arch}.deb" for arch in ("amd64", "arm64")
-    }
+    expected = {f"f1r3gaze_{version}_{arch}.deb" for arch in ("amd64", "arm64")}
     expected.update(
-        f"f1r3gaze-{version}-1-{arch}.pkg.tar.zst"
-        for arch in ("x86_64", "aarch64")
+        f"f1r3gaze-{version}-1-{arch}.pkg.tar.zst" for arch in ("x86_64", "aarch64")
     )
     expected.update(
         f"f1r3gaze-{version}-1.{channel}.{arch}.rpm"
@@ -109,7 +130,9 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def generate_catalog(args: argparse.Namespace, entries: list[dict[str, str | int]]) -> None:
+def generate_catalog(
+    args: argparse.Namespace, entries: list[dict[str, str | int]]
+) -> None:
     catalog = {
         "schema_version": 1,
         "release_version": args.version,
@@ -127,7 +150,9 @@ def generate_catalog(args: argparse.Namespace, entries: list[dict[str, str | int
     write(args.out, json.dumps(catalog, indent=2, sort_keys=True) + "\n")
 
 
-def generate_cask(args: argparse.Namespace, entries: list[dict[str, str | int]]) -> None:
+def generate_cask(
+    args: argparse.Namespace, entries: list[dict[str, str | int]]
+) -> None:
     entry = require_artifact(entries, f"F1R3Gaze-{args.version}-macos-universal.dmg")
     content = f'''cask "f1r3gaze" do
   version "{args.version}"
@@ -145,7 +170,9 @@ end
     write(args.out, content)
 
 
-def generate_winget(args: argparse.Namespace, entries: list[dict[str, str | int]]) -> None:
+def generate_winget(
+    args: argparse.Namespace, entries: list[dict[str, str | int]]
+) -> None:
     entry = require_artifact(entries, f"F1R3Gaze-{args.version}-x64.msi")
     ident = "F1R3FLY.F1R3Gaze"
     schema = "1.12.0"
@@ -181,7 +208,7 @@ ManifestVersion: {schema}
     )
     write(
         root / f"{ident}.locale.en-US.yaml",
-        f"""# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.{schema}.schema.json
+        f"""# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultlocale.{schema}.schema.json
 PackageIdentifier: {ident}
 PackageVersion: {args.version}
 PackageLocale: en-US
@@ -217,9 +244,11 @@ def main() -> None:
         entries = artifacts(args.dist, args.version, args.base_url)
         if args.require_complete:
             require_complete_release(entries, args.version)
-        {"catalog": generate_catalog, "homebrew": generate_cask, "winget": generate_winget}[
-            args.command
-        ](args, entries)
+        {
+            "catalog": generate_catalog,
+            "homebrew": generate_cask,
+            "winget": generate_winget,
+        }[args.command](args, entries)
     except ValueError as error:
         parser.error(str(error))
 

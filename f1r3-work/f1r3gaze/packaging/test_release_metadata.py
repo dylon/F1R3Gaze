@@ -11,6 +11,7 @@ from pathlib import Path
 
 import release_metadata
 from selector.validate import validate
+from winget.validate import validate_manifest_set
 
 
 class ReleaseMetadataTests(unittest.TestCase):
@@ -40,7 +41,9 @@ class ReleaseMetadataTests(unittest.TestCase):
         args = argparse.Namespace(version="0.1.0", out=self.root / "catalog.json")
         release_metadata.generate_catalog(args, entries)
         catalog = json.loads(args.out.read_text())
-        self.assertEqual(catalog["components"][0]["optional_external_services"], ["f1r3node"])
+        self.assertEqual(
+            catalog["components"][0]["optional_external_services"], ["f1r3node"]
+        )
         validate(catalog, ["f1r3gaze"])
         with self.assertRaisesRegex(ValueError, "unknown system"):
             validate(catalog, ["f1r3gaze", "embers"])
@@ -59,15 +62,40 @@ class ReleaseMetadataTests(unittest.TestCase):
         release_metadata.generate_winget(
             argparse.Namespace(version="0.1.0", out=winget_root), entries
         )
+        validate_manifest_set(winget_root / "F1R3FLY.F1R3Gaze/0.1.0", self.dist)
         installer = (
-            winget_root
-            / "F1R3FLY.F1R3Gaze/0.1.0/F1R3FLY.F1R3Gaze.installer.yaml"
+            winget_root / "F1R3FLY.F1R3Gaze/0.1.0/F1R3FLY.F1R3Gaze.installer.yaml"
         ).read_text()
         self.assertIn(
             hashlib.sha256(b"F1R3Gaze-0.1.0-x64.msi").hexdigest().upper(),
             installer,
         )
         self.assertIn("MinimumOSVersion: 10.0.22000.0", installer)
+
+    def test_winget_validation_rejects_tampered_digest_and_duplicate_keys(self) -> None:
+        root = self.root / "winget"
+        release_metadata.generate_winget(
+            argparse.Namespace(version="0.1.0", out=root), self.entries()
+        )
+        manifest_dir = root / "F1R3FLY.F1R3Gaze/0.1.0"
+        installer = manifest_dir / "F1R3FLY.F1R3Gaze.installer.yaml"
+        installer.write_text(
+            installer.read_text().replace("Architecture: x64", "Architecture: arm64")
+        )
+        with self.assertRaisesRegex(ValueError, "Windows x64 MSI"):
+            validate_manifest_set(manifest_dir, self.dist)
+        release_metadata.generate_winget(
+            argparse.Namespace(version="0.1.0", out=root), self.entries()
+        )
+        (self.dist / "F1R3Gaze-0.1.0-x64.msi").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "installer digest mismatch"):
+            validate_manifest_set(manifest_dir, self.dist)
+        version_manifest = manifest_dir / "F1R3FLY.F1R3Gaze.yaml"
+        version_manifest.write_text(
+            version_manifest.read_text() + "PackageVersion: 0.1.0\n"
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate YAML key"):
+            validate_manifest_set(manifest_dir, self.dist)
 
     def test_sandbox_bundles_keep_their_native_architecture_and_digest(self) -> None:
         names = (
@@ -82,7 +110,9 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(entries[names[1]]["format"], "snap")
         self.assertEqual(entries[names[1]]["architecture"], "arm64")
         for name in names:
-            self.assertEqual(entries[name]["sha256"], hashlib.sha256(name.encode()).hexdigest())
+            self.assertEqual(
+                entries[name]["sha256"], hashlib.sha256(name.encode()).hexdigest()
+            )
 
     def test_rejects_mixed_versions_and_incomplete_release(self) -> None:
         with self.assertRaisesRegex(ValueError, "incomplete"):

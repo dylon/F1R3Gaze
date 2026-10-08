@@ -64,6 +64,45 @@ dpkg-deb --contents dist/f1r3gaze_0.1.0_amd64.deb
 
 Install local packages with `sudo pacman -U FILE.pkg.tar.zst` on Arch or `sudo apt install ./FILE.deb` on Debian/Ubuntu. For Fedora or Enterprise Linux use `sudo dnf install ./FILE.rpm`; on openSUSE use `sudo zypper install ./FILE.rpm`. These local commands use the package manager's dependency resolver. The tarball and AppImage are portable artifacts and do not create a package-manager upgrade path.
 
+From `f1r3-work/f1r3gaze`, the following commands install a locally built 0.1.0 package for the current CPU. Use a newer version and repeat the install command to upgrade a local DEB, Arch package or RPM. Select the RPM channel that matches the running distribution (`fc43`, `fc44`, `el9`, `el10` or `opensuse16`):
+
+```sh
+VERSION=0.1.0
+sudo pacman -U "dist/f1r3gaze-${VERSION}-1-$(uname -m).pkg.tar.zst"
+f1r3gaze --version
+sudo pacman -R f1r3gaze
+
+sudo apt install "./dist/f1r3gaze_${VERSION}_$(dpkg --print-architecture).deb"
+f1r3gaze --version
+sudo apt remove f1r3gaze
+
+RPM_CHANNEL=fc44  # choose the channel for this host
+sudo dnf install "./dist/f1r3gaze-${VERSION}-1.${RPM_CHANNEL}.$(rpm --eval '%{_arch}').rpm"
+f1r3gaze --version
+sudo dnf remove f1r3gaze
+
+RPM_CHANNEL=opensuse16
+sudo zypper install "./dist/f1r3gaze-${VERSION}-1.${RPM_CHANNEL}.$(rpm --eval '%{_arch}').rpm"
+f1r3gaze --version
+sudo zypper remove f1r3gaze
+```
+
+Run only the commands for the current distribution. The sandbox bundles have their own install and removal commands:
+
+```sh
+VERSION=0.1.0
+flatpak --user install "dist/F1R3Gaze-${VERSION}-$(uname -m).flatpak"
+flatpak run --user io.f1r3fly.F1R3Gaze
+flatpak --user uninstall io.f1r3fly.F1R3Gaze
+
+SNAP_ARCH=$(dpkg --print-architecture)  # amd64 or arm64
+sudo snap install --dangerous "dist/f1r3gaze_${VERSION}_${SNAP_ARCH}.snap"
+snap run f1r3gaze.f1r3gaze
+sudo snap remove f1r3gaze
+```
+
+The Flatpak bundle declares its runtime repository in the bundle; Flatpak may fetch that runtime during installation. The local Snap is unsigned, so `--dangerous` is for development and [does not establish a Store trust or automatic update path](https://snapcraft.io/docs/explanation/snap-development/install-modes/). Store-based installs and refreshes become available after publication.
+
 ## Repository and trust flow
 
 `packaging/repository/stage.py` creates an unsigned publication tree in a *fresh* output directory:
@@ -104,7 +143,7 @@ python3 packaging/release_metadata.py winget --version 0.1.0 --dist dist \
   --out metadata/winget
 ```
 
-The cask points to the DMG and links `f1r3c` from the installed app. This follows Homebrew's [cask artifact model](https://docs.brew.sh/Cask-Cookbook). The WinGet output is a three-file manifest set matching the [community repository format](https://github.com/microsoft/winget-pkgs/blob/master/.github/instructions/manifests.instructions.md). Neither generator submits or publishes anything.
+The cask points to the DMG and links `f1r3c` from the installed app. This follows Homebrew's [cask artifact model](https://docs.brew.sh/Cask-Cookbook). The WinGet output is a three-file manifest set matching the [community repository format](https://github.com/microsoft/winget-pkgs/blob/master/.github/instructions/manifests.instructions.md). `packaging/winget/validate.py metadata/winget/F1R3FLY.F1R3Gaze/0.1.0 --dist dist` validates all three files against a pinned copy of [Microsoft's 1.12.0 manifest schemas](https://github.com/microsoft/winget-cli/tree/49d0f8291b40f88744a29ae7ca0d1df962ade537/schemas/JSON/manifests/v1.12.0), checks their shared identity and version, and compares the installer hash with the built MSI. Install `packaging/winget/requirements.txt` first. Microsoft's `winget validate` and its community submission checks remain publication steps. Neither generator submits or publishes anything.
 
 After a signing key and verified fingerprint are published, a customer can check a release download with:
 
@@ -125,4 +164,4 @@ Flatpak and Snap definitions use the same Gaze and compiler payload. Install `xv
 
 ## Release sequence and pending work
 
-The tag workflow builds native Linux binaries and packages, builds universal macOS and Windows artifacts, checks available metadata, creates a draft release, and produces the cask and WinGet files as review artifacts. The `package-linux-smoke.yml` and `package-installers-smoke.yml` workflows run on `feature/additional-packages` pushes; the installer workflow also runs on `v*` tags. Branch smoke runs cancel an older run for the same workflow and branch; tag runs are retained. Each builds unsigned artifacts on GitHub-hosted runners and performs installation and launch checks. [Fork Linux run 37712854914](https://github.com/dylon/F1R3Gaze/actions/runs/37712854914) passed all 31 package build, upgrade and lifecycle jobs, including both Flatpak and Snap architectures, virtual-display graphics and repository staging; [fork installer run 37712854905](https://github.com/dylon/F1R3Gaze/actions/runs/37712854905) passed all four native installer jobs with theme, PKG and MSI upgrade, and running-app URL checks. The Apple Silicon package runner checks the universal app's two Mach-O slices and tests the installed ARM slice. A separate Intel job downloads and installs that exact universal artifact, checks its native slice, PKG upgrade, running-app and cold URL handling, and gates the release draft; another Intel job checks the native compiler, CLI and system theme. The Windows runner is Windows Server 2022, so Windows 11 customer validation remains separate. Arch Linux ARM uses the third-party `menci/archlinuxarm` image; its package and lifecycle passed on that image. Publishing package repositories, a Homebrew tap, WinGet, Flathub, Snap Store, Microsoft Store or Mac App Store requires external accounts or credentials. Signed install, upgrade and removal tests on customer macOS and Windows 11 machines also remain pending. Each of these is a leaf in the external pgmcp child epic.
+The tag workflow builds native Linux binaries and packages, builds universal macOS and Windows artifacts, checks available metadata, creates a draft release, and produces the cask and WinGet files as review artifacts. The `package-linux-smoke.yml` and `package-installers-smoke.yml` workflows run on `feature/additional-packages` pushes; the installer workflow also runs on `v*` tags. Branch smoke runs cancel an older run for the same workflow and branch; tag runs are retained. Each builds unsigned artifacts on GitHub-hosted runners and performs installation and launch checks. [Fork Linux run 37713789205](https://github.com/dylon/F1R3Gaze/actions/runs/37713789205) passed all 31 package build, upgrade and lifecycle jobs, including both Flatpak and Snap architectures, virtual-display graphics and repository staging; [fork installer run 37713789218](https://github.com/dylon/F1R3Gaze/actions/runs/37713789218) passed all four native installer jobs with theme, PKG and MSI upgrade, and running-app URL checks. The Apple Silicon package runner checks the universal app's two Mach-O slices and tests the installed ARM slice. A separate Intel job downloads and installs that exact universal artifact, checks its native slice, PKG upgrade, running-app and cold URL handling, and gates the release draft; another Intel job checks the native compiler, CLI and system theme. The Windows runner is Windows Server 2022, so Windows 11 customer validation remains separate. Arch Linux ARM uses the third-party `menci/archlinuxarm` image; its package and lifecycle passed on that image. Publishing package repositories, a Homebrew tap, WinGet, Flathub, Snap Store, Microsoft Store or Mac App Store requires external accounts or credentials. Signed install, upgrade and removal tests on customer macOS and Windows 11 machines also remain pending. Each of these is a leaf in the external pgmcp child epic.
