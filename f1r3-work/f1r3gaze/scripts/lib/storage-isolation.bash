@@ -125,7 +125,7 @@ storage_isolate() {
     # 3. Every XDG variable F1R3Gaze reads.
     local x=$work/xdg
     mkdir -p -- "$x/config" "$x/data" "$x/state" "$x/cache" "$x/config-dirs" "$x/data-dirs" "$x/runtime" "$work/home"
-    chmod 700 -- "$x/runtime"
+    chmod 700 "$x/runtime"
     export XDG_CONFIG_HOME=$x/config XDG_DATA_HOME=$x/data XDG_STATE_HOME=$x/state XDG_CACHE_HOME=$x/cache
     export XDG_RUNTIME_DIR=$x/runtime XDG_CONFIG_DIRS=$x/config-dirs XDG_DATA_DIRS=$x/data-dirs
     # 4. No session bus: the colour-scheme portal is the fake below.

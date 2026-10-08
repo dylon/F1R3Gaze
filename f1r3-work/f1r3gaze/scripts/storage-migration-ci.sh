@@ -150,7 +150,7 @@ export HOME=$CI_HOME TMPDIR=$RUNNER_TEMP/tmp
 for class in config data state cache runtime config-dirs data-dirs; do
     mkdir -p -- "$RUNNER_TEMP/xdg/$class"
 done
-chmod 700 -- "$RUNNER_TEMP/xdg/runtime"
+chmod 700 "$RUNNER_TEMP/xdg/runtime"
 export XDG_CONFIG_HOME=$RUNNER_TEMP/xdg/config XDG_DATA_HOME=$RUNNER_TEMP/xdg/data
 export XDG_STATE_HOME=$RUNNER_TEMP/xdg/state XDG_CACHE_HOME=$RUNNER_TEMP/xdg/cache
 export XDG_RUNTIME_DIR=$RUNNER_TEMP/xdg/runtime XDG_CONFIG_DIRS=$RUNNER_TEMP/xdg/config-dirs XDG_DATA_DIRS=$RUNNER_TEMP/xdg/data-dirs
