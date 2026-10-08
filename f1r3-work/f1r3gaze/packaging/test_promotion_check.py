@@ -14,6 +14,7 @@ from repository.promotion_check import (
     check_promotion,
     directory_bytes,
     public_key_fingerprint,
+    publication_key,
     verify_catalog,
     verify_checksum_manifest,
     verify_openpgp,
@@ -120,6 +121,23 @@ class PromotionCheckTests(unittest.TestCase):
             ).stdout
         )
         fingerprint = public_key_fingerprint(public)
+        tree = self.root / "tree"
+        tree.mkdir()
+        published = tree / "f1r3gaze-signing-key.asc"
+        with self.assertRaisesRegex(ValueError, "published signing key is missing"):
+            publication_key(tree, public, fingerprint)
+        published.write_bytes(public.read_bytes())
+        self.assertEqual(publication_key(tree, public, fingerprint), published)
+        with self.assertRaisesRegex(ValueError, "trusted public key fingerprint mismatch"):
+            publication_key(tree, public, "0" * 40)
+        published.unlink()
+        published.symlink_to(public)
+        with self.assertRaisesRegex(ValueError, "published signing key is missing or unsafe"):
+            publication_key(tree, public, fingerprint)
+        published.unlink()
+        published.write_text("not a public key\n")
+        with self.assertRaisesRegex(ValueError, "gpg failed"):
+            publication_key(tree, public, fingerprint)
         keyring = self.root / "public.gpg"
         subprocess.run(
             ["gpg", "--batch", "--dearmor", "--output", str(keyring), str(public)],

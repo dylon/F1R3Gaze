@@ -179,6 +179,15 @@ def public_key_fingerprint(public_key: Path) -> str:
     return fingerprints[0]
 
 
+def publication_key(tree: Path, trusted_key: Path, fingerprint: str) -> Path:
+    """Require the published key to verify as the trusted, full primary key."""
+    published = tree / "f1r3gaze-signing-key.asc"
+    require(published.is_file() and not published.is_symlink(), "published signing key is missing or unsafe")
+    require(public_key_fingerprint(trusted_key) == fingerprint, "trusted public key fingerprint mismatch")
+    require(public_key_fingerprint(published) == fingerprint, "published signing key fingerprint mismatch")
+    return published
+
+
 def verify_openpgp(
     keyring: Path,
     fingerprint: str,
@@ -239,10 +248,7 @@ def verify_signatures(
         FINGERPRINT.fullmatch(fingerprint) is not None,
         "expected fingerprint must be full hexadecimal",
     )
-    require(
-        public_key_fingerprint(public_key) == fingerprint,
-        "public key fingerprint mismatch",
-    )
+    published_key = publication_key(tree, public_key, fingerprint)
     for tool in ("gpgv", "rpmkeys"):
         require_tool(tool)
     with tempfile.TemporaryDirectory(prefix="f1r3gaze-promotion-") as temporary:
@@ -255,7 +261,7 @@ def verify_signatures(
             "--dearmor",
             "--output",
             str(keyring),
-            str(public_key),
+            str(published_key),
         )
         release = tree / "apt/dists/stable/Release"
         verify_openpgp(keyring, fingerprint, Path(f"{release}.gpg"), release)
@@ -280,7 +286,7 @@ def verify_signatures(
                 verify_openpgp(keyring, fingerprint, Path(f"{repomd}.asc"), repomd)
         rpmdb = work / "rpmdb"
         rpmdb.mkdir()
-        command("rpmkeys", "--dbpath", str(rpmdb), "--import", str(public_key))
+        command("rpmkeys", "--dbpath", str(rpmdb), "--import", str(published_key))
         for package in sorted((tree / "rpm").rglob("*.rpm")):
             command(
                 "rpmkeys",

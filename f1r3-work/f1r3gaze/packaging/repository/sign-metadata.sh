@@ -18,13 +18,14 @@ gpg --batch --list-secret-keys "$key" >/dev/null ||
 here=$(cd "$(dirname "$0")" && pwd)
 version=${3:?stable version required}
 python3 "$here/verify-staging.py" --tree "$tree" --version "$version"
+gpg --batch --armor --export "$key" > "$tree/f1r3gaze-signing-key.asc"
+test -s "$tree/f1r3gaze-signing-key.asc" ||
+  { echo "public signing key export failed" >&2; exit 2; }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-gpg --batch --armor --export "$key" > "$work/public.asc"
-test -s "$work/public.asc"
 mkdir "$work/rpmdb"
-rpmkeys --dbpath "$work/rpmdb" --import "$work/public.asc"
+rpmkeys --dbpath "$work/rpmdb" --import "$tree/f1r3gaze-signing-key.asc"
 while IFS= read -r -d '' package; do
   rpmkeys --dbpath "$work/rpmdb" --define '_pkgverify_level all' --checksig "$package"
 done < <(find "$tree/rpm" -type f -name '*.rpm' -print0)

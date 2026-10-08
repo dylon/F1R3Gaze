@@ -83,7 +83,7 @@ def apt_index(files: list[Path], root: Path) -> None:
         f"Date: {datetime.now(timezone.utc):%a, %d %b %Y %H:%M:%S +0000}",
         f"Architectures: {' '.join(architectures)}",
         "Components: main",
-        "Description: F1R3Gaze staged repository; sign before publication",
+        "Description: F1R3Gaze package repository",
         "SHA256:",
     ]
     for path in indexed:

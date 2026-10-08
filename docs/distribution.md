@@ -143,19 +143,93 @@ python3 packaging/repository/promotion_check.py --dist dist-promotion \
 
 The last command is a read-only dry run. The `--finalize` invocation removes `UNSIGNED-STAGING` only after it checks the complete artifact matrix, catalog URLs and digests, tree size, staged package copies and indexes, APT/pacman/RPM signatures, and the signed checksum file including `catalog.json`. It does not upload anything. The release URL, public key and independently published fingerprint must be real before this can pass for production. The branch workflow exercises the signing order on copies of real Linux packages with a temporary CI key. The tag workflow also runs the full catalog and checksum promotion gate on temporary copies of every native artifact before its draft release can be created. Tags pushed to a fork validate without creating a draft; on the upstream repository, tag runs create the draft. A manual dispatch is available once the workflow exists on the repository's default branch, and creates a draft only if `publish_draft` is explicitly selected. Temporary CI keys and signed copies are never published.
 
+`sign-metadata.sh` also exports `f1r3gaze-signing-key.asc` at the signed tree's root. The promotion gate verifies signatures using that published copy and compares its primary fingerprint with the separately supplied trusted key. This ensures the key customers download is the key that verified the staged packages and indexes. A fingerprint learned only from the package host is insufficient to establish trust.
+
 ### Customer repository configuration after publication
 
-The commands below are templates for the future repository host. Set `BASE` to its HTTPS root and verify the published signing-key fingerprint through an independent channel before importing it. The current unsigned staging tree must never be used as `BASE`.
+Run the common preparation below in Bash after the signed tree is published over HTTPS. Enter the repository root URL and the **full 40- or 64-digit primary fingerprint obtained independently from F1R3FLY.io**. The command stops before installing any trust material if they differ. The current unsigned staging tree must never be used as the repository root.
 
-| Family | Repository path below `BASE` | Add repository after key verification | Update / remove |
-| --- | --- | --- | --- |
-| Debian and Ubuntu | `apt` | A Deb822 source with `URIs: $BASE/apt`, `Suites: stable`, `Components: main` and `Signed-By: /usr/share/keyrings/f1r3gaze.gpg` | `sudo apt update && sudo apt install f1r3gaze` / `sudo apt remove f1r3gaze` |
-| Arch and Arch Linux ARM | `arch/$arch` | A `[f1r3gaze]` entry in `pacman.conf` with `SigLevel = Required DatabaseRequired` and `Server = $BASE/arch/$arch`, after `pacman-key` imports the verified key | `sudo pacman -Syu f1r3gaze` / `sudo pacman -R f1r3gaze` |
-| Fedora 43/44 | `rpm/fc$releasever/$basearch` | A DNF `.repo` entry with `gpgcheck=1`, `repo_gpgcheck=1` and the verified key URL | `sudo dnf upgrade f1r3gaze` / `sudo dnf remove f1r3gaze` |
-| Enterprise Linux 9/10 | `rpm/el$releasever/$basearch` | The same DNF checks, using the EL channel | `sudo dnf upgrade f1r3gaze` / `sudo dnf remove f1r3gaze` |
-| openSUSE Leap 16 | `rpm/opensuse16/$basearch` | A Zypper repository with metadata and package signature checks enabled and the verified key imported | `sudo zypper update f1r3gaze` / `sudo zypper remove f1r3gaze` |
+```bash
+set -euo pipefail
+read -r -p 'Published repository HTTPS root: ' BASE
+read -r -p 'Independently verified full signing-key fingerprint: ' EXPECTED_FPR
+BASE=${BASE%/}
+EXPECTED_FPR=${EXPECTED_FPR^^}
+[[ $BASE =~ ^https://[^/]+(/.*)?$ && $EXPECTED_FPR =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]
+KEY_FILE=$PWD/f1r3gaze-signing-key.asc
+curl --fail --location --silent --show-error \
+  "$BASE/f1r3gaze-signing-key.asc" --output "$KEY_FILE"
+ACTUAL_FPR=$(gpg --batch --show-keys --with-colons --fingerprint "$KEY_FILE" |
+  awk -F: '$1 == "fpr" {print toupper($10); exit}')
+[[ $ACTUAL_FPR == "$EXPECTED_FPR" ]] || {
+  echo 'Signing-key fingerprint mismatch; repository was not configured' >&2
+  exit 1
+}
+```
 
-`$arch` is `x86_64` or `aarch64` in the pacman URL; DNF and Zypper expand `$basearch` on the client. APT uses the Debian architecture names `amd64` and `arm64` inside its index. The package repository will publish exact host-specific commands and its fingerprint only after a real key and domain are provisioned.
+Run **one** of the following blocks in that same Bash session. For Debian 12/13 and Ubuntu 22.04/24.04/26.04, the source is a Deb822 `.sources` file scoped to this key, as [APT documents](https://manpages.debian.org/testing/apt/sources.list.5.en.html):
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+gpg --batch --yes --dearmor --output f1r3gaze-signing-key.gpg "$KEY_FILE"
+sudo install -m 0644 f1r3gaze-signing-key.gpg /etc/apt/keyrings/f1r3gaze.gpg
+printf 'Types: deb\nURIs: %s/apt\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/f1r3gaze.gpg\n' "$BASE" |
+  sudo tee /etc/apt/sources.list.d/f1r3gaze.sources >/dev/null
+sudo apt update
+sudo apt install f1r3gaze
+# Later: sudo apt update && sudo apt upgrade f1r3gaze
+# Remove: sudo apt remove f1r3gaze
+```
+
+For Arch Linux x86_64 or Arch Linux ARM aarch64, pacman expands `$arch` to the system architecture. The repository requires both package and database signatures, following [pacman.conf](https://man.archlinux.org/man/pacman.conf.5.en):
+
+```bash
+sudo pacman-key --add "$KEY_FILE"
+sudo pacman-key --lsign-key "$EXPECTED_FPR"
+if grep -qx '\[f1r3gaze\]' /etc/pacman.conf; then
+  echo 'f1r3gaze already exists in pacman.conf; inspect it before changing it' >&2
+  exit 1
+fi
+printf '\n[f1r3gaze]\nSigLevel = Required DatabaseRequired\nServer = %s/arch/$arch\n' "$BASE" |
+  sudo tee -a /etc/pacman.conf >/dev/null
+sudo pacman -Syu f1r3gaze
+# Later: sudo pacman -Syu f1r3gaze
+# Remove: sudo pacman -R f1r3gaze
+```
+
+For Fedora 43/44 and Enterprise Linux 9/10, the channel names match the generated RPM directories. DNF checks both the signed RPMs and signed `repomd.xml`, as its [configuration reference](https://dnf.readthedocs.io/en/latest/conf_ref.html) specifies:
+
+```bash
+. /etc/os-release
+case "$ID" in
+  fedora) CHANNEL=fc${VERSION_ID%%.*} ;;
+  rocky|rhel) CHANNEL=el${VERSION_ID%%.*} ;;
+  *) echo "Unsupported RPM distribution: $ID" >&2; exit 1 ;;
+esac
+case "$CHANNEL" in fc43|fc44|el9|el10) ;; *) echo "Unsupported channel: $CHANNEL" >&2; exit 1 ;; esac
+sudo install -d -m 0755 /etc/pki/rpm-gpg
+sudo install -m 0644 "$KEY_FILE" /etc/pki/rpm-gpg/F1R3Gaze.asc
+printf '[f1r3gaze]\nname=F1R3Gaze\nbaseurl=%s/rpm/%s/$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/F1R3Gaze.asc\n' "$BASE" "$CHANNEL" |
+  sudo tee /etc/yum.repos.d/f1r3gaze.repo >/dev/null
+sudo dnf install f1r3gaze
+# Later: sudo dnf upgrade f1r3gaze
+# Remove: sudo dnf remove f1r3gaze
+```
+
+For openSUSE Leap 16, libzypp accepts mandatory repository and RPM signature checks in the `.repo` file; see [libzypp's repository security model](https://opensuse.github.io/libzypp/classzypp_1_1RepoInfo.html):
+
+```bash
+sudo install -d -m 0755 /etc/zypp/keys
+sudo install -m 0644 "$KEY_FILE" /etc/zypp/keys/f1r3gaze.asc
+printf '[f1r3gaze]\nname=F1R3Gaze\nbaseurl=%s/rpm/opensuse16/$basearch\nenabled=1\nautorefresh=1\ngpgcheck=1\nrepo_gpgcheck=1\npkg_gpgcheck=1\ngpgkey=file:///etc/zypp/keys/f1r3gaze.asc\n' "$BASE" |
+  sudo tee /etc/zypp/repos.d/f1r3gaze.repo >/dev/null
+sudo zypper refresh f1r3gaze
+sudo zypper install f1r3gaze
+# Later: sudo zypper update f1r3gaze
+# Remove: sudo zypper remove f1r3gaze
+```
+
+The published tree uses `apt`, `arch/x86_64`, `arch/aarch64`, and `rpm/{fc43,fc44,el9,el10,opensuse16}/{x86_64,aarch64}` beneath its root. DNF and Zypper expand `$basearch` on the client; APT uses `amd64` and `arm64` inside its index. A public domain and independent fingerprint must be provided before customer use.
 
 The draft GitHub release collects artifacts first, generates `catalog.json`, and then generates `SHA256SUMS` and its detached signature when a key is configured. CI also generates candidate Homebrew and WinGet manifests from the actual DMG and MSI bytes. Publish those manifests only after the DMG is notarized and the MSI is signed:
 
