@@ -18,6 +18,8 @@ apps:
   f1r3gaze:
     command: usr/bin/f1r3gaze
     desktop: usr/share/applications/f1r3gaze.desktop
+    environment:
+      XKB_CONFIG_ROOT: $SNAP/usr/share/X11/xkb
     extensions: [gpu]
     plugs: [network, home, x11, wayland, opengl, desktop]
   f1r3c:
@@ -32,6 +34,7 @@ parts:
       - libfontconfig1
       - libxkbcommon0
       - libxkbcommon-x11-0
+      - xkb-data
       - libwayland-client0
       - libwayland-cursor0
       - libx11-6
