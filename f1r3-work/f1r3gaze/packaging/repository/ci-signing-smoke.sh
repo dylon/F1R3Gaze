@@ -4,8 +4,11 @@ set -euo pipefail
 dist=${1:?release package directory required}
 version=${2:?stable version required}
 mode=${3:-repository}
+output=${4:-}
 [[ "$mode" == repository || "$mode" == full-release ]] ||
   { echo "mode must be repository or full-release" >&2; exit 2; }
+[[ -z "$output" || "$mode" == full-release ]] ||
+  { echo "a signed-tree output requires full-release mode" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 project=$(cd "$here/../.." && pwd)
 dist=$(cd "$dist" && pwd)
@@ -42,6 +45,10 @@ if [[ "$mode" == full-release ]]; then
     --catalog "$work/promotion-dist/catalog.json" \
     --public-key "$work/public.asc" --fingerprint "$fingerprint" \
     --version "$version"
+  if [[ -n "$output" ]]; then
+    [[ ! -e "$output" ]] || { echo "signed-tree output already exists: $output" >&2; exit 2; }
+    tar -C "$work" -cf "$output" promotion-tree
+  fi
   echo "complete release promotion dry run passed for $version"
   exit 0
 fi

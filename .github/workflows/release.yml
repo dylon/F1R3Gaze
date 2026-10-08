@@ -418,11 +418,46 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: windows, path: f1r3-work/f1r3gaze/dist }
       - name: Sign private artifact copies and dry-run the full promotion gate
-        run: bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}" full-release
+        run: |
+          bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}" \
+            full-release ci-only-signed-repository.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-only-signed-repository
+          path: f1r3-work/f1r3gaze/ci-only-signed-repository.tar
+
+  repository_clients:
+    needs: promotion_dry_run
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, platform: amd64, arch_image: "archlinux:base-devel" }
+          - { runner: ubuntu-22.04-arm, platform: arm64, arch_image: "menci/archlinuxarm:base-devel" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-only-signed-repository
+          path: f1r3-work/f1r3gaze/repository-client-input
+      - name: Install through signed repository indexes on target distros
+        run: |
+          set -euo pipefail
+          tar -C repository-client-input -xf repository-client-input/ci-only-signed-repository.tar
+          tree="$PWD/repository-client-input/promotion-tree"
+          test -s "$tree/f1r3gaze-signing-key.asc"
+          test ! -e "$tree/UNSIGNED-STAGING"
+          for image in debian:12 ubuntu:24.04 fedora:43 rockylinux:9 opensuse/leap:16.0 "${{ matrix.arch_image }}"; do
+            docker run --rm --platform linux/${{ matrix.platform }} \
+              -v "$tree:/repo:ro" \
+              -v "$PWD/packaging/repository/ci-client-smoke.sh:/ci-client-smoke.sh:ro" \
+              "$image" bash /ci-client-smoke.sh "${VERSION#v}"
+          done
 
   publish:
     if: ${{ (github.repository == 'F1R3FLY-io/F1R3Gaze' && github.ref_type == 'tag') || inputs.publish_draft == true }}
-    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, macos, macos_intel_theme, macos_intel_installer, windows]
+    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, repository_clients, macos, macos_intel_theme, macos_intel_installer, windows]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
