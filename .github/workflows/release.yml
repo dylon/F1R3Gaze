@@ -14,6 +14,10 @@ on:
       version:
         description: "Version to build (no v)"
         required: true
+      publish_draft:
+        description: "Create a draft GitHub release after validation"
+        type: boolean
+        default: false
 permissions:
   contents: write
 defaults:
@@ -373,8 +377,35 @@ jobs:
           name: repository-staging
           path: f1r3-work/f1r3gaze/repository-staging-*.tar.gz
 
+  promotion_dry_run:
+    needs: [source_checks, linux, arch, rpm, flatpak, snap, macos, windows, repository_staging]
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    steps:
+      - name: Install repository signing and indexing tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "arch-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "flatpak-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "snap-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: macos, path: f1r3-work/f1r3gaze/dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows, path: f1r3-work/f1r3gaze/dist }
+      - name: Sign private artifact copies and dry-run the full promotion gate
+        run: bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}" full-release
+
   publish:
-    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, macos, macos_intel_theme, macos_intel_installer, windows]
+    if: ${{ github.ref_type == 'tag' || inputs.publish_draft == true }}
+    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, macos, macos_intel_theme, macos_intel_installer, windows]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4

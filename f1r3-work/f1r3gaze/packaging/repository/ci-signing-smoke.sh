@@ -3,6 +3,9 @@
 set -euo pipefail
 dist=${1:?release package directory required}
 version=${2:?stable version required}
+mode=${3:-repository}
+[[ "$mode" == repository || "$mode" == full-release ]] ||
+  { echo "mode must be repository or full-release" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 project=$(cd "$here/../.." && pwd)
 dist=$(cd "$dist" && pwd)
@@ -23,6 +26,25 @@ python3 "$here/stage.py" --dist "$work/promotion-dist" \
   --out "$work/promotion-tree" --version "$version" --require-complete
 bash "$here/sign-metadata.sh" "$work/promotion-tree" "$fingerprint" "$version"
 cd "$project"
+if [[ "$mode" == full-release ]]; then
+  python3 packaging/release_metadata.py catalog --dist "$work/promotion-dist" \
+    --version "$version" --base-url "https://example.invalid/releases/v$version" \
+    --out "$work/promotion-dist/catalog.json" --require-complete
+  GPG_SIGNING_KEY_ID="$fingerprint" \
+    bash packaging/sign-checksums.sh "$work/promotion-dist"
+  python3 packaging/repository/promotion_check.py \
+    --dist "$work/promotion-dist" --tree "$work/promotion-tree" \
+    --catalog "$work/promotion-dist/catalog.json" \
+    --public-key "$work/public.asc" --fingerprint "$fingerprint" \
+    --version "$version" --finalize
+  python3 packaging/repository/promotion_check.py \
+    --dist "$work/promotion-dist" --tree "$work/promotion-tree" \
+    --catalog "$work/promotion-dist/catalog.json" \
+    --public-key "$work/public.asc" --fingerprint "$fingerprint" \
+    --version "$version"
+  echo "complete release promotion dry run passed for $version"
+  exit 0
+fi
 python3 - "$work/promotion-dist" "$work/promotion-tree" "$work/public.asc" "$fingerprint" "$version" <<'PY'
 import sys
 from pathlib import Path
