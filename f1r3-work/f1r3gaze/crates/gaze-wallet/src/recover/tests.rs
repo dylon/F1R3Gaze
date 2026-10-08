@@ -18,7 +18,11 @@ fn hex_of(key: &SigningKey) -> String {
 
 /// The path the file keystore keeps `key` under as a wallet's key.
 fn wallet_file(key: &SigningKey) -> String {
-    format!("{KEYS}/{}", key_file_name(&wallet_key_name(&address(key))))
+    key_path(&key_file_name(&wallet_key_name(&address(key))))
+}
+
+fn key_path(name: &str) -> String {
+    Path::new(KEYS).join(name).to_string_lossy().into_owned()
 }
 
 #[test]
@@ -27,11 +31,11 @@ fn key_files_are_told_apart() {
     let (a, b) = (key(1), key(2));
     fs.seed_file(wallet_file(&a), hex_of(&a).as_bytes());
     // A valid key under a name that is not its wallet's: a session's key.
-    let other = format!("{KEYS}/{}", key_file_name("session:example"));
+    let other = key_path(&key_file_name("session:example"));
     fs.seed_file(&other, hex_of(&b).as_bytes());
-    let corrupt = format!("{KEYS}/{}.key", "f".repeat(64));
+    let corrupt = key_path(&format!("{}.key", "f".repeat(64)));
     fs.seed_file(&corrupt, b"not a key");
-    let dangling = format!("{KEYS}/{}.key", "e".repeat(64));
+    let dangling = key_path(&format!("{}.key", "e".repeat(64)));
     fs.seed_symlink(&dangling, "/nowhere");
     fs.seed_file(format!("{KEYS}/notes.txt"), b"ignored");
     fs.seed_file(format!("{KEYS}/{}.KEY", "a".repeat(64)), b"not lower-case: ignored");
