@@ -29,9 +29,20 @@ function Assert-RegisteredVersion([string]$Expected) {
   }
 }
 
+function Wait-SmokeProcess([System.Diagnostics.Process]$Process, [string]$Operation, [int]$Seconds) {
+  if (-not $Process.WaitForExit($Seconds * 1000)) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    [void]$Process.WaitForExit(5000)
+    throw "$Operation exceeded $Seconds seconds"
+  }
+  return $Process.ExitCode
+}
+
 function Install-Msi([string]$Path, [string]$Log) {
-  $result = Start-Process msiexec.exe -ArgumentList @('/i', "`"$Path`"", '/qn', '/norestart', '/L*v', "`"$Log`"") -Wait -PassThru
-  if ($result.ExitCode -notin @(0, 3010)) { throw "MSI install failed ($Path): $($result.ExitCode)" }
+  Write-Host "Installing $Path (log: $Log)"
+  $process = Start-Process msiexec.exe -ArgumentList @('/i', "`"$Path`"", '/qn', '/norestart', '/L*v', "`"$Log`"") -PassThru
+  $exitCode = Wait-SmokeProcess $process "MSI install $Path" 180
+  if ($exitCode -notin @(0, 3010)) { throw "MSI install failed ($Path): $exitCode" }
 }
 
 try {
@@ -86,8 +97,10 @@ try {
   }
   if (-not $ready) { throw 'Installed browser did not open its URL handoff endpoint' }
   $link = 'f1r3://abcd/ci-smoke'
-  $second = Start-Process -FilePath (Join-Path $installed 'f1r3gaze.exe') -ArgumentList @('--profile', "`"$handoffProfile`"", $link) -Wait -PassThru
-  if ($second.ExitCode -ne 0) { throw "Running-instance URL handoff failed: $($second.ExitCode)" }
+  Write-Host 'Delivering URL to the running browser'
+  $second = Start-Process -FilePath (Join-Path $installed 'f1r3gaze.exe') -ArgumentList @('--profile', "`"$handoffProfile`"", $link) -PassThru
+  $handoffExitCode = Wait-SmokeProcess $second 'Running-instance URL handoff' 30
+  if ($handoffExitCode -ne 0) { throw "Running-instance URL handoff failed: $handoffExitCode" }
   $session = Join-Path $handoffProfile 'state\session.json'
   $delivered = $false
   for ($attempt = 0; $attempt -lt 300; $attempt++) {
@@ -100,11 +113,13 @@ try {
   }
   if (-not $delivered) { throw 'Installed browser did not save the delivered URL in its session' }
   Stop-Process -Id $windowProcess.Id -Force
-  $windowProcess.WaitForExit()
+  if (-not $windowProcess.WaitForExit(5000)) { throw 'Installed browser did not stop after termination' }
   $windowProcess = $null
 
-  $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$removeLog`"") -Wait -PassThru
-  if ($remove.ExitCode -notin @(0, 3010)) { throw "MSI removal failed: $($remove.ExitCode)" }
+  Write-Host "Removing $msi (log: $removeLog)"
+  $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$removeLog`"") -PassThru
+  $removeExitCode = Wait-SmokeProcess $remove 'MSI removal' 180
+  if ($removeExitCode -notin @(0, 3010)) { throw "MSI removal failed: $removeExitCode" }
   if (Test-Path (Join-Path $installed 'f1r3gaze.exe')) { throw 'MSI left the executable installed' }
   if (@(RegisteredProducts).Count -ne 0) { throw 'MSI left a product registration installed' }
   foreach ($scheme in @('f1r3', 'f1r3h')) {
@@ -123,7 +138,7 @@ try {
 } finally {
   if ($windowProcess -and -not $windowProcess.HasExited) {
     Stop-Process -Id $windowProcess.Id -Force -ErrorAction SilentlyContinue
-    $windowProcess.WaitForExit()
+    [void]$windowProcess.WaitForExit(5000)
   }
   Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue
 }
