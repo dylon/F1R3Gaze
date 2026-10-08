@@ -16,6 +16,30 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export GNUPGHOME="$work/gnupg"
 mkdir -m 700 "$GNUPGHOME"
+if [[ "$mode" == full-release ]]; then
+  passphrase='CI-only repository signing passphrase'
+  printf '%s' "$passphrase" | gpg --batch --yes --pinentry-mode loopback \
+    --passphrase-fd 0 --quick-generate-key \
+    'F1R3Gaze CI <packaging-test@example.invalid>' rsa2048 sign 0
+  fingerprint=$(gpg --batch --with-colons --fingerprint --list-keys |
+    awk -F: '$1 == "fpr" { print $10; exit }')
+  [[ "$fingerprint" =~ ^[[:xdigit:]]{40}$ ]] ||
+    { echo "temporary signing key fingerprint is invalid" >&2; exit 2; }
+  GPG_PRIVATE_KEY=$(printf '%s' "$passphrase" | gpg --batch --yes \
+    --pinentry-mode loopback --passphrase-fd 0 --armor \
+    --export-secret-keys "$fingerprint")
+  export GPG_PRIVATE_KEY
+  GPG_PASSPHRASE=$passphrase bash "$here/promote.sh" \
+    --dist "$dist" --out "$work/promotion-root" --version "$version" \
+    --base-url "https://example.invalid/releases/v$version" \
+    --fingerprint "$fingerprint"
+  if [[ -n "$output" ]]; then
+    [[ ! -e "$output" ]] || { echo "signed-tree output already exists: $output" >&2; exit 2; }
+    tar -C "$work/promotion-root" -cf "$output" dist repository
+  fi
+  echo "complete release promotion dry run passed for $version"
+  exit 0
+fi
 gpg --batch --yes --pinentry-mode loopback --passphrase '' \
   --quick-generate-key 'F1R3Gaze CI <packaging-test@example.invalid>' rsa2048 sign 0
 fingerprint=$(gpg --batch --with-colons --fingerprint --list-keys |
@@ -29,29 +53,6 @@ python3 "$here/stage.py" --dist "$work/promotion-dist" \
   --out "$work/promotion-tree" --version "$version" --require-complete
 bash "$here/sign-metadata.sh" "$work/promotion-tree" "$fingerprint" "$version"
 cd "$project"
-if [[ "$mode" == full-release ]]; then
-  python3 packaging/release_metadata.py catalog --dist "$work/promotion-dist" \
-    --version "$version" --base-url "https://example.invalid/releases/v$version" \
-    --out "$work/promotion-dist/catalog.json" --require-complete
-  GPG_SIGNING_KEY_ID="$fingerprint" \
-    bash packaging/sign-checksums.sh "$work/promotion-dist"
-  python3 packaging/repository/promotion_check.py \
-    --dist "$work/promotion-dist" --tree "$work/promotion-tree" \
-    --catalog "$work/promotion-dist/catalog.json" \
-    --public-key "$work/public.asc" --fingerprint "$fingerprint" \
-    --version "$version" --finalize
-  python3 packaging/repository/promotion_check.py \
-    --dist "$work/promotion-dist" --tree "$work/promotion-tree" \
-    --catalog "$work/promotion-dist/catalog.json" \
-    --public-key "$work/public.asc" --fingerprint "$fingerprint" \
-    --version "$version"
-  if [[ -n "$output" ]]; then
-    [[ ! -e "$output" ]] || { echo "signed-tree output already exists: $output" >&2; exit 2; }
-    tar -C "$work" -cf "$output" promotion-tree
-  fi
-  echo "complete release promotion dry run passed for $version"
-  exit 0
-fi
 python3 - "$work/promotion-dist" "$work/promotion-tree" "$work/public.asc" "$fingerprint" "$version" <<'PY'
 import sys
 from pathlib import Path

@@ -114,7 +114,7 @@ publishes a draft GitHub release with:
 | --- | --- | --- |
 | macOS | `F1R3Gaze-<v>-macos-universal.dmg` and component `.pkg` (arm64 + x86_64) | Developer ID, hardened runtime with **no** exceptions (no JIT entitlement: there is no JavaScript), notarised and stapled when credentials are configured |
 | Windows | `F1R3Gaze-<v>-x64.msi`, portable `.zip` | Authenticode (`signtool`, SHA-256, RFC 3161 timestamp) on both executables and the MSI |
-| Linux x86_64 and arm64 | `.deb`, Arch `.pkg.tar.zst`, distro-specific `.rpm`, `.AppImage`, `.tar.gz` | GPG-signed `SHA256SUMS` covering every artifact of every platform when a key is configured |
+| Linux x86_64 and arm64 | `.deb`, Arch `.pkg.tar.zst`, distro-specific `.rpm`, `.AppImage`, `.tar.gz` | GPG-signed `SHA256SUMS` covering every release artifact, embedded RPM signatures, and signed APT/pacman/RPM repository indexes for production promotion |
 
 Secrets: `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`,
 `MACOS_INSTALLER_CERT_P12`, `MACOS_INSTALLER_CERT_PASSWORD`,

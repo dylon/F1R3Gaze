@@ -8,7 +8,8 @@
 #            APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (notarisation)
 #   Windows: WINDOWS_CERT_PFX (base64 .pfx), WINDOWS_CERT_PASSWORD
 #   Linux:   GPG_PRIVATE_KEY (armoured), GPG_PASSPHRASE, and the repository
-#            variable GPG_EXPECTED_FINGERPRINT — signs SHA256SUMS for every artifact
+#            variable GPG_EXPECTED_FINGERPRINT — signs RPMs, repository metadata,
+#            and SHA256SUMS for the production release
 name: release
 on:
   push:
@@ -23,7 +24,7 @@ on:
         type: boolean
         default: false
 permissions:
-  contents: write
+  contents: read
 defaults:
   run:
     shell: bash
@@ -443,11 +444,38 @@ jobs:
       - name: Sign private artifact copies and dry-run the full promotion gate
         run: |
           bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}" \
-            full-release ci-only-signed-repository.tar
+            full-release ci-only-signed-promotion.tar
       - uses: actions/upload-artifact@v4
         with:
-          name: ci-only-signed-repository
-          path: f1r3-work/f1r3gaze/ci-only-signed-repository.tar
+          name: ci-only-signed-promotion
+          path: f1r3-work/f1r3gaze/ci-only-signed-promotion.tar
+
+  publication_assembly_dry_run:
+    needs: promotion_dry_run
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    steps:
+      - name: Install release verification and manifest tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python python-pip rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/winget-venv"
+          "$RUNNER_TEMP/winget-venv/bin/pip" install -r packaging/winget/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-only-signed-promotion
+          path: f1r3-work/f1r3gaze/publication-input
+      - name: Recheck signed output and assemble package-manager manifests
+        run: |
+          V="${VERSION#v}"
+          tar -C publication-input -xf publication-input/ci-only-signed-promotion.tar
+          fingerprint=$(gpg --batch --show-keys --with-colons --fingerprint \
+            publication-input/repository/f1r3gaze-signing-key.asc | awk -F: '$1 == "fpr" {print $10; exit}')
+          source "$RUNNER_TEMP/winget-venv/bin/activate"
+          bash packaging/repository/assemble-publication.sh \
+            publication-input/dist publication-input/repository "$V" \
+            "https://example.invalid/releases/v$V" "$fingerprint" metadata
 
   repository_clients:
     needs: promotion_dry_run
@@ -462,13 +490,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: ci-only-signed-repository
+          name: ci-only-signed-promotion
           path: f1r3-work/f1r3gaze/repository-client-input
       - name: Install through signed repository indexes on target distros
         run: |
           set -euo pipefail
-          tar -C repository-client-input -xf repository-client-input/ci-only-signed-repository.tar
-          tree="$PWD/repository-client-input/promotion-tree"
+          tar -C repository-client-input -xf repository-client-input/ci-only-signed-promotion.tar
+          tree="$PWD/repository-client-input/repository"
           test -s "$tree/f1r3gaze-signing-key.asc"
           test ! -e "$tree/UNSIGNED-STAGING"
           for image in debian:12 ubuntu:24.04 fedora:43 rockylinux:9 opensuse/leap:16.0 "${{ matrix.arch_image }}"; do
@@ -478,19 +506,16 @@ jobs:
               "$image" bash /ci-client-smoke.sh "${VERSION#v}"
           done
 
-  publish:
+  production_promotion:
     if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
-    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, repository_clients, macos, macos_intel_theme, macos_intel_installer, windows]
+    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, publication_assembly_dry_run, repository_clients, macos, macos_intel_theme, macos_intel_installer, windows]
     runs-on: ubuntu-22.04
+    container: archlinux:base
     steps:
+      - name: Install repository signing and indexing tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c rpm-tools gnupg
       - uses: actions/checkout@v4
-      - name: Require production checksum signing credentials
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
-        run: python3 packaging/release_preflight.py checksums
-      - run: python3 -m pip install --user -r packaging/winget/requirements.txt
       - uses: actions/download-artifact@v4
         with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
       - uses: actions/download-artifact@v4
@@ -505,22 +530,63 @@ jobs:
         with: { name: macos, path: f1r3-work/f1r3gaze/dist }
       - uses: actions/download-artifact@v4
         with: { name: windows, path: f1r3-work/f1r3gaze/dist }
-      - name: Generate catalog and package-manager manifests
-        run: |
-          V="${VERSION#v}"
-          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
-          python3 packaging/release_metadata.py catalog --version "$V" --dist dist --base-url "$URL" --out dist/catalog.json --require-complete
-          python3 packaging/release_metadata.py homebrew --version "$V" --dist dist --base-url "$URL" --out metadata/Casks/f1r3gaze.rb
-          python3 packaging/release_metadata.py winget --version "$V" --dist dist --base-url "$URL" --out metadata/winget
-          python3 packaging/winget/validate.py "metadata/winget/F1R3FLY.F1R3Gaze/$V" --dist dist
-      - uses: actions/upload-artifact@v4
-        with: { name: package-manager-manifests, path: f1r3-work/f1r3gaze/metadata }
-      - name: Checksums and signature
+      - name: Require production checksum signing credentials
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
-        run: packaging/sign-checksums.sh dist
+        run: python3 packaging/release_preflight.py checksums
+      - name: Sign and verify production release and repositories
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
+        run: |
+          V="${VERSION#v}"
+          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
+          bash packaging/repository/promote.sh --dist dist --out production-promotion \
+            --version "$V" --base-url "$URL" --fingerprint "$GPG_EXPECTED_FINGERPRINT"
+          tar -C production-promotion -cf "signed-repository-$V.tar" repository
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-signed-release
+          path: f1r3-work/f1r3gaze/production-promotion/dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-signed-repository
+          path: f1r3-work/f1r3gaze/signed-repository-*.tar
+
+  publish:
+    if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+    needs: production_promotion
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    permissions:
+      contents: write
+    steps:
+      - name: Install promotion verifier and manifest tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python python-pip rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/winget-venv"
+          "$RUNNER_TEMP/winget-venv/bin/pip" install -r packaging/winget/requirements.txt
+      - uses: actions/download-artifact@v4
+        with: { name: production-signed-release, path: f1r3-work/f1r3gaze/dist }
+      - uses: actions/download-artifact@v4
+        with: { name: production-signed-repository, path: f1r3-work/f1r3gaze/repository-input }
+      - name: Recheck downloaded signed release and assemble package-manager manifests
+        env:
+          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
+        run: |
+          V="${VERSION#v}"
+          tar -xf "repository-input/signed-repository-$V.tar"
+          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
+          source "$RUNNER_TEMP/winget-venv/bin/activate"
+          bash packaging/repository/assemble-publication.sh \
+            dist repository "$V" "$URL" "$GPG_EXPECTED_FINGERPRINT" metadata
+      - uses: actions/upload-artifact@v4
+        with: { name: package-manager-manifests, path: f1r3-work/f1r3gaze/metadata }
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', inputs.version) }}

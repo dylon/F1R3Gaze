@@ -43,8 +43,9 @@ elif [ -n "${GPG_PRIVATE_KEY:-}" ]; then
   export GNUPGHOME
   printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import 2>/dev/null
   verify_expected_signer
-  gpg --batch --yes --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE:-}" \
-      --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS
+  printf '%s\n' "${GPG_PASSPHRASE:-}" | gpg --batch --yes \
+      --pinentry-mode loopback --passphrase-fd 0 --armor \
+      --detach-sign --output SHA256SUMS.asc SHA256SUMS
   echo "signed SHA256SUMS"
 else
   echo "GPG_PRIVATE_KEY not set: SHA256SUMS is unsigned" >&2
