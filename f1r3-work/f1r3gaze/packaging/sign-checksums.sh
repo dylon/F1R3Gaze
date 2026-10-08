@@ -2,7 +2,8 @@
 # Write dist/SHA256SUMS and, when a key is available, a detached ASCII-armoured
 # signature dist/SHA256SUMS.asc. Linux packages are verified this way:
 #   gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c SHA256SUMS
-# Env: GPG_PRIVATE_KEY (armoured secret key), GPG_PASSPHRASE (optional).
+# Env: GPG_SIGNING_KEY_ID for an existing key, or GPG_PRIVATE_KEY
+# (armoured secret key) and optional GPG_PASSPHRASE.
 set -euo pipefail
 cd "${1:-dist}"
 rm -f SHA256SUMS SHA256SUMS.asc
@@ -14,7 +15,11 @@ find . -maxdepth 1 -type f ! -name SHA256SUMS ! -name SHA256SUMS.asc -print0 |
 [[ -s "$checksums" ]] || { echo "no release artifacts to checksum" >&2; exit 2; }
 mv "$checksums" SHA256SUMS
 chmod 644 SHA256SUMS
-if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
+if [ -n "${GPG_SIGNING_KEY_ID:-}" ]; then
+  gpg --batch --yes --armor --local-user "$GPG_SIGNING_KEY_ID" \
+      --detach-sign --output SHA256SUMS.asc SHA256SUMS
+  echo "signed SHA256SUMS with existing key"
+elif [ -n "${GPG_PRIVATE_KEY:-}" ]; then
   gpg_home=$(mktemp -d)
   GNUPGHOME=$gpg_home
   export GNUPGHOME

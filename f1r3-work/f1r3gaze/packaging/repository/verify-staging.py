@@ -147,9 +147,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--marker-state",
+        choices=("unsigned", "signed", "either"),
+        default="unsigned",
+        help="expected state of the UNSIGNED-STAGING marker",
+    )
     args = parser.parse_args()
     check(VERSION.fullmatch(args.version) is not None, "version must be stable X.Y.Z")
-    check((args.tree / "UNSIGNED-STAGING").is_file(), "staging marker missing")
+    marker = args.tree / "UNSIGNED-STAGING"
+    if args.marker_state == "unsigned":
+        check(marker.is_file(), "staging marker missing")
+    elif args.marker_state == "signed":
+        check(not marker.exists(), "unsigned staging marker remains")
     # Validate the staged copies, not just the downloaded input artifacts.
     for root, pattern in (
         ("apt", "*.deb"),

@@ -353,7 +353,7 @@ jobs:
     steps:
       - name: Install repository index tools
         working-directory: /
-        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c rpm-tools gnupg
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
@@ -366,6 +366,8 @@ jobs:
           python packaging/repository/stage.py --dist dist --out repository-staging --version "${VERSION#v}" --require-complete
           python packaging/repository/verify-staging.py --tree repository-staging --version "${VERSION#v}"
           tar -czf "repository-staging-${VERSION#v}.tar.gz" repository-staging
+      - name: Sign a private copy and verify repository signatures
+        run: bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}"
       - uses: actions/upload-artifact@v4
         with:
           name: repository-staging

@@ -96,7 +96,7 @@ def require_artifact(
     raise ValueError(f"required artifact is missing: {name}")
 
 
-def require_complete_release(entries: list[dict[str, str | int]], version: str) -> None:
+def expected_artifact_names(version: str) -> set[str]:
     expected = {f"f1r3gaze_{version}_{arch}.deb" for arch in ("amd64", "arm64")}
     expected.update(
         f"f1r3gaze-{version}-1-{arch}.pkg.tar.zst" for arch in ("x86_64", "aarch64")
@@ -120,9 +120,16 @@ def require_complete_release(entries: list[dict[str, str | int]], version: str) 
             f"f1r3gaze-{version}-windows-x64.zip",
         }
     )
+    return expected
+
+
+def require_complete_release(entries: list[dict[str, str | int]], version: str) -> None:
+    expected = expected_artifact_names(version)
     found = {str(entry["name"]) for entry in entries}
     if missing := sorted(expected - found):
         raise ValueError("release is incomplete: " + ", ".join(missing))
+    if unexpected := sorted(found - expected):
+        raise ValueError("release has unexpected artifacts: " + ", ".join(unexpected))
 
 
 def write(path: Path, content: str) -> None:

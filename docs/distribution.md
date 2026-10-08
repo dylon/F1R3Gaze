@@ -116,7 +116,32 @@ python3 packaging/release_metadata.py catalog --version 0.1.0 --dist dist \
 
 The tree contains Debian `Packages` and `Release` files, pacman `.db`/`.files` indexes, and RPM `repodata` when `createrepo_c` and RPMs are available. RPM metadata uses gzip explicitly because [createrepo_c supports multiple compression formats](https://man.archlinux.org/man/extra/createrepo_c/createrepo_c.8.en) and its default varies by host. Both branch CI and the release workflow stage the complete DEB, Arch, and RPM matrix with `--version 0.1.0 --require-complete`, then run `packaging/repository/verify-staging.py --tree TREE --version 0.1.0` to check each index references its staged package. The release workflow uploads a compressed copy of the staging tree for review. It is marked `UNSIGNED-STAGING`. It must not be published until its repository signatures, package signatures, public key, fingerprint instructions, and install/update checks are ready. The publication host must be separate from the existing Reach demo Pages site. Staging stops before the tree reaches its configured size budget.
 
-After provisioning an OpenPGP signing key, `packaging/repository/sign-metadata.sh TREE KEY_ID` signs the APT Release file, the pacman database and packages, and each available RPM repository index. It verifies every signature it creates. The staging marker stays in place because production also needs signed RPM packages, key distribution and install/upgrade tests.
+To prepare a signed promotion, work from a copy of the release artifacts. Sign the RPM files **before** creating repository indexes: RPM signatures change package bytes, so an index made earlier would contain stale hashes. `rpmsign --addsign` inserts the package signature, and `rpmkeys --checksig` verifies it against a temporary key database; both operations follow the [RPM signing](https://rpm.org/docs/6.1.x/man/rpmsign.1) and [key verification](https://rpm.org/docs/6.1.x/man/rpmkeys.8) interfaces. Then stage the repository from those signed bytes, sign its metadata, regenerate the catalog and checksums, and run the promotion gate:
+
+```sh
+VERSION=0.1.0
+FINGERPRINT=YOUR_FULL_PUBLISHED_OPENPGP_FINGERPRINT
+PUBLIC_KEY=/path/to/verified-public-key.asc
+RELEASE_URL=https://YOUR_RELEASE_HOST/releases/v${VERSION}
+cp -a dist dist-promotion
+packaging/repository/sign-rpms.sh dist-promotion "$VERSION" "$FINGERPRINT"
+python3 packaging/repository/stage.py --dist dist-promotion \
+  --out repository-promotion --version "$VERSION" --require-complete
+packaging/repository/sign-metadata.sh repository-promotion "$FINGERPRINT" "$VERSION"
+python3 packaging/release_metadata.py catalog --dist dist-promotion \
+  --version "$VERSION" --base-url "$RELEASE_URL" \
+  --out dist-promotion/catalog.json --require-complete
+GPG_SIGNING_KEY_ID="$FINGERPRINT" packaging/sign-checksums.sh dist-promotion
+python3 packaging/repository/promotion_check.py --dist dist-promotion \
+  --tree repository-promotion --catalog dist-promotion/catalog.json \
+  --public-key "$PUBLIC_KEY" --fingerprint "$FINGERPRINT" \
+  --version "$VERSION" --finalize
+python3 packaging/repository/promotion_check.py --dist dist-promotion \
+  --tree repository-promotion --catalog dist-promotion/catalog.json \
+  --public-key "$PUBLIC_KEY" --fingerprint "$FINGERPRINT" --version "$VERSION"
+```
+
+The last command is a read-only dry run. The `--finalize` invocation removes `UNSIGNED-STAGING` only after it checks the complete artifact matrix, catalog URLs and digests, tree size, staged package copies and indexes, APT/pacman/RPM signatures, and the signed checksum file including `catalog.json`. It does not upload anything. The release URL, public key and independently published fingerprint must be real before this can pass for production. The branch and tag workflows also exercise the signing order on copies of real Linux packages with a temporary CI key; those copies are never published.
 
 ### Customer repository configuration after publication
 
