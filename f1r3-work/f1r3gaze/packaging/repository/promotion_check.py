@@ -277,6 +277,8 @@ def verify_signatures(
             root = tree / "arch" / arch
             database = root / "f1r3gaze.db.tar.gz"
             verify_openpgp(keyring, fingerprint, root / "f1r3gaze.db.sig", database)
+            files = root / "f1r3gaze.files.tar.gz"
+            verify_openpgp(keyring, fingerprint, root / "f1r3gaze.files.sig", files)
             package = root / f"f1r3gaze-{version}-1-{arch}.pkg.tar.zst"
             verify_openpgp(keyring, fingerprint, Path(f"{package}.sig"), package)
         for channel in RPM_CHANNELS:

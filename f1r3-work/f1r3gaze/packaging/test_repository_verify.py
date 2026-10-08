@@ -73,9 +73,29 @@ class RepositoryVerifyTests(unittest.TestCase):
                 entry = tarfile.TarInfo(f"f1r3gaze-{self.version}-1/desc")
                 entry.size = len(description)
                 archive.addfile(entry, io.BytesIO(description))
+            with tarfile.open(directory / "f1r3gaze.files.tar.gz", "w:gz") as archive:
+                entry = tarfile.TarInfo(f"f1r3gaze-{self.version}-1/desc")
+                entry.size = len(description)
+                archive.addfile(entry, io.BytesIO(description))
+                listing = b"%FILES%\nusr/bin/f1r3gaze\nusr/bin/f1r3c\n"
+                entry = tarfile.TarInfo(f"f1r3gaze-{self.version}-1/files")
+                entry.size = len(listing)
+                archive.addfile(entry, io.BytesIO(listing))
         verify.verify_arch(self.root, self.version)
         package.write_bytes(b"tampered")
         with self.assertRaisesRegex(ValueError, "Arch checksum mismatch"):
+            verify.verify_arch(self.root, self.version)
+        package.write_bytes(name.encode())
+        files_index = directory / "f1r3gaze.files.tar.gz"
+        with tarfile.open(files_index, "w:gz") as archive:
+            entry = tarfile.TarInfo(f"f1r3gaze-{self.version}-1/desc")
+            entry.size = len(description)
+            archive.addfile(entry, io.BytesIO(description))
+            listing = b"%FILES%\nusr/bin/f1r3gaze\n"
+            entry = tarfile.TarInfo(f"f1r3gaze-{self.version}-1/files")
+            entry.size = len(listing)
+            archive.addfile(entry, io.BytesIO(listing))
+        with self.assertRaisesRegex(ValueError, "Arch files index omits executable"):
             verify.verify_arch(self.root, self.version)
 
     def test_rpm_rejects_changed_package_and_primary_index(self) -> None:

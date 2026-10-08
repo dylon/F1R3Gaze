@@ -87,6 +87,32 @@ def verify_arch(tree: Path, version: str) -> None:
                 archive_field(content, "ARCH") == arch,
                 f"Arch architecture mismatch: {name}",
             )
+        files_database = root / "f1r3gaze.files.tar.gz"
+        with tarfile.open(files_database, "r:gz") as archive:
+            members = archive.getmembers()
+            descriptions = [
+                member for member in members if member.name.endswith("/desc")
+            ]
+            listings = [member for member in members if member.name.endswith("/files")]
+            check(
+                len(descriptions) == len(listings) == 1,
+                f"Arch files index entries: {arch}",
+            )
+            description = archive.extractfile(descriptions[0])
+            listing = archive.extractfile(listings[0])
+            check(
+                description is not None and listing is not None,
+                f"Arch files index unreadable: {arch}",
+            )
+            check(
+                archive_field(description.read(), "FILENAME") == name,
+                f"Arch files index omits {name}",
+            )
+            contents = set(listing.read().decode().splitlines())
+            check(
+                {"usr/bin/f1r3gaze", "usr/bin/f1r3c"} <= contents,
+                f"Arch files index omits executable: {arch}",
+            )
 
 
 def verify_rpm(tree: Path, version: str) -> None:

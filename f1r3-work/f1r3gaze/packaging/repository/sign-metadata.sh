@@ -46,7 +46,7 @@ if [[ -f "$tree/apt/dists/stable/Release" ]]; then
 fi
 while IFS= read -r -d '' database; do
   sign_detached "$database" "${database%.tar.gz}.sig"
-done < <(find "$tree/arch" -type f -name '*.db.tar.gz' -print0 2>/dev/null)
+done < <(find "$tree/arch" -type f \( -name '*.db.tar.gz' -o -name '*.files.tar.gz' \) -print0 2>/dev/null)
 while IFS= read -r -d '' package; do
   sign_detached "$package" "$package.sig"
 done < <(find "$tree/arch" -type f -name '*.pkg.tar.zst' -print0 2>/dev/null)

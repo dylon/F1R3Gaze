@@ -40,6 +40,8 @@ EOF
     printf '\n[f1r3gaze]\nSigLevel = Required DatabaseRequired\nServer = file://%s/arch/$arch\n' "$repo" >> /etc/pacman.conf
     pacman -Sy --noconfirm f1r3gaze
     [[ $(pacman -Q f1r3gaze) == "f1r3gaze $version-1" ]]
+    pacman -Fy --noconfirm
+    pacman -Fl f1r3gaze | grep -F 'usr/bin/f1r3gaze'
     ;;
   fedora|rocky)
     if [[ $ID == fedora ]]; then channel=fc${VERSION_ID%%.*}; else channel=el${VERSION_ID%%.*}; fi
