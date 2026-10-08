@@ -276,5 +276,6 @@ fn a_profile_argument_is_a_portable_root_made_absolute() {
     assert_eq!(l.kind, Kind::Portable(root.clone()));
     assert_eq!(l.config, root.join("config"));
     let l = locate(Some(PathBuf::from("/abs/profile")), &m).expect("a layout");
-    assert_eq!(l.data, Path::new("/abs/profile").join("data"));
+    let root = std::path::absolute("/abs/profile").expect("the rooted path");
+    assert_eq!(l.data, root.join("data"));
 }
