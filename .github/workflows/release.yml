@@ -177,7 +177,7 @@ jobs:
         with:
           name: linux-binaries-${{ matrix.arch }}
           path: f1r3-work/f1r3gaze/target/release
-      - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder
+      - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder xvfb xauth xdotool mesa-vulkan-drivers
       - name: Build, install, exercise sandbox and remove Flatpak
         run: bash packaging/flatpak/ci-smoke.sh "${VERSION#v}"
       - uses: actions/upload-artifact@v4
@@ -203,6 +203,7 @@ jobs:
           path: f1r3-work/f1r3gaze/target/release
       - name: Stage Snapcraft source
         run: packaging/snap/stage.sh target/release dist/snap-input "${VERSION#v}"
+      - run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool mesa-vulkan-drivers
       - uses: snapcore/action-build@v1
         id: snapcraft
         with:

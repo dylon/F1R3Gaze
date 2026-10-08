@@ -50,5 +50,8 @@ snap run f1r3gaze.f1r3c compile "$work/example.rho" -o "$work/example.knf"
 test -s "$work/example.knf"
 snap run f1r3gaze.f1r3c inspect "$work/example.knf" | grep -Fxq 'Nil'
 
+timeout -k 5s 90s xvfb-run -a bash "$(dirname "$0")/../linux/ci-window.sh" \
+  snap run f1r3gaze.f1r3gaze --profile "$work/window-profile" gaze://newtab
+
 sudo snap remove --purge f1r3gaze
 ! snap list f1r3gaze >/dev/null 2>&1

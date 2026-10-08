@@ -67,5 +67,9 @@ test -s "$work/example.knf"
 flatpak run --user --command=f1r3c io.f1r3fly.F1R3Gaze \
   inspect "$work/example.knf" | grep -Fxq 'Nil'
 
+timeout -k 5s 90s xvfb-run -a bash "$here/../linux/ci-window.sh" \
+  flatpak run --user io.f1r3fly.F1R3Gaze \
+  --profile "$work/window-profile" gaze://newtab
+
 flatpak --user uninstall --noninteractive -y io.f1r3fly.F1R3Gaze
 ! flatpak --user info io.f1r3fly.F1R3Gaze >/dev/null 2>&1
