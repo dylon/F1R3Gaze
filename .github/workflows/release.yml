@@ -404,7 +404,7 @@ jobs:
         run: bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}" full-release
 
   publish:
-    if: ${{ github.ref_type == 'tag' || inputs.publish_draft == true }}
+    if: ${{ (github.repository == 'F1R3FLY-io/F1R3Gaze' && github.ref_type == 'tag') || inputs.publish_draft == true }}
     needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, macos, macos_intel_theme, macos_intel_installer, windows]
     runs-on: ubuntu-22.04
     steps:
