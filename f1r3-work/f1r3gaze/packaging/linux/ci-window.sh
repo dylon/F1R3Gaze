@@ -29,6 +29,15 @@ app_pid=$!
 
 for ((attempt = 0; attempt < 600; attempt++)); do
   if xdotool search --onlyvisible --name F1R3Gaze >/dev/null 2>&1; then
+    # A renderer failure can follow window creation. Keep the window alive
+    # briefly so startup is not counted as a successful graphics smoke.
+    sleep 3
+    if ! kill -0 "$app_pid" 2>/dev/null ||
+      ! xdotool search --onlyvisible --name F1R3Gaze >/dev/null 2>&1; then
+      echo 'F1R3Gaze lost its window during renderer startup:' >&2
+      cat "$log" >&2
+      exit 1
+    fi
     echo 'F1R3Gaze opened a visible X11 window with the Vulkan backend selected'
     exit 0
   fi
