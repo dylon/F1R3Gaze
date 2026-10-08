@@ -28,6 +28,7 @@ flatpak --user install --noninteractive -y "$bundle"
 desktop="$HOME/.local/share/flatpak/exports/share/applications/io.f1r3fly.F1R3Gaze.desktop"
 test -s "$desktop"
 grep -Eq '^MimeType=.*x-scheme-handler/f1r3;x-scheme-handler/f1r3h;' "$desktop"
+grep -Eq '^Exec=.*%u' "$desktop"
 [[ "$(flatpak run --user io.f1r3fly.F1R3Gaze --version)" == "f1r3gaze $version" ]]
 [[ "$(flatpak run --user --command=f1r3c io.f1r3fly.F1R3Gaze --version)" == "f1r3c $version" ]]
 

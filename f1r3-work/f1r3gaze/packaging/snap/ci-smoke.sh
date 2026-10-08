@@ -12,6 +12,7 @@ sudo snap install --dangerous "$package"
 desktop=/var/lib/snapd/desktop/applications/f1r3gaze_f1r3gaze.desktop
 test -s "$desktop"
 grep -Eq '^MimeType=.*x-scheme-handler/f1r3;x-scheme-handler/f1r3h;' "$desktop"
+grep -Eq '^Exec=.*%u' "$desktop"
 [[ "$(snap run f1r3gaze.f1r3gaze --version)" == "f1r3gaze $version" ]]
 [[ "$(snap run f1r3gaze.f1r3c --version)" == "f1r3c $version" ]]
 
