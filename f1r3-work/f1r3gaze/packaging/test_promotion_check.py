@@ -45,6 +45,23 @@ class PromotionCheckTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "catalog differs"):
             verify_catalog(self.dist, self.catalog, self.version, 2_000_000)
 
+    def test_catalog_url_must_match_publication_url(self) -> None:
+        verify_catalog(
+            self.dist,
+            self.catalog,
+            self.version,
+            2_000_000,
+            "https://example.invalid/releases/v0.1.0",
+        )
+        with self.assertRaisesRegex(ValueError, "base URL differs"):
+            verify_catalog(
+                self.dist,
+                self.catalog,
+                self.version,
+                2_000_000,
+                "https://example.invalid/releases/v0.1.1",
+            )
+
     def test_catalog_rejects_missing_extra_and_oversized_files(self) -> None:
         (self.dist / f"f1r3gaze_{self.version}_arm64.deb").unlink()
         with self.assertRaisesRegex(ValueError, "incomplete"):
@@ -128,11 +145,15 @@ class PromotionCheckTests(unittest.TestCase):
             publication_key(tree, public, fingerprint)
         published.write_bytes(public.read_bytes())
         self.assertEqual(publication_key(tree, public, fingerprint), published)
-        with self.assertRaisesRegex(ValueError, "trusted public key fingerprint mismatch"):
+        with self.assertRaisesRegex(
+            ValueError, "trusted public key fingerprint mismatch"
+        ):
             publication_key(tree, public, "0" * 40)
         published.unlink()
         published.symlink_to(public)
-        with self.assertRaisesRegex(ValueError, "published signing key is missing or unsafe"):
+        with self.assertRaisesRegex(
+            ValueError, "published signing key is missing or unsafe"
+        ):
             publication_key(tree, public, fingerprint)
         published.unlink()
         published.write_text("not a public key\n")

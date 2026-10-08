@@ -13,7 +13,8 @@ packaging=$(cd "$here/.." && pwd)
 python3 "$here/promotion_check.py" --dist "$dist" \
   --tree "$tree" --catalog "$dist/catalog.json" \
   --public-key "$tree/f1r3gaze-signing-key.asc" \
-  --fingerprint "$fingerprint" --version "$version"
+  --fingerprint "$fingerprint" --version "$version" \
+  --expected-base-url "$base_url"
 python3 "$packaging/release_metadata.py" homebrew --version "$version" \
   --dist "$dist" --base-url "$base_url" \
   --out "$metadata/Casks/f1r3gaze.rb" --require-complete

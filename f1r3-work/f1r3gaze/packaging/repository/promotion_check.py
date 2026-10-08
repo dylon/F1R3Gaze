@@ -58,7 +58,13 @@ def directory_bytes(root: Path, limit: int) -> int:
     return size
 
 
-def verify_catalog(dist: Path, catalog: Path, version: str, limit: int) -> None:
+def verify_catalog(
+    dist: Path,
+    catalog: Path,
+    version: str,
+    limit: int,
+    expected_base_url: str | None = None,
+) -> None:
     require(limit > 0, "catalog size limit must be positive")
     require(dist.is_dir(), f"artifact directory is missing: {dist}")
     require(catalog.is_file(), f"release catalog is missing: {catalog}")
@@ -109,6 +115,11 @@ def verify_catalog(dist: Path, catalog: Path, version: str, limit: int) -> None:
         "release artifact URL basename mismatch",
     )
     base_url = urlunsplit((url.scheme, url.netloc, url.path.rsplit("/", 1)[0], "", ""))
+    if expected_base_url is not None:
+        require(
+            base_url == expected_base_url.rstrip("/"),
+            "signed catalog base URL differs from publication URL",
+        )
     expected = release_metadata.artifacts(dist, version, base_url)
     release_metadata.require_complete_release(expected, version)
     require(
@@ -182,9 +193,18 @@ def public_key_fingerprint(public_key: Path) -> str:
 def publication_key(tree: Path, trusted_key: Path, fingerprint: str) -> Path:
     """Require the published key to verify as the trusted, full primary key."""
     published = tree / "f1r3gaze-signing-key.asc"
-    require(published.is_file() and not published.is_symlink(), "published signing key is missing or unsafe")
-    require(public_key_fingerprint(trusted_key) == fingerprint, "trusted public key fingerprint mismatch")
-    require(public_key_fingerprint(published) == fingerprint, "published signing key fingerprint mismatch")
+    require(
+        published.is_file() and not published.is_symlink(),
+        "published signing key is missing or unsafe",
+    )
+    require(
+        public_key_fingerprint(trusted_key) == fingerprint,
+        "trusted public key fingerprint mismatch",
+    )
+    require(
+        public_key_fingerprint(published) == fingerprint,
+        "published signing key fingerprint mismatch",
+    )
     return published
 
 
@@ -313,12 +333,13 @@ def check_promotion(
     tree_limit: int = 900_000_000,
     catalog_limit: int = 2_000_000,
     finalize: bool = False,
+    expected_base_url: str | None = None,
 ) -> None:
     require(VERSION.fullmatch(version) is not None, "version must be stable X.Y.Z")
     directory_bytes(tree, tree_limit)
     marker = tree / "UNSIGNED-STAGING"
     require(finalize or not marker.exists(), "unsigned staging marker remains")
-    verify_catalog(dist, catalog, version, catalog_limit)
+    verify_catalog(dist, catalog, version, catalog_limit, expected_base_url)
     verify_copies(dist, tree, version)
     command(
         sys.executable,
@@ -343,6 +364,7 @@ def main() -> None:
     parser.add_argument("--public-key", type=Path, required=True)
     parser.add_argument("--fingerprint", required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--expected-base-url")
     parser.add_argument("--tree-limit-bytes", type=int, default=900_000_000)
     parser.add_argument("--catalog-limit-bytes", type=int, default=2_000_000)
     parser.add_argument(
@@ -362,6 +384,7 @@ def main() -> None:
             args.tree_limit_bytes,
             args.catalog_limit_bytes,
             args.finalize,
+            args.expected_base_url,
         )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
