@@ -239,7 +239,7 @@ fn platform_source_and_preference_changes_resolve_the_displayed_palette() {
     match source {
         Source::Window => assert!(reports_through_window),
         Source::Portal(ref program) => {
-            assert!(cfg!(target_os = "linux"));
+            assert!(!reports_through_window);
             assert_eq!(program, Path::new("dbus-send"));
         }
         Source::Fixed(_) => panic!("no override was requested"),

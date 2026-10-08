@@ -163,28 +163,24 @@ pub fn forward(runtime: &Path, raw: &str) -> bool {
     let endpoint = runtime.join(ENDPOINT_FILE);
     let deadline = Instant::now() + HANDOFF_DEADLINE;
     while Instant::now() < deadline {
-        if let Ok(bytes) = fs::read(&endpoint) {
-            if let Ok(published) = serde_json::from_slice::<Endpoint>(&bytes) {
-                let address =
-                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, published.port));
-                if let Ok(mut stream) = TcpStream::connect_timeout(&address, IO_DEADLINE) {
-                    let _ = stream.set_read_timeout(Some(IO_DEADLINE));
-                    let _ = stream.set_write_timeout(Some(IO_DEADLINE));
-                    let request = Request {
-                        token: published.token,
-                        url: url.clone(),
-                    };
-                    if let Ok(bytes) = serde_json::to_vec(&request) {
-                        if stream.write_all(&bytes).is_ok()
-                            && stream.shutdown(Shutdown::Write).is_ok()
-                        {
-                            let mut acknowledgment = [0u8; 1];
-                            if stream.read_exact(&mut acknowledgment).is_ok()
-                                && acknowledgment == *b"1"
-                            {
-                                return true;
-                            }
-                        }
+        if let Ok(bytes) = fs::read(&endpoint)
+            && let Ok(published) = serde_json::from_slice::<Endpoint>(&bytes)
+        {
+            let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, published.port));
+            if let Ok(mut stream) = TcpStream::connect_timeout(&address, IO_DEADLINE) {
+                let _ = stream.set_read_timeout(Some(IO_DEADLINE));
+                let _ = stream.set_write_timeout(Some(IO_DEADLINE));
+                let request = Request {
+                    token: published.token,
+                    url: url.clone(),
+                };
+                if let Ok(bytes) = serde_json::to_vec(&request)
+                    && stream.write_all(&bytes).is_ok()
+                    && stream.shutdown(Shutdown::Write).is_ok()
+                {
+                    let mut acknowledgment = [0u8; 1];
+                    if stream.read_exact(&mut acknowledgment).is_ok() && acknowledgment == *b"1" {
+                        return true;
                     }
                 }
             }
