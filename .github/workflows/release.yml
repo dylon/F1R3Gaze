@@ -1,10 +1,14 @@
 # Tag vX.Y.Z to publish signed installers for macOS, Windows and Linux.
 #
-# Secrets (each platform ships unsigned, with a warning, if its are absent):
+# Fork smoke builds may be unsigned. Production publication requires every
+# signing and notarization credential below and fails before creating a draft.
 #   macOS:   MACOS_CERT_P12 (base64 Developer ID Application .p12), MACOS_CERT_PASSWORD,
-#            MACOS_SIGN_IDENTITY, APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (notarisation)
+#            MACOS_SIGN_IDENTITY, MACOS_INSTALLER_CERT_P12,
+#            MACOS_INSTALLER_CERT_PASSWORD, MACOS_INSTALLER_SIGN_IDENTITY,
+#            APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (notarisation)
 #   Windows: WINDOWS_CERT_PFX (base64 .pfx), WINDOWS_CERT_PASSWORD
-#   Linux:   GPG_PRIVATE_KEY (armoured), GPG_PASSPHRASE — signs SHA256SUMS for every artifact
+#   Linux:   GPG_PRIVATE_KEY (armoured), GPG_PASSPHRASE, and the repository
+#            variable GPG_EXPECTED_FINGERPRINT — signs SHA256SUMS for every artifact
 name: release
 on:
   push:
@@ -225,6 +229,19 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Require production macOS signing and notarization credentials
+        if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_INSTALLER_CERT_P12: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
+          MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_INSTALLER_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: python3 packaging/release_preflight.py macos
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
@@ -312,6 +329,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - name: Require production Windows signing credentials
+        if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: python packaging/release_preflight.py windows
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.95" }
       - uses: Swatinem/rust-cache@v2
@@ -456,11 +479,17 @@ jobs:
           done
 
   publish:
-    if: ${{ (github.repository == 'F1R3FLY-io/F1R3Gaze' && github.ref_type == 'tag') || inputs.publish_draft == true }}
+    if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
     needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, repository_clients, macos, macos_intel_theme, macos_intel_installer, windows]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Require production checksum signing credentials
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
+        run: python3 packaging/release_preflight.py checksums
       - run: python3 -m pip install --user -r packaging/winget/requirements.txt
       - uses: actions/download-artifact@v4
         with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
@@ -490,6 +519,7 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
         run: packaging/sign-checksums.sh dist
       - uses: softprops/action-gh-release@v2
         with:

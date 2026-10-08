@@ -56,6 +56,8 @@ if ($env:WINDOWS_CERT_PFX) {
   function Sign($f) {
     & $signtool.FullName sign /fd sha256 /tr $ts /td sha256 /f $pfx /p $env:WINDOWS_CERT_PASSWORD /d "F1R3Gaze" $f
     if ($LASTEXITCODE) { throw "signing $f failed" }
+    & $signtool.FullName verify /pa /all /tw $f
+    if ($LASTEXITCODE) { throw "a valid, timestamped Authenticode signature is required for $f" }
   }
   Sign "$stage\f1r3gaze.exe"; Sign "$stage\f1r3c.exe"
 } else {

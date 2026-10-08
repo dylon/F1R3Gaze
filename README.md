@@ -120,8 +120,10 @@ Secrets: `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`,
 `MACOS_INSTALLER_CERT_P12`, `MACOS_INSTALLER_CERT_PASSWORD`,
 `MACOS_INSTALLER_SIGN_IDENTITY`,
 `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`; `WINDOWS_CERT_PFX`,
-`WINDOWS_CERT_PASSWORD`; `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`. A platform whose
-secrets are missing still builds, unsigned, with a warning. The Windows
+`WINDOWS_CERT_PASSWORD`; `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`, and the
+`GPG_EXPECTED_FINGERPRINT` repository variable. A production tag requires all
+signing and notarization inputs before creating a draft release. Fork CI runs
+build unsigned artifacts for installation smoke tests. The Windows
 installer and the Linux packages register `f1r3://` and `f1r3h://`. Scripts:
 `packaging/{linux,macos,windows}/`, icons from the F1R3FLY.io brand kit in
 `packaging/icons/`.

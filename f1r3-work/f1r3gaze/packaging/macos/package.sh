@@ -128,6 +128,7 @@ if [ -n "$SIGN" ] && [ -n "${APPLE_ID:-}" ]; then
       --team-id "${APPLE_TEAM_ID:?Apple team ID required}" \
       --password "${APPLE_APP_PASSWORD:?Apple app password required}" --wait
     xcrun stapler staple "$artifact"
+    xcrun stapler validate "$artifact"
   done
   spctl --assess --type open --context context:primary-signature --verbose "$DMG"
 else
