@@ -70,7 +70,7 @@ if ($ZipOnly) {
 }
 
 $msi = Join-Path $Dist "F1R3Gaze-$Version-x64.msi"
-wix build (Join-Path $here "f1r3gaze.wxs") -arch x64 -d "Version=$Version" -d "Bin=$stage" -d "Icons=$icons" -o $msi
+wix build (Join-Path $here "f1r3gaze.wxs") -arch x64 -pdbtype none -d "Version=$Version" -d "Bin=$stage" -d "Icons=$icons" -o $msi
 if ($LASTEXITCODE) { throw "wix build failed" }
 if ($signtool) { Sign $msi }
 

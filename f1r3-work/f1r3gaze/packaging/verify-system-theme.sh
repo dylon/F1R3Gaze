@@ -17,6 +17,7 @@ test_theme application::tests::only_theme_changes_report_a_scheme
 test_theme application::tests::the_title_bar_follows_the_system_only_where_the_os_reports_changes
 test_theme application::tests::a_scheme_request_changes_only_what_differs
 test_theme chrome::tests::system_follows_the_os
+test_theme chrome::tests::an_os_change_leaves_no_stale_label_colours
 test_theme chrome::tests::an_explicit_choice_ignores_the_os
 test_theme chrome::tests::no_preference_means_dark
 test_theme chrome::tests::the_override_ignores_window_reports

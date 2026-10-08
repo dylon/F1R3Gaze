@@ -42,6 +42,11 @@ jobs:
           CARGO_BUILD_TARGET: aarch64-apple-darwin
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Compare live macOS appearance with the browser's native source
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
       - name: Test native macOS URL event validation
         shell: bash
         run: |
@@ -99,6 +104,11 @@ jobs:
           CARGO_BUILD_TARGET: x86_64-apple-darwin
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Compare live Intel macOS appearance with the browser's native source
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
       - name: Test native Intel URL event validation
         shell: bash
         run: |
@@ -144,6 +154,9 @@ jobs:
         env:
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Compare live Windows appearance with the browser's native source
+        shell: pwsh
+        run: .\packaging\windows\ci-theme.ps1
       - name: Test Windows URL handoff
         shell: pwsh
         run: |
@@ -177,6 +190,7 @@ jobs:
           if ($invalidAccepted) { throw 'MSI accepted a version Windows Installer cannot upgrade' }
           .\packaging\windows\package.ps1 -Version $version -Bin target\release -Dist dist
           if ($LASTEXITCODE) { throw 'Windows package build failed' }
+          if (Get-ChildItem dist -Filter *.wixpdb) { throw 'WiX debug database must not enter release dist' }
       - name: Install older MSI, upgrade, deliver URL, remove and check ZIP
         shell: pwsh
         run: |
@@ -196,5 +210,6 @@ jobs:
         with:
           name: windows-installers-and-logs
           path: |
-            f1r3-work/f1r3gaze/dist/*
+            f1r3-work/f1r3gaze/dist/*.msi
+            f1r3-work/f1r3gaze/dist/*-windows-x64.zip
             ${{ runner.temp }}/f1r3gaze-msi-*.log

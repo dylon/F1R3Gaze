@@ -40,6 +40,7 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with: { path: f1r3-work/f1r3gaze/_site }
   deploy:
+    if: github.repository == 'F1R3FLY-io/F1R3Gaze'
     needs: build
     runs-on: ubuntu-latest
     environment:

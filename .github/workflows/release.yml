@@ -240,6 +240,10 @@ jobs:
           CARGO_BUILD_TARGET: aarch64-apple-darwin
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Compare live macOS appearance with the browser's native source
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
       - name: Test native macOS URL event validation
         run: |
           cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
@@ -282,6 +286,10 @@ jobs:
           CARGO_BUILD_TARGET: x86_64-apple-darwin
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Compare live Intel macOS appearance with the browser's native source
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
       - name: Test native Intel URL event validation
         run: |
           cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
@@ -311,16 +319,21 @@ jobs:
       - name: Check PowerShell installer syntax
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("packaging/windows/package.ps1", [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors) { throw ($errors | Out-String) }
+          foreach ($script in @('packaging/windows/package.ps1', 'packaging/windows/ci-theme.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { throw "${script}: $($errors | Out-String)" }
+          }
       - run: cargo build --locked --release -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
       - name: Test native system theme selection
         shell: bash
         env:
           GAZE_THEME_OS_KEYRING: "1"
         run: bash packaging/verify-system-theme.sh
+      - name: Compare live Windows appearance with the browser's native source
+        shell: pwsh
+        run: .\packaging\windows\ci-theme.ps1
       - name: Test Windows URL handoff
         shell: pwsh
         run: |
@@ -335,7 +348,9 @@ jobs:
         env:
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: .\packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
+        run: |
+          .\packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
+          if (Get-ChildItem dist -Filter *.wixpdb) { throw 'WiX debug database must not enter release dist' }
       - name: Install older MSI, upgrade, deliver URL, remove and check ZIP
         shell: pwsh
         run: .\packaging\windows\ci-smoke.ps1 -Version ("$env:VERSION" -replace '^v','')
@@ -343,7 +358,9 @@ jobs:
         if: always()
         with:
           name: windows
-          path: f1r3-work/f1r3gaze/dist/*
+          path: |
+            f1r3-work/f1r3gaze/dist/*.msi
+            f1r3-work/f1r3gaze/dist/*-windows-x64.zip
       - uses: actions/upload-artifact@v4
         if: always()
         with:

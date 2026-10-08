@@ -85,13 +85,15 @@ fn fake_dbus_send(dir: &Path, name: &str, body: &str) -> PathBuf {
 
 #[cfg(unix)]
 #[test]
-fn a_portal_answer_is_read_through_dbus_send() {
-    let dir = gaze_fs::scratch_dir("gaze-shell-system-theme-answer");
-    let program = fake_dbus_send(&dir, "dbus-send", "printf '   variant       uint32 2\\n'");
+fn portal_answers_are_read_through_dbus_send() {
     let _starts = process_starts();
-    assert_eq!(query_portal(&program, QUERY_DEADLINE), Outcome::Answered(Some(Scheme::Light)));
-    let log = std::fs::read_to_string(dir.join("dbus-send.log")).expect("the log");
-    assert_eq!(log.lines().collect::<Vec<_>>(), portal_args(READ_ONE), "exactly these arguments");
+    for (value, expected) in [(1, Scheme::Dark), (2, Scheme::Light)] {
+        let dir = gaze_fs::scratch_dir(&format!("gaze-shell-system-theme-answer-{value}"));
+        let program = fake_dbus_send(&dir, "dbus-send", &format!("printf '   variant       uint32 {value}\\n'"));
+        assert_eq!(query_portal(&program, QUERY_DEADLINE), Outcome::Answered(Some(expected)));
+        let log = std::fs::read_to_string(dir.join("dbus-send.log")).expect("the log");
+        assert_eq!(log.lines().collect::<Vec<_>>(), portal_args(READ_ONE), "exactly these arguments");
+    }
 }
 
 #[cfg(unix)]
