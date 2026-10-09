@@ -51,6 +51,11 @@ jobs:
         shell: bash
         run: |
           cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
+      - name: Test Store profile copy and first-launch consent
+        shell: bash
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
       - name: Build DMG and component PKG
         shell: bash
         run: |
@@ -123,6 +128,11 @@ jobs:
         shell: bash
         run: |
           cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
+      - name: Test Intel Store profile copy and first-launch consent
+        shell: bash
+        run: |
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
 
   macos_intel_installer:
     needs: macos
