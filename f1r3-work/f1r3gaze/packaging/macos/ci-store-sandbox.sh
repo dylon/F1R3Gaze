@@ -91,14 +91,22 @@ grep -Fq '<h1>F1R3Gaze</h1>' "$work/headless.log"
 
 mkdir "$work/site"
 printf '<html><head><title>CI sandbox page</title></head><body><h1>network-ready</h1></body></html>\n' > "$work/site/index.html"
-python3 -u "$here/../linux/serve-smoke-page.py" "$work/site" "$work/port" &
+python3 -u "$here/../linux/serve-smoke-page.py" "$work/site" "$work/port" > "$work/server.log" 2>&1 &
 server_pid=$!
-for ((attempt = 0; attempt < 100; attempt++)); do
+for ((attempt = 0; attempt < 300; attempt++)); do
   [[ -s "$work/port" ]] && break
-  kill -0 "$server_pid" 2>/dev/null || { echo 'sandbox smoke HTTP server exited' >&2; exit 1; }
-  sleep 0.1
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    echo 'sandbox smoke HTTP server exited' >&2
+    cat "$work/server.log" >&2
+    exit 1
+  fi
+  sleep 0.2
 done
-[[ -s "$work/port" ]] || { echo 'sandbox smoke HTTP server did not start' >&2; exit 1; }
+if [[ ! -s "$work/port" ]]; then
+  echo 'sandbox smoke HTTP server did not start within 60 seconds' >&2
+  cat "$work/server.log" >&2
+  exit 1
+fi
 python3 - "$exe" "$work/network.log" "http://127.0.0.1:$(cat "$work/port")/" <<'PY'
 import subprocess
 import sys
