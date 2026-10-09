@@ -52,9 +52,17 @@ git -C "$tap_dir" -c user.name='F1R3Gaze CI' \
 brew tap "$tap_name" "$tap_dir"
 tapped=1
 brew install --cask --require-sha "$cask_name"
-brew list --cask --versions "$cask_name" | grep -Fq "$version"
-[[ "$("$app/Contents/MacOS/f1r3gaze" --version)" == "f1r3gaze $version" ]]
-[[ "$("$cli" --version)" == "f1r3c $version" ]]
+app_version=$("$app/Contents/MacOS/f1r3gaze" --version)
+[[ "$app_version" == "f1r3gaze $version" ]] || {
+  echo "Homebrew app reported an unexpected version: $app_version" >&2
+  exit 1
+}
+cli_version=$("$cli" --version)
+[[ "$cli_version" == "f1r3c $version" ]] || {
+  echo "Homebrew f1r3c reported an unexpected version: $cli_version" >&2
+  exit 1
+}
+echo "Homebrew installed F1R3Gaze and f1r3c $version"
 
 brew uninstall --cask "$cask_name"
 [[ ! -e "$app" && ! -L "$app" ]] || {
