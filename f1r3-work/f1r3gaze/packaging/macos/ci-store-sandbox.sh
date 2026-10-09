@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Re-sign the real DMG app as an isolated App Sandbox prototype and exercise it.
-# This uses an ad hoc identity and a disposable bundle ID; it is not a Store
-# submission artifact. The Developer ID DMG/PKG and Homebrew cask stay intact.
+# Build and exercise an isolated App Sandbox package with an ad hoc identity.
+# The Developer ID DMG/PKG and Homebrew cask stay intact.
 set -euo pipefail
 version=${1:?version required}
 dist=${2:-dist}
@@ -10,34 +9,32 @@ dmg="$dist/F1R3Gaze-$version-macos-universal.dmg"
 [[ -s "$dmg" ]] || { echo "macOS DMG missing or empty: $dmg" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/f1r3gaze-store-sandbox.XXXXXX")
-mount="$work/mount"
-mkdir "$mount"
-attached=0
 server_pid=
+installed=0
+installed_app=/Applications/F1R3Gaze.app
 bundle_id="io.f1r3fly.f1r3gaze.sandboxci.run$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')"
 container="$HOME/Library/Containers/$bundle_id"
 cleanup() {
   local code=$?
   if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; fi
-  if [[ "$attached" == 1 ]]; then hdiutil detach "$mount" >/dev/null || true; fi
+  if [[ "$installed" == 1 ]]; then
+    sudo rm -rf "$installed_app"
+    sudo pkgutil --forget "$bundle_id" >/dev/null 2>&1 || true
+  fi
   rm -rf "$work" "$container"
   exit "$code"
 }
 trap cleanup EXIT
 [[ ! -e "$container" ]] || { echo "test container already exists: $container" >&2; exit 2; }
+[[ ! -e "$installed_app" && ! -L "$installed_app" ]] || {
+  echo "test installation would replace an existing app: $installed_app" >&2
+  exit 2
+}
 
-hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null
-attached=1
-app="$work/F1R3Gaze.app"
-ditto "$mount/F1R3Gaze.app" "$app"
-hdiutil detach "$mount" >/dev/null
-attached=0
-plutil -replace CFBundleIdentifier -string "$bundle_id" "$app/Contents/Info.plist"
-
-codesign --force --sign - --options runtime --identifier "$bundle_id.f1r3c" \
-  --entitlements "$here/store-helper-entitlements.plist" "$app/Contents/MacOS/f1r3c"
-codesign --force --sign - --options runtime --identifier "$bundle_id" \
-  --entitlements "$here/store-app-entitlements.plist" "$app"
+bash "$here/store-package.sh" "$version" "$dist" "$work/output" "$bundle_id"
+app="$work/output/F1R3Gaze.app"
+pkg="$work/output/F1R3Gaze-$version-macos-app-store.pkg"
+[[ -s "$pkg" ]] || { echo 'Store package is missing or empty' >&2; exit 1; }
 codesign --verify --deep --strict --verbose=2 "$app"
 codesign -d --entitlements :- "$app" > "$work/app-entitlements.plist" 2>/dev/null
 codesign -d --entitlements :- "$app/Contents/MacOS/f1r3c" > "$work/helper-entitlements.plist" 2>/dev/null
@@ -62,6 +59,10 @@ PY
 
 exe="$app/Contents/MacOS/f1r3gaze"
 [[ "$("$exe" --version)" == "f1r3gaze $version" ]]
+[[ "$("$app/Contents/MacOS/f1r3c" --version)" == "f1r3c $version" ]]
+pkgutil --payload-files "$pkg" > "$work/pkg-payload"
+grep -Fq 'MacOS/f1r3gaze' "$work/pkg-payload"
+grep -Fq 'MacOS/f1r3c' "$work/pkg-payload"
 paths=$("$exe" paths)
 support="$container/Data/Library/Application Support/io.f1r3fly.f1r3gaze"
 [[ "$paths" == *"$support/config"* ]] || {
@@ -121,4 +122,24 @@ with open(sys.argv[2], "wb") as output:
     )
 PY
 grep -Fq '<h1>network-ready</h1>' "$work/network.log"
-echo "sandboxed macOS app loaded built-in and network pages inside $bundle_id"
+installed=1
+sudo installer -pkg "$pkg" -target /
+[[ -x "$installed_app/Contents/MacOS/f1r3gaze" ]] || { echo 'Store package did not install Gaze' >&2; exit 1; }
+[[ -x "$installed_app/Contents/MacOS/f1r3c" ]] || { echo 'Store package did not install f1r3c' >&2; exit 1; }
+[[ "$("$installed_app/Contents/MacOS/f1r3gaze" --version)" == "f1r3gaze $version" ]]
+python3 - "$installed_app/Contents/MacOS/f1r3gaze" "$work/installed.log" <<'PY'
+import subprocess
+import sys
+
+with open(sys.argv[2], "wb") as output:
+    subprocess.run(
+        [sys.argv[1], "--headless", "gaze://newtab", "--timeout", "5"],
+        stdout=output,
+        stderr=subprocess.STDOUT,
+        check=True,
+        timeout=60,
+    )
+PY
+grep -Fq '<h1>F1R3Gaze</h1>' "$work/installed.log"
+pkgutil --pkg-info "$bundle_id"
+echo "sandboxed macOS package installed and loaded built-in and network pages inside $bundle_id"

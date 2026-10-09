@@ -18,6 +18,8 @@ project = Path(sys.argv[1])
 for source in (
     "packaging/macos/Info.plist",
     "packaging/macos/entitlements.plist",
+    "packaging/macos/store-app-entitlements.plist",
+    "packaging/macos/store-helper-entitlements.plist",
     "packaging/windows/f1r3gaze.wxs",
     "packaging/windows/organization.wxs.in",
     "packaging/macos/organization-distribution.xml.in",
