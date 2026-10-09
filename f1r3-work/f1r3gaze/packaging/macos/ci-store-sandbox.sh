@@ -107,13 +107,25 @@ on run arguments
   set appPid to item 1 of arguments as integer
   set sourcePath to item 2 of arguments
   tell application "System Events"
-    set appProcess to first process whose unix id is appPid
+    set appProcess to missing value
+    repeat 100 times
+      try
+        set appProcess to first process whose unix id is appPid
+        exit repeat
+      end try
+      delay 0.2
+    end repeat
+    if appProcess is missing value then error "sandboxed app process did not appear"
     set frontmost of appProcess to true
     set answered to false
     repeat 150 times
       try
         if exists button "Yes" of window 1 of appProcess then
           click button "Yes" of window 1 of appProcess
+          set answered to true
+          exit repeat
+        else if exists button "Yes" of sheet 1 of window 1 of appProcess then
+          click button "Yes" of sheet 1 of window 1 of appProcess
           set answered to true
           exit repeat
         end if
