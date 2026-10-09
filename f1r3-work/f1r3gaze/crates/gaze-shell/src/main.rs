@@ -394,20 +394,33 @@ struct NativeProfileImportDialog {
 #[cfg(all(target_os = "macos", feature = "window"))]
 impl ProfileImportDialog for NativeProfileImportDialog {
     fn decide(&self) -> ImportDecision {
-        use rfd::{MessageButtons, MessageDialog, MessageDialogResult};
-        match MessageDialog::new()
-            .set_title("Import an existing F1R3Gaze profile?")
-            .set_description(concat!(
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication};
+        use objc2_foundation::NSString;
+
+        let Some(mtm) = MainThreadMarker::new() else {
+            return ImportDecision::Cancel;
+        };
+        let app = NSApplication::sharedApplication(mtm);
+        #[allow(deprecated)]
+        unsafe {
+            app.activateIgnoringOtherApps(true);
+        }
+        let alert = unsafe { NSAlert::new(mtm) };
+        unsafe {
+            alert.setMessageText(&NSString::from_str("Import an existing F1R3Gaze profile?"));
+            alert.setInformativeText(&NSString::from_str(concat!(
                 "If you used the Developer ID or Homebrew version, select its F1R3Gaze profile folder. ",
                 "Close that version before importing. Your existing files will be left in place. ",
                 "Wallet keys stored in Keychain may still need to be exported from the old app and ",
                 "imported here. Choose No to start with a new profile."
-            ))
-            .set_buttons(MessageButtons::YesNo)
-            .show()
-        {
-            MessageDialogResult::Yes => ImportDecision::Import,
-            MessageDialogResult::No => ImportDecision::Fresh,
+            )));
+            alert.addButtonWithTitle(&NSString::from_str("Yes"));
+            alert.addButtonWithTitle(&NSString::from_str("No"));
+        }
+        match unsafe { alert.runModal() } {
+            NSAlertFirstButtonReturn => ImportDecision::Import,
+            NSAlertSecondButtonReturn => ImportDecision::Fresh,
             _ => ImportDecision::Cancel,
         }
     }

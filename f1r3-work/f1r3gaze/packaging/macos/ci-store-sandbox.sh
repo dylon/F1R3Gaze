@@ -130,27 +130,28 @@ on run arguments
     end repeat
     if appProcess is missing value then error "sandboxed app process did not appear"
     set frontmost of appProcess to true
-    -- rfd shows an unparented first-launch message through CoreFoundation's
-    -- user-notification service, so its Yes button is not in the app's UI tree.
-    -- Return accepts the default Yes button. The AppKit folder panel then
-    -- appears as the first window owned by the app process.
-    set panelReady to false
+    -- The first-launch AppKit alert belongs to this process, so require its
+    -- explicit Yes button before operating the native folder panel.
+    set answered to false
     repeat 150 times
       try
-        if (count of windows of appProcess) > 0 then
-          set panelReady to true
+        if exists button "Yes" of window 1 of appProcess then
+          click button "Yes" of window 1 of appProcess
+          set answered to true
+          exit repeat
+        else if exists button "Yes" of sheet 1 of window 1 of appProcess then
+          click button "Yes" of sheet 1 of window 1 of appProcess
+          set answered to true
           exit repeat
         end if
       end try
-      key code 36
       delay 0.2
     end repeat
-    if not panelReady then
-      set frontProcess to name of first process whose frontmost is true
-      error "native folder panel did not appear after Yes; front process: " & frontProcess
+    if not answered then
+      set openWindows to name of every window of appProcess
+      error "first-launch AppKit alert did not show a Yes button; windows: " & (openWindows as text)
     end if
-    set frontmost of appProcess to true
-    delay 0.5
+    delay 1
     keystroke "g" using {command down, shift down}
     delay 0.5
     keystroke sourcePath
