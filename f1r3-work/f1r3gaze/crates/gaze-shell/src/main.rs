@@ -371,58 +371,119 @@ fn macos_store_target<'a>(layout: &'a Layout, machine: &Machine) -> Option<&'a P
 }
 
 #[cfg(all(target_os = "macos", feature = "window"))]
-fn offer_macos_store_import(layout: &Layout, machine: &Machine) -> Result<(), String> {
-    use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImportDecision {
+    Import,
+    Fresh,
+    Cancel,
+}
 
+#[cfg(all(target_os = "macos", feature = "window"))]
+trait ProfileImportDialog {
+    fn decide(&self) -> ImportDecision;
+    fn choose_source(&self) -> Option<PathBuf>;
+    fn report_failure(&self, message: &str);
+    fn report_success(&self);
+}
+
+#[cfg(all(target_os = "macos", feature = "window"))]
+struct NativeProfileImportDialog {
+    old_support_parent: Option<PathBuf>,
+}
+
+#[cfg(all(target_os = "macos", feature = "window"))]
+impl ProfileImportDialog for NativeProfileImportDialog {
+    fn decide(&self) -> ImportDecision {
+        use rfd::{MessageButtons, MessageDialog, MessageDialogResult};
+        match MessageDialog::new()
+            .set_title("Import an existing F1R3Gaze profile?")
+            .set_description(concat!(
+                "If you used the Developer ID or Homebrew version, select its F1R3Gaze profile folder. ",
+                "Close that version before importing. Your existing files will be left in place. ",
+                "Wallet keys stored in Keychain may still need to be exported from the old app and ",
+                "imported here. Choose No to start with a new profile."
+            ))
+            .set_buttons(MessageButtons::YesNo)
+            .show()
+        {
+            MessageDialogResult::Yes => ImportDecision::Import,
+            MessageDialogResult::No => ImportDecision::Fresh,
+            _ => ImportDecision::Cancel,
+        }
+    }
+    fn choose_source(&self) -> Option<PathBuf> {
+        let mut picker = rfd::FileDialog::new()
+            .set_title("Select the existing io.f1r3fly.f1r3gaze profile folder");
+        if let Some(directory) = &self.old_support_parent {
+            picker = picker.set_directory(directory);
+        }
+        picker.pick_folder()
+    }
+    fn report_failure(&self, message: &str) {
+        rfd::MessageDialog::new()
+            .set_title("F1R3Gaze profile import failed")
+            .set_description(message)
+            .set_level(rfd::MessageLevel::Error)
+            .show();
+    }
+    fn report_success(&self) {
+        rfd::MessageDialog::new()
+            .set_title("F1R3Gaze profile imported")
+            .set_description(concat!(
+                "Your settings and profile files were copied. Wallet addresses were copied, but ",
+                "Keychain keys may need to be exported from the old app and imported through ",
+                "Choose wallet file in this app. Verify each address before using a wallet."
+            ))
+            .show();
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "window"))]
+fn offer_macos_store_import_with(
+    layout: &Layout,
+    machine: &Machine,
+    dialog: &impl ProfileImportDialog,
+) -> Result<(), String> {
     let Some(target) = macos_store_target(layout, machine) else {
         return Ok(());
     };
     if target.exists() {
         return Ok(());
     }
-    match MessageDialog::new()
-        .set_title("Import an existing F1R3Gaze profile?")
-        .set_description(
-            concat!(
-                "If you used the Developer ID or Homebrew version, select its F1R3Gaze profile folder. ",
-                "Close that version before importing. Your existing files will be left in place. ",
-                "Wallet keys stored in Keychain may still need to be exported from the old app and ",
-                "imported here. Choose No to start with a new profile."
-            ),
-        )
-        .set_buttons(MessageButtons::YesNo)
-        .show()
-    {
-        MessageDialogResult::No => return Ok(()),
-        MessageDialogResult::Yes => {}
-        _ => return Err("profile import was canceled; launch F1R3Gaze again to choose".into()),
+    match dialog.decide() {
+        ImportDecision::Fresh => return Ok(()),
+        ImportDecision::Import => {}
+        ImportDecision::Cancel => {
+            return Err("profile import was canceled; launch F1R3Gaze again to choose".into());
+        }
     }
-    let source = rfd::FileDialog::new()
-        .set_title("Select the existing io.f1r3fly.f1r3gaze profile folder")
-        .pick_folder()
+    let source = dialog
+        .choose_source()
         .ok_or("profile folder selection was canceled; launch F1R3Gaze again to choose")?;
     if let Err(error) = profile::macos_import::import_existing(&source, target) {
         let message = format!(
             "The profile could not be imported: {error}\n\nYour existing profile was not changed. Close the old F1R3Gaze, check the selected folder, and try again."
         );
-        MessageDialog::new()
-            .set_title("F1R3Gaze profile import failed")
-            .set_description(&message)
-            .set_level(MessageLevel::Error)
-            .show();
+        dialog.report_failure(&message);
         return Err(message);
     }
-    MessageDialog::new()
-        .set_title("F1R3Gaze profile imported")
-        .set_description(
-            concat!(
-                "Your settings and profile files were copied. Wallet addresses were copied, but ",
-                "Keychain keys may need to be exported from the old app and imported through ",
-                "Choose wallet file in this app. Verify each address before using a wallet."
-            ),
-        )
-        .show();
+    dialog.report_success();
     Ok(())
+}
+
+#[cfg(all(target_os = "macos", feature = "window"))]
+fn offer_macos_store_import(layout: &Layout, machine: &Machine) -> Result<(), String> {
+    let old_support_parent = machine
+        .home
+        .as_deref()
+        .filter(|home| layout::is_macos_container_home(home))
+        .and_then(|home| home.ancestors().nth(4))
+        .map(|home| home.join("Library/Application Support"));
+    offer_macos_store_import_with(
+        layout,
+        machine,
+        &NativeProfileImportDialog { old_support_parent },
+    )
 }
 
 fn main() {
@@ -831,6 +892,108 @@ mod tests {
             Ok(Asked::Run { command, .. }) => command,
             other => panic!("{line}: {other:?}"),
         }
+    }
+
+    #[cfg(all(target_os = "macos", feature = "window"))]
+    struct FakeImportDialog {
+        decision: ImportDecision,
+        source: Option<PathBuf>,
+        decisions: std::cell::Cell<usize>,
+        selections: std::cell::Cell<usize>,
+        failures: std::cell::Cell<usize>,
+        successes: std::cell::Cell<usize>,
+    }
+
+    #[cfg(all(target_os = "macos", feature = "window"))]
+    impl FakeImportDialog {
+        fn new(decision: ImportDecision, source: Option<PathBuf>) -> Self {
+            Self {
+                decision,
+                source,
+                decisions: std::cell::Cell::new(0),
+                selections: std::cell::Cell::new(0),
+                failures: std::cell::Cell::new(0),
+                successes: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "macos", feature = "window"))]
+    impl ProfileImportDialog for FakeImportDialog {
+        fn decide(&self) -> ImportDecision {
+            self.decisions.set(self.decisions.get() + 1);
+            self.decision
+        }
+        fn choose_source(&self) -> Option<PathBuf> {
+            self.selections.set(self.selections.get() + 1);
+            self.source.clone()
+        }
+        fn report_failure(&self, _: &str) {
+            self.failures.set(self.failures.get() + 1);
+        }
+        fn report_success(&self) {
+            self.successes.set(self.successes.get() + 1);
+        }
+    }
+
+    #[cfg(all(target_os = "macos", feature = "window"))]
+    fn store_import_fixture(name: &str) -> (Machine, Layout, PathBuf, PathBuf) {
+        let base = gaze_fs::scratch_dir(name);
+        let home = base.join("home/Library/Containers/io.f1r3fly.f1r3gaze/Data");
+        std::fs::create_dir_all(&home).unwrap();
+        let machine = Machine { home: Some(home), ..Machine::default() };
+        let layout = layout::platform_layout(layout::Platform::MacOs, &machine).unwrap();
+        let source = base.join("old/io.f1r3fly.f1r3gaze");
+        for root in ["config", "data", "state"] {
+            std::fs::create_dir_all(source.join(root)).unwrap();
+        }
+        std::fs::write(
+            source.join("data/layout.json"),
+            profile::migrate::Marker::repaired().to_bytes(),
+        )
+        .unwrap();
+        std::fs::write(source.join("config/imported"), b"consented").unwrap();
+        let target = layout.config.parent().unwrap().to_path_buf();
+        (machine, layout, source, target)
+    }
+
+    #[cfg(all(target_os = "macos", feature = "window"))]
+    #[test]
+    fn store_import_requires_a_positive_folder_choice() {
+        let (machine, layout, source, target) = store_import_fixture("gaze-store-import-choice");
+        let fresh = FakeImportDialog::new(ImportDecision::Fresh, Some(source.clone()));
+        offer_macos_store_import_with(&layout, &machine, &fresh).unwrap();
+        assert_eq!((fresh.decisions.get(), fresh.selections.get()), (1, 0));
+        assert!(!target.exists());
+
+        let canceled = FakeImportDialog::new(ImportDecision::Cancel, Some(source.clone()));
+        assert!(offer_macos_store_import_with(&layout, &machine, &canceled).is_err());
+        assert_eq!((canceled.decisions.get(), canceled.selections.get()), (1, 0));
+        assert!(!target.exists());
+
+        let no_folder = FakeImportDialog::new(ImportDecision::Import, None);
+        assert!(offer_macos_store_import_with(&layout, &machine, &no_folder).is_err());
+        assert_eq!((no_folder.decisions.get(), no_folder.selections.get()), (1, 1));
+        assert!(!target.exists());
+
+        let bad_folder = FakeImportDialog::new(ImportDecision::Import, Some(source.join("missing")));
+        assert!(offer_macos_store_import_with(&layout, &machine, &bad_folder).is_err());
+        assert_eq!(bad_folder.failures.get(), 1);
+        assert!(!target.exists());
+        assert!(source.join("data/layout.json").exists());
+    }
+
+    #[cfg(all(target_os = "macos", feature = "window"))]
+    #[test]
+    fn store_import_preserves_source_and_prompts_only_for_a_fresh_container() {
+        let (machine, layout, source, target) = store_import_fixture("gaze-store-import-consented");
+        let selected = FakeImportDialog::new(ImportDecision::Import, Some(source.clone()));
+        offer_macos_store_import_with(&layout, &machine, &selected).unwrap();
+        assert_eq!((selected.decisions.get(), selected.selections.get(), selected.successes.get()), (1, 1, 1));
+        assert_eq!(std::fs::read(source.join("config/imported")).unwrap(), b"consented");
+        assert_eq!(std::fs::read(target.join("config/imported")).unwrap(), b"consented");
+        offer_macos_store_import_with(&layout, &machine, &selected).unwrap();
+        assert_eq!(selected.decisions.get(), 1);
     }
 
     #[test]
