@@ -125,6 +125,16 @@ fn macos_uses_the_bundle_id_its_caches_and_tmpdir() {
     assert_eq!((l.runtime.clone(), l.runtime_is_fallback), (support.join("state/runtime"), true));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_container_home_is_distinct_from_an_unsandboxed_home() {
+    assert!(is_macos_container_home(Path::new(
+        "/Users/u/Library/Containers/io.f1r3fly.f1r3gaze/Data"
+    )));
+    assert!(!is_macos_container_home(Path::new("/Users/u")));
+    assert!(!is_macos_container_home(Path::new("/tmp/isolated-test-home")));
+}
+
 #[test]
 fn windows_prefers_known_folders_then_the_environment() {
     let roaming = r"C:\Users\u\AppData\Roaming";

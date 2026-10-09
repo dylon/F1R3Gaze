@@ -162,9 +162,27 @@ impl Machine {
 
 #[cfg(target_os = "macos")]
 fn detected_home_dir() -> Option<PathBuf> {
-    // dirs::home_dir reads HOME, which can name the user's unsandboxed home.
-    // Foundation resolves the sandbox container for a Store-signed process.
-    Some(PathBuf::from(objc2_foundation::NSHomeDirectory().to_string()))
+    // Preserve HOME for the Developer ID build and isolated command-line
+    // profiles. A sandboxed app gets its own .../Library/Containers/ID/Data
+    // home from Foundation, even if HOME still names the user's normal home.
+    let foundation = PathBuf::from(objc2_foundation::NSHomeDirectory().to_string());
+    if is_macos_container_home(&foundation) {
+        Some(foundation)
+    } else {
+        dirs::home_dir().or(Some(foundation))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_container_home(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "Data")
+        && path.parent().and_then(Path::parent).and_then(Path::file_name).is_some_and(|name| name == "Containers")
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "Library")
 }
 
 #[cfg(not(target_os = "macos"))]
