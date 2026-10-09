@@ -71,6 +71,11 @@ jobs:
         run: |
           version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
           bash packaging/macos/ci-homebrew.sh "$version"
+      - name: Exercise isolated macOS App Sandbox prototype
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-store-sandbox.sh "$version"
       - name: Mount DMG, upgrade PKG and deliver URL
         shell: bash
         run: |
@@ -133,6 +138,11 @@ jobs:
         run: |
           version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
           bash packaging/macos/ci-homebrew.sh "$version"
+      - name: Exercise isolated macOS App Sandbox prototype on Intel
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-store-sandbox.sh "$version"
       - name: Upgrade PKG and deliver URLs on Intel Mac
         shell: bash
         run: |
