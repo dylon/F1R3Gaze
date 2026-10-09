@@ -12,6 +12,7 @@ $scratch = Join-Path $temp ("f1r3gaze-smoke-" + [guid]::NewGuid().ToString('N'))
 $portable = Join-Path $scratch 'portable'
 $oldMsi = Join-Path $scratch 'older.msi'
 $installed = Join-Path $env:ProgramFiles 'F1R3Gaze'
+$startMenu = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'F1R3Gaze.lnk'
 $windowProcess = $null
 $session = $null
 $windowStdout = Join-Path $temp 'f1r3gaze-msi-window-stdout.log'
@@ -26,6 +27,9 @@ function Assert-RegisteredVersion([string]$Expected) {
   $products = @(RegisteredProducts)
   if ($products.Count -ne 1 -or $products[0].DisplayVersion -ne $Expected) {
     throw "Expected one F1R3Gaze $Expected registration, found: $($products.DisplayVersion -join ', ')"
+  }
+  if ($products[0].Publisher -ne 'F1R3FLY.io') {
+    throw "F1R3Gaze Add/Remove Programs publisher is incorrect: $($products[0].Publisher)"
   }
 }
 
@@ -73,6 +77,7 @@ try {
 
   Install-Msi $msi $upgradeLog
   Assert-RegisteredVersion $Version
+  if (-not (Test-Path $startMenu)) { throw "MSI did not create its Start menu shortcut: $startMenu" }
   foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE')) {
     if (-not (Test-Path (Join-Path $installed $name))) { throw "Missing installed $name" }
   }
@@ -121,6 +126,7 @@ try {
   $removeExitCode = Wait-SmokeProcess $remove 'MSI removal' 180
   if ($removeExitCode -notin @(0, 3010)) { throw "MSI removal failed: $removeExitCode" }
   if (Test-Path (Join-Path $installed 'f1r3gaze.exe')) { throw 'MSI left the executable installed' }
+  if (Test-Path $startMenu) { throw 'MSI left the Start menu shortcut installed' }
   if (@(RegisteredProducts).Count -ne 0) { throw 'MSI left a product registration installed' }
   foreach ($scheme in @('f1r3', 'f1r3h')) {
     if (Test-Path "Registry::HKEY_LOCAL_MACHINE\Software\Classes\$scheme") {
