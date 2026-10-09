@@ -88,18 +88,14 @@ support="$container/Data/Library/Application Support/io.f1r3fly.f1r3gaze"
 compiler_dir="$container/Data/Documents/compiler-smoke"
 mkdir -p "$compiler_dir"
 printf 'Nil\n' > "$compiler_dir/example.rho"
-if ! "$app/Contents/MacOS/f1r3c" compile "$compiler_dir/example.rho" \
+if ! "$exe" compiler compile "$compiler_dir/example.rho" \
     -o "$compiler_dir/example.knf" > "$work/compiler.log" 2>&1; then
   cat "$work/compiler.log" >&2
-  sleep 2
-  for crash_report in "$HOME/Library/Logs/DiagnosticReports"/f1r3c*; do
-    if [[ -f "$crash_report" ]]; then head -n 100 "$crash_report" >&2; break; fi
-  done
-  echo 'sandboxed f1r3c failed to compile a source file' >&2
+  echo 'sandboxed Gaze failed to launch its compiler to compile a source file' >&2
   exit 1
 fi
 [[ -s "$compiler_dir/example.knf" ]] || { echo 'sandboxed f1r3c did not create its output' >&2; exit 1; }
-"$app/Contents/MacOS/f1r3c" inspect "$compiler_dir/example.knf" | grep -Fxq 'Nil'
+"$exe" compiler inspect "$compiler_dir/example.knf" | grep -Fxq 'Nil'
 python3 - "$exe" "$work/headless.log" gaze://newtab <<'PY'
 import subprocess
 import sys
@@ -160,6 +156,7 @@ sudo installer -pkg "$pkg" -target /
 [[ -x "$installed_app/Contents/MacOS/f1r3gaze" ]] || { echo 'Store package did not install Gaze' >&2; exit 1; }
 [[ -x "$installed_app/Contents/MacOS/f1r3c" ]] || { echo 'Store package did not install f1r3c' >&2; exit 1; }
 [[ "$("$installed_app/Contents/MacOS/f1r3gaze" --version)" == "f1r3gaze $version" ]]
+"$installed_app/Contents/MacOS/f1r3gaze" compiler inspect "$compiler_dir/example.knf" | grep -Fxq 'Nil'
 python3 - "$installed_app/Contents/MacOS/f1r3gaze" "$work/installed.log" <<'PY'
 import subprocess
 import sys

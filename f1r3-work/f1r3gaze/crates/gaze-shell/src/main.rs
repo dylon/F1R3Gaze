@@ -20,6 +20,7 @@
 //! f1r3gaze [--profile DIR] trust list|forget BINDING|forget --all
 //!                                    list or forget this shard's freshness
 //!                                    records (after the shard was reset)
+//! f1r3gaze compiler ARGS...          run the bundled f1r3c compiler
 //! f1r3gaze --version
 //! ```
 //!
@@ -68,6 +69,7 @@ const USAGE: &str = "usage: f1r3gaze [--profile DIR] [URL]
        f1r3gaze [--profile DIR] --headless URL [--allow] [--click SELECTOR]... [--timeout SECS] [--wait SECS] [--log FILE]
        f1r3gaze [--profile DIR] wallet list|new [LABEL]|import FILE [LABEL]|export ADDRESS [FILE]|use ADDRESS|remove ADDRESS|balance [ADDRESS]|send TO AMOUNT [NOTE]
        f1r3gaze [--profile DIR] paths | profile check | profile backups [prune --older-than DAYS] | trust list | trust forget BINDING|--all
+       f1r3gaze compiler ARGS...         run the bundled f1r3c compiler
        f1r3gaze --version
 --profile DIR (or F1R3GAZE_PROFILE) keeps every folder under DIR.
 Exit: 0 done; 1 failed, or the profile is in use (profile check: a start would change something); 2 usage.";
@@ -175,6 +177,7 @@ enum ForgetWhat {
 #[derive(Debug, PartialEq)]
 enum Asked {
     Run { profile: Option<PathBuf>, command: Command },
+    Compiler(Vec<String>),
     Version,
 }
 
@@ -267,6 +270,10 @@ fn parse(args: &[String]) -> Result<Asked, String> {
             "wallet" | "paths" | "profile" | "trust" if page_options => {
                 return Err(format!("{arg} takes no page and no page options"));
             }
+            "compiler" if page_options || profile.is_some() => {
+                return Err("compiler takes no profile, page or page options".into());
+            }
+            "compiler" => return Ok(Asked::Compiler(args[i + 1..].to_vec())),
             "wallet" => Command::Wallet(args[i + 1..].to_vec()),
             "paths" => match rest.as_slice() {
                 [] => Command::Paths,
@@ -329,6 +336,25 @@ fn storage_fs() -> Arc<dyn Fs + Send + Sync> {
     Arc::new(StdFs)
 }
 
+/// Launching the embedded helper from this executable lets it inherit the
+/// signed app's sandbox. A direct Terminal launch of the helper has no app
+/// parent and cannot reliably access the app container on macOS.
+fn run_compiler(args: &[String]) -> i32 {
+    let result = std::env::current_exe()
+        .and_then(|exe| {
+            let parent = exe.parent().ok_or_else(|| std::io::Error::other("executable has no parent folder"))?;
+            Ok(parent.join(if cfg!(windows) { "f1r3c.exe" } else { "f1r3c" }))
+        })
+        .and_then(|compiler| std::process::Command::new(compiler).args(args).status());
+    match result {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(error) => {
+            eprintln!("f1r3gaze: cannot run bundled f1r3c: {error}");
+            1
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (profile_arg, command) = match parse(&args) {
@@ -336,6 +362,7 @@ fn main() {
             println!("f1r3gaze {}", env!("CARGO_PKG_VERSION"));
             return;
         }
+        Ok(Asked::Compiler(args)) => std::process::exit(run_compiler(&args)),
         Ok(Asked::Run { profile, command }) => (profile, command),
         Err(why) => usage(&why),
     };
@@ -727,6 +754,9 @@ mod tests {
         assert_eq!(command("trust forget --all"), Command::TrustForget(ForgetWhat::All));
         assert_eq!(command("trust forget rho:id:abc"), Command::TrustForget(ForgetWhat::Binding("rho:id:abc".into())));
         assert_eq!(read("--version"), Ok(Asked::Version));
+        assert_eq!(read("compiler compile file.rho -o file.knf"), Ok(Asked::Compiler(vec![
+            "compile".into(), "file.rho".into(), "-o".into(), "file.knf".into(),
+        ])));
         match read("--profile /p wallet new Savings") {
             Ok(Asked::Run { profile, command }) => {
                 assert_eq!(profile.as_deref(), Some(Path::new("/p")));
@@ -754,6 +784,8 @@ mod tests {
             ("trust", "list, forget"),
             ("trust forget", "list, forget"),
             ("--bogus", "unknown option"),
+            ("--profile /p compiler --version", "takes no profile"),
+            ("--headless x compiler compile a.rho", "takes no profile, page"),
         ] {
             let why = read(line).expect_err(line);
             assert!(why.contains(says), "{line}: {why}");
