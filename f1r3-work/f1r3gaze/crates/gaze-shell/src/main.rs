@@ -403,25 +403,24 @@ impl ProfileImportDialog for NativeProfileImportDialog {
         };
         let app = NSApplication::sharedApplication(mtm);
         #[allow(deprecated)]
-        unsafe {
-            app.activateIgnoringOtherApps(true);
-        }
-        let alert = unsafe { NSAlert::new(mtm) };
-        unsafe {
-            alert.setMessageText(&NSString::from_str("Import an existing F1R3Gaze profile?"));
-            alert.setInformativeText(&NSString::from_str(concat!(
-                "If you used the Developer ID or Homebrew version, select its F1R3Gaze profile folder. ",
-                "Close that version before importing. Your existing files will be left in place. ",
-                "Wallet keys stored in Keychain may still need to be exported from the old app and ",
-                "imported here. Choose No to start with a new profile."
-            )));
-            alert.addButtonWithTitle(&NSString::from_str("Yes"));
-            alert.addButtonWithTitle(&NSString::from_str("No"));
-        }
-        match unsafe { alert.runModal() } {
-            NSAlertFirstButtonReturn => ImportDecision::Import,
-            NSAlertSecondButtonReturn => ImportDecision::Fresh,
-            _ => ImportDecision::Cancel,
+        app.activateIgnoringOtherApps(true);
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str("Import an existing F1R3Gaze profile?"));
+        alert.setInformativeText(&NSString::from_str(concat!(
+            "If you used the Developer ID or Homebrew version, select its F1R3Gaze profile folder. ",
+            "Close that version before importing. Your existing files will be left in place. ",
+            "Wallet keys stored in Keychain may still need to be exported from the old app and ",
+            "imported here. Choose No to start with a new profile."
+        )));
+        alert.addButtonWithTitle(&NSString::from_str("Yes"));
+        alert.addButtonWithTitle(&NSString::from_str("No"));
+        let response = alert.runModal();
+        if response == NSAlertFirstButtonReturn {
+            ImportDecision::Import
+        } else if response == NSAlertSecondButtonReturn {
+            ImportDecision::Fresh
+        } else {
+            ImportDecision::Cancel
         }
     }
     fn choose_source(&self) -> Option<PathBuf> {

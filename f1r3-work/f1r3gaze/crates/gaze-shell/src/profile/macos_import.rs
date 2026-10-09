@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const STAGE_MARKER: &str = ".f1r3gaze-import-stage";
 const STAGE_VALUE: &[u8] = b"F1R3Gaze macOS profile import v1\n";
@@ -293,6 +293,7 @@ fn publish_complete(stage: &Path, target: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn fixture(name: &str) -> (PathBuf, PathBuf) {
         let base = gaze_fs::scratch_dir(name);
