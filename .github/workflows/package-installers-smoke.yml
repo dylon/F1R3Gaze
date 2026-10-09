@@ -66,6 +66,11 @@ jobs:
             echo "::error::macOS package build failed: $summary"
             exit 1
           fi
+      - name: Install and remove generated Homebrew cask
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-homebrew.sh "$version"
       - name: Mount DMG, upgrade PKG and deliver URL
         shell: bash
         run: |
@@ -123,6 +128,11 @@ jobs:
         with:
           name: macos-installers
           path: f1r3-work/f1r3gaze/dist
+      - name: Install and remove generated Homebrew cask on Intel Mac
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-homebrew.sh "$version"
       - name: Upgrade PKG and deliver URLs on Intel Mac
         shell: bash
         run: |

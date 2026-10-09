@@ -279,6 +279,8 @@ jobs:
         run: |
           DIST=dist packaging/macos/package.sh "${VERSION#v}" \
             target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
+      - name: Install and remove generated Homebrew cask
+        run: bash packaging/macos/ci-homebrew.sh "${VERSION#v}"
       - name: Mount DMG, upgrade PKG and deliver URL
         run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
       - uses: actions/upload-artifact@v4
@@ -321,6 +323,8 @@ jobs:
         with:
           name: macos
           path: f1r3-work/f1r3gaze/dist
+      - name: Install and remove generated Homebrew cask on Intel Mac
+        run: bash packaging/macos/ci-homebrew.sh "${VERSION#v}"
       - name: Upgrade PKG and deliver URLs on Intel Mac
         run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
 
