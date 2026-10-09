@@ -12,9 +12,18 @@ hdiutil verify "$dmg"
 mount=$(mktemp -d "$RUNNER_TEMP/f1r3gaze-dmg.XXXXXX")
 attached=0
 old_dir=
+detach_dmg() {
+  for ((attempt = 0; attempt < 60; attempt++)); do
+    if hdiutil detach "$mount" >/dev/null 2>&1; then attached=0; return 0; fi
+    # hdiutil can report Resource busy even when the image has just detached.
+    if ! mount | grep -Fq " on $mount ("; then attached=0; return 0; fi
+    sleep 0.5
+  done
+  hdiutil detach "$mount"
+}
 cleanup() {
   local code=$?
-  if [[ "$attached" == 1 ]]; then hdiutil detach "$mount" || true; fi
+  if [[ "$attached" == 1 ]]; then detach_dmg || true; fi
   rmdir "$mount" 2>/dev/null || true
   if [[ -n "$old_dir" ]]; then rm -rf "$old_dir"; fi
   exit "$code"
@@ -61,8 +70,7 @@ pkgbuild --component "$app" --install-location /Applications \
   --identifier io.f1r3fly.f1r3gaze --version "$older" "$old_pkg"
 sudo installer -pkg "$old_pkg" -target /
 [[ "$(pkgutil --pkg-info io.f1r3fly.f1r3gaze | awk '/^version:/ {print $2}')" == "$older" ]]
-hdiutil detach "$mount"
-attached=0
+detach_dmg
 rmdir "$mount"
 
 sudo installer -pkg "$pkg" -target /
