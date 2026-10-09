@@ -65,7 +65,7 @@ parley = { git = "https://github.com/linebender/parley", rev = "332c1c7d97588395
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", features = ["relax-sign-encoding"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "std"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSObject", "NSString", "NSURL", "std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSObject", "NSString", "NSURL", "NSPathUtilities", "std"] }
 
 [dev-dependencies]
 k1ndl1ng-parse.workspace = true
