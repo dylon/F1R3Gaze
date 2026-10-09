@@ -64,6 +64,7 @@ liblevenshtein = { version = "=4.0.0-rc.4", default-features = false }
 parley = { git = "https://github.com/linebender/parley", rev = "332c1c7d9758839577e7979d211d1e3bbf4818af" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 objc2 = { version = "0.6", features = ["relax-sign-encoding"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSObject", "NSString", "NSURL", "NSPathUtilities", "std"] }

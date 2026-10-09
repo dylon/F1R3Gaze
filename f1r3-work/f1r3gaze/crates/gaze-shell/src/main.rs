@@ -69,6 +69,7 @@ const USAGE: &str = "usage: f1r3gaze [--profile DIR] [URL]
        f1r3gaze [--profile DIR] --headless URL [--allow] [--click SELECTOR]... [--timeout SECS] [--wait SECS] [--log FILE]
        f1r3gaze [--profile DIR] wallet list|new [LABEL]|import FILE [LABEL]|export ADDRESS [FILE]|use ADDRESS|remove ADDRESS|balance [ADDRESS]|send TO AMOUNT [NOTE]
        f1r3gaze [--profile DIR] paths | profile check | profile backups [prune --older-than DAYS] | trust list | trust forget BINDING|--all
+       f1r3gaze profile import SOURCE    import an existing profile into a fresh macOS Store container
        f1r3gaze compiler ARGS...         run the bundled f1r3c compiler
        f1r3gaze --version
 --profile DIR (or F1R3GAZE_PROFILE) keeps every folder under DIR.
@@ -151,6 +152,7 @@ enum Command {
     Wallet(Vec<String>),
     Paths,
     ProfileCheck,
+    ProfileImport(PathBuf),
     Backups,
     PruneBackups { older_than: Duration },
     TrustList,
@@ -203,6 +205,7 @@ impl Command {
             Command::TrustList => only_if_free("trust list"),
             Command::TrustForget(_) => exclusive("trust forget"),
             Command::Paths | Command::ProfileCheck => Locking::ReadOnly("this command only looks at the profile"),
+            Command::ProfileImport(_) => unreachable!("profile import runs before the profile opens"),
         }
     }
 }
@@ -281,6 +284,7 @@ fn parse(args: &[String]) -> Result<Asked, String> {
             },
             "profile" => match rest.as_slice() {
                 ["check"] => Command::ProfileCheck,
+                ["import", source] if profile.is_none() => Command::ProfileImport(PathBuf::from(source)),
                 ["backups"] => Command::Backups,
                 ["backups", "prune", "--older-than", days] => {
                     let days: u64 = days.parse().map_err(|_| format!("--older-than {days:?} is not a whole number of days"))?;
@@ -289,7 +293,7 @@ fn parse(args: &[String]) -> Result<Asked, String> {
                         older_than: Duration::from_secs(seconds),
                     }
                 }
-                _ => return Err("profile takes check, backups, or backups prune --older-than DAYS".into()),
+                _ => return Err("profile takes check, import SOURCE, backups, or backups prune --older-than DAYS".into()),
             },
             "trust" => match rest.as_slice() {
                 ["list"] => Command::TrustList,
@@ -355,6 +359,72 @@ fn run_compiler(args: &[String]) -> i32 {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_store_target<'a>(layout: &'a Layout, machine: &Machine) -> Option<&'a Path> {
+    if matches!(layout.kind, layout::Kind::Platform(layout::Platform::MacOs))
+        && machine.home.as_deref().is_some_and(layout::is_macos_container_home)
+    {
+        layout.config.parent()
+    } else {
+        None
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "window"))]
+fn offer_macos_store_import(layout: &Layout, machine: &Machine) -> Result<(), String> {
+    use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+
+    let Some(target) = macos_store_target(layout, machine) else {
+        return Ok(());
+    };
+    if target.exists() {
+        return Ok(());
+    }
+    match MessageDialog::new()
+        .set_title("Import an existing F1R3Gaze profile?")
+        .set_description(
+            concat!(
+                "If you used the Developer ID or Homebrew version, select its F1R3Gaze profile folder. ",
+                "Close that version before importing. Your existing files will be left in place. ",
+                "Wallet keys stored in Keychain may still need to be exported from the old app and ",
+                "imported here. Choose No to start with a new profile."
+            ),
+        )
+        .set_buttons(MessageButtons::YesNo)
+        .show()
+    {
+        MessageDialogResult::No => return Ok(()),
+        MessageDialogResult::Yes => {}
+        _ => return Err("profile import was canceled; launch F1R3Gaze again to choose".into()),
+    }
+    let source = rfd::FileDialog::new()
+        .set_title("Select the existing io.f1r3fly.f1r3gaze profile folder")
+        .pick_folder()
+        .ok_or("profile folder selection was canceled; launch F1R3Gaze again to choose")?;
+    if let Err(error) = profile::macos_import::import_existing(&source, target) {
+        let message = format!(
+            "The profile could not be imported: {error}\n\nYour existing profile was not changed. Close the old F1R3Gaze, check the selected folder, and try again."
+        );
+        MessageDialog::new()
+            .set_title("F1R3Gaze profile import failed")
+            .set_description(&message)
+            .set_level(MessageLevel::Error)
+            .show();
+        return Err(message);
+    }
+    MessageDialog::new()
+        .set_title("F1R3Gaze profile imported")
+        .set_description(
+            concat!(
+                "Your settings and profile files were copied. Wallet addresses were copied, but ",
+                "Keychain keys may need to be exported from the old app and imported through ",
+                "Choose wallet file in this app. Verify each address before using a wallet."
+            ),
+        )
+        .show();
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (profile_arg, command) = match parse(&args) {
@@ -366,7 +436,8 @@ fn main() {
         Ok(Asked::Run { profile, command }) => (profile, command),
         Err(why) => usage(&why),
     };
-    let layout = match layout::locate(profile_arg, &Machine::detect()) {
+    let machine = Machine::detect();
+    let layout = match layout::locate(profile_arg, &machine) {
         Ok(layout) => layout,
         Err(e) => {
             eprintln!("f1r3gaze: {e}; use --profile DIR to keep F1R3Gaze's folders in DIR");
@@ -377,6 +448,41 @@ fn main() {
     if command == Command::Paths {
         print!("{}", layout.describe());
         return;
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(target) = macos_store_target(&layout, &machine) {
+        if let Err(error) = profile::macos_import::finish_completed_import(target) {
+            eprintln!("f1r3gaze: could not finish profile import cleanup: {error}");
+            std::process::exit(1);
+        }
+    }
+    if let Command::ProfileImport(source) = &command {
+        #[cfg(target_os = "macos")]
+        {
+            let Some(target) = macos_store_target(&layout, &machine) else {
+                eprintln!("f1r3gaze: profile import requires a fresh macOS App Store container");
+                std::process::exit(2);
+            };
+            if let Err(error) = profile::macos_import::import_existing(source, target) {
+                eprintln!("f1r3gaze: could not import profile: {error}");
+                std::process::exit(1);
+            }
+            println!("Imported the existing profile into the App Store container.");
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = source;
+            eprintln!("f1r3gaze: profile import is available only in the macOS App Store build");
+            std::process::exit(2);
+        }
+    }
+    #[cfg(all(target_os = "macos", feature = "window"))]
+    if matches!(command, Command::Window { .. }) {
+        if let Err(error) = offer_macos_store_import(&layout, &machine) {
+            eprintln!("f1r3gaze: {error}");
+            std::process::exit(1);
+        }
     }
     let fs = storage_fs();
     if command == Command::ProfileCheck {
@@ -423,7 +529,9 @@ fn main() {
         Command::PruneBackups { older_than } => prune(&profile, older_than),
         Command::TrustList => trust_list(&profile),
         Command::TrustForget(what) => trust_forget(&profile, &what),
-        Command::Paths | Command::ProfileCheck => unreachable!("handled before the profile opens"),
+        Command::Paths | Command::ProfileCheck | Command::ProfileImport(_) => {
+            unreachable!("handled before the profile opens")
+        }
     };
     std::process::exit(code);
 }
@@ -745,6 +853,7 @@ mod tests {
         assert_eq!(command("wallet list"), Command::Wallet(vec!["list".into()]));
         assert_eq!(command("paths"), Command::Paths);
         assert_eq!(command("profile check"), Command::ProfileCheck);
+        assert_eq!(command("profile import /old"), Command::ProfileImport(PathBuf::from("/old")));
         assert_eq!(command("profile backups"), Command::Backups);
         assert_eq!(
             command("profile backups prune --older-than 30"),
@@ -778,7 +887,8 @@ mod tests {
             ("https://a.example/ wallet list", "takes no page"),
             ("--headless x paths", "takes no page"),
             ("paths now", "no arguments"),
-            ("profile", "check, backups"),
+            ("profile", "check, import"),
+            ("--profile /p profile import /old", "check, import"),
             ("profile backups prune --older-than many", "not a whole number of days"),
             ("profile backups prune --older-than 999999999999999999", "too many days"),
             ("trust", "list, forget"),

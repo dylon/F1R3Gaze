@@ -85,6 +85,32 @@ support="$container/Data/Library/Application Support/io.f1r3fly.f1r3gaze"
   printf '%s\n' "$paths" >&2
   exit 1
 }
+
+# Import a complete, user-selected profile before the default Store profile
+# opens. The source lives inside the test container so the ad hoc sandbox can
+# read it without an interactive Powerbox grant; the customer path uses the
+# first-launch native folder panel for that grant.
+import_source="$container/Data/Documents/import-source"
+import_address=$("$exe" --profile "$import_source" wallet new 'CI imported profile')
+printf 'config survives import\n' > "$import_source/config/import-sentinel"
+printf 'state survives import\n' > "$import_source/state/import-sentinel"
+"$exe" profile import "$import_source"
+for relative in config/import-sentinel state/import-sentinel data/layout.json data/wallet/wallets.tsv; do
+  cmp "$import_source/$relative" "$support/$relative" || {
+    echo "Store profile import changed or omitted $relative" >&2
+    exit 1
+  }
+done
+"$exe" wallet list | grep -Fq "$import_address"
+if "$exe" profile import "$import_source" > "$work/import-repeat.log" 2>&1; then
+  echo 'Store profile import replaced an existing container profile' >&2
+  exit 1
+fi
+[[ -s "$import_source/data/layout.json" ]] || {
+  echo 'Store profile import removed its source profile' >&2
+  exit 1
+}
+
 compiler_dir="$container/Data/Documents/compiler-smoke"
 mkdir -p "$compiler_dir"
 printf 'Nil\n' > "$compiler_dir/example.rho"

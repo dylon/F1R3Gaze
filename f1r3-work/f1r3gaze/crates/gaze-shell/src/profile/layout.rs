@@ -174,7 +174,7 @@ fn detected_home_dir() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn is_macos_container_home(path: &Path) -> bool {
+pub fn is_macos_container_home(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == "Data")
         && path.parent().and_then(Path::parent).and_then(Path::file_name).is_some_and(|name| name == "Containers")
         && path

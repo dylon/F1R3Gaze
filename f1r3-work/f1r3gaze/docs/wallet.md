@@ -27,6 +27,16 @@ Start-up never writes, copies or removes a key file: a damaged
 one is reported, and left as it is (`docs/storage/README.md`, section 9.6).
 Nothing else writes a key anywhere.
 
+When moving from a Developer ID or Homebrew macOS app to the Mac App Store
+app, export each wallet from the old app before switching. The Store's
+first-launch profile import copies wallet addresses and labels with the rest
+of the profile, but Keychain secrets are not profile files and may be
+inaccessible to the Store signing identity. Import each exported wallet file
+with **Choose wallet file** in the Store app and verify that its address
+matches. Importing an already listed address restores its key without
+creating a duplicate wallet entry. Keep the exported files private until
+the Store app can export those wallets again.
+
 Wallets are interchangeable with **F1R3Sky**: a wallet file is the Embers
 SDK's format,
 

@@ -1305,6 +1305,7 @@ dependencies = [
  "k1ndl1ng-norm",
  "k1ndl1ng-parse",
  "keyboard-types 0.7.0",
+ "libc",
  "liblevenshtein",
  "objc2",
  "objc2-app-kit",

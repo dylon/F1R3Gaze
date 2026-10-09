@@ -7,6 +7,8 @@
 pub mod backup;
 pub mod layout;
 pub mod lock;
+#[cfg(any(target_os = "macos", all(test, unix)))]
+pub mod macos_import;
 pub mod migrate;
 pub mod reconcile;
 pub mod report;
