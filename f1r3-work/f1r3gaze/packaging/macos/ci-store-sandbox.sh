@@ -10,6 +10,8 @@ dmg="$dist/F1R3Gaze-$version-macos-universal.dmg"
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/f1r3gaze-store-sandbox.XXXXXX")
 server_pid=
+original_attached=0
+original_mount="$work/original-mount"
 installed=0
 installed_app=/Applications/F1R3Gaze.app
 bundle_id="io.f1r3fly.f1r3gaze.sandboxci.run$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')"
@@ -17,6 +19,7 @@ container="$HOME/Library/Containers/$bundle_id"
 cleanup() {
   local code=$?
   if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; fi
+  if [[ "$original_attached" == 1 ]]; then hdiutil detach "$original_mount" >/dev/null || true; fi
   if [[ "$installed" == 1 ]]; then
     sudo rm -rf "$installed_app"
     sudo pkgutil --forget "$bundle_id" >/dev/null 2>&1 || true
@@ -31,6 +34,17 @@ trap cleanup EXIT
   echo "test installation would replace an existing app: $installed_app" >&2
   exit 2
 }
+
+mkdir "$original_mount"
+hdiutil attach -nobrowse -readonly -mountpoint "$original_mount" "$dmg" >/dev/null
+original_attached=1
+printf 'Nil\n' > "$work/unsandboxed-example.rho"
+original_compiler="$original_mount/F1R3Gaze.app/Contents/MacOS/f1r3c"
+"$original_compiler" compile "$work/unsandboxed-example.rho" -o "$work/unsandboxed-example.knf"
+[[ -s "$work/unsandboxed-example.knf" ]] || { echo 'DMG f1r3c did not compile a source file' >&2; exit 1; }
+"$original_compiler" inspect "$work/unsandboxed-example.knf" | grep -Fxq 'Nil'
+hdiutil detach "$original_mount" >/dev/null
+original_attached=0
 
 bash "$here/store-package.sh" "$version" "$dist" "$work/output" "$bundle_id"
 app="$work/output/F1R3Gaze.app"
@@ -74,7 +88,16 @@ support="$container/Data/Library/Application Support/io.f1r3fly.f1r3gaze"
 compiler_dir="$container/Data/Documents/compiler-smoke"
 mkdir -p "$compiler_dir"
 printf 'Nil\n' > "$compiler_dir/example.rho"
-"$app/Contents/MacOS/f1r3c" compile "$compiler_dir/example.rho" -o "$compiler_dir/example.knf"
+if ! "$app/Contents/MacOS/f1r3c" compile "$compiler_dir/example.rho" \
+    -o "$compiler_dir/example.knf" > "$work/compiler.log" 2>&1; then
+  cat "$work/compiler.log" >&2
+  sleep 2
+  for crash_report in "$HOME/Library/Logs/DiagnosticReports"/f1r3c*; do
+    if [[ -f "$crash_report" ]]; then head -n 100 "$crash_report" >&2; break; fi
+  done
+  echo 'sandboxed f1r3c failed to compile a source file' >&2
+  exit 1
+fi
 [[ -s "$compiler_dir/example.knf" ]] || { echo 'sandboxed f1r3c did not create its output' >&2; exit 1; }
 "$app/Contents/MacOS/f1r3c" inspect "$compiler_dir/example.knf" | grep -Fxq 'Nil'
 python3 - "$exe" "$work/headless.log" gaze://newtab <<'PY'
