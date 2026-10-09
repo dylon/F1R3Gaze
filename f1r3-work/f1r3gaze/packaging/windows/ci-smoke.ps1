@@ -117,7 +117,9 @@ try {
     Start-Sleep -Milliseconds 100
   }
   if (-not $delivered) { throw 'Installed browser did not save the delivered URL in its session' }
-  Stop-Process -Id $windowProcess.Id -Force
+  if (-not $windowProcess.HasExited) {
+    Stop-Process -Id $windowProcess.Id -Force -ErrorAction SilentlyContinue
+  }
   if (-not $windowProcess.WaitForExit(5000)) { throw 'Installed browser did not stop after termination' }
   $windowProcess = $null
 
