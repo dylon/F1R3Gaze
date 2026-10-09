@@ -71,6 +71,12 @@ support="$container/Data/Library/Application Support/io.f1r3fly.f1r3gaze"
   printf '%s\n' "$paths" >&2
   exit 1
 }
+compiler_dir="$container/Data/Documents/compiler-smoke"
+mkdir -p "$compiler_dir"
+printf 'Nil\n' > "$compiler_dir/example.rho"
+"$app/Contents/MacOS/f1r3c" compile "$compiler_dir/example.rho" -o "$compiler_dir/example.knf"
+[[ -s "$compiler_dir/example.knf" ]] || { echo 'sandboxed f1r3c did not create its output' >&2; exit 1; }
+"$app/Contents/MacOS/f1r3c" inspect "$compiler_dir/example.knf" | grep -Fxq 'Nil'
 python3 - "$exe" "$work/headless.log" gaze://newtab <<'PY'
 import subprocess
 import sys
