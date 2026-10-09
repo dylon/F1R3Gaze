@@ -46,8 +46,16 @@ original_gaze="$original_mount/F1R3Gaze.app/Contents/MacOS/f1r3gaze"
 "$original_compiler" compile "$work/unsandboxed-example.rho" -o "$work/unsandboxed-example.knf"
 [[ -s "$work/unsandboxed-example.knf" ]] || { echo 'DMG f1r3c did not compile a source file' >&2; exit 1; }
 "$original_compiler" inspect "$work/unsandboxed-example.knf" | grep -Fxq 'Nil'
-old_profile="$work/old-profile"
-"$original_gaze" --profile "$old_profile" --headless gaze://newtab --timeout 5 > "$work/old-profile.log" 2>&1
+old_home="$work/old-home"
+mkdir "$old_home"
+old_profile="$old_home/Library/Application Support/io.f1r3fly.f1r3gaze"
+old_paths=$(HOME="$old_home" "$original_gaze" paths)
+[[ "$old_paths" == *"$old_profile/config"* ]] || {
+  echo 'unsandboxed DMG did not select the isolated default macOS profile' >&2
+  printf '%s\n' "$old_paths" >&2
+  exit 1
+}
+HOME="$old_home" "$original_gaze" --headless gaze://newtab --timeout 5 > "$work/old-profile.log" 2>&1
 [[ -s "$old_profile/data/layout.json" ]] || {
   echo 'unsandboxed DMG did not create an existing profile' >&2
   cat "$work/old-profile.log" >&2
@@ -100,8 +108,13 @@ support="$container/Data/Library/Application Support/io.f1r3fly.f1r3gaze"
 # Drive the real first-launch native dialogs on the GitHub macOS desktop. A
 # profile made by the unsandboxed DMG lives outside the Store container; only
 # the folder picker can grant this sandboxed process access to it.
-"$exe" > "$work/dialog.log" 2>&1 &
-dialog_pid=$!
+open --stderr "$work/dialog.log" -a "$app"
+for ((attempt = 0; attempt < 100; attempt++)); do
+  dialog_pid=$(pgrep -f "$exe" | head -n 1 || true)
+  [[ -n "$dialog_pid" ]] && break
+  sleep 0.2
+done
+[[ -n "$dialog_pid" ]] || { echo 'Launch Services did not start the Store app' >&2; exit 1; }
 if ! osascript - "$dialog_pid" "$old_profile" <<'APPLESCRIPT'
 on run arguments
   set appPid to item 1 of arguments as integer
@@ -116,6 +129,7 @@ on run arguments
       delay 0.2
     end repeat
     if appProcess is missing value then error "sandboxed app process did not appear"
+    set frontmost of appProcess to true
     -- rfd shows an unparented first-launch message through CoreFoundation's
     -- user-notification service, so its Yes button is not in the app's UI tree.
     -- Return accepts the default Yes button. The AppKit folder panel then
@@ -165,7 +179,11 @@ fi
 cmp "$old_profile/config/import-sentinel" "$support/config/import-sentinel"
 [[ -s "$old_profile/data/layout.json" ]] || { echo 'native import removed its source' >&2; exit 1; }
 kill "$dialog_pid" 2>/dev/null || true
-wait "$dialog_pid" 2>/dev/null || true
+for ((attempt = 0; attempt < 50; attempt++)); do
+  kill -0 "$dialog_pid" 2>/dev/null || break
+  sleep 0.1
+done
+if kill -0 "$dialog_pid" 2>/dev/null; then kill -KILL "$dialog_pid" 2>/dev/null || true; fi
 dialog_pid=
 rm -rf "$support"
 
