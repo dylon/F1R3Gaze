@@ -42,6 +42,7 @@ parts:
       - libxi6
       - libxcb1
       - libvulkan1
+      - zenity
     override-build: |
       install -Dm755 "$CRAFT_PART_SRC/f1r3gaze" "$CRAFT_PART_INSTALL/usr/bin/f1r3gaze"
       install -Dm755 "$CRAFT_PART_SRC/f1r3c" "$CRAFT_PART_INSTALL/usr/bin/f1r3c"

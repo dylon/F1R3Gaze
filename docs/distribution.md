@@ -103,6 +103,8 @@ sudo snap remove f1r3gaze
 
 The Flatpak bundle declares its runtime repository in the bundle; Flatpak may fetch that runtime during installation. The local Snap is unsigned, so `--dangerous` is for development and [does not establish a Store trust or automatic update path](https://snapcraft.io/docs/explanation/snap-development/install-modes/). Store-based installs and refreshes become available after publication.
 
+The Wallet panel opens a native file picker for imports and a folder picker for exports. On Linux, [the dialog library](https://docs.rs/rfd/0.17.2/rfd/) uses an XDG desktop portal with a matching file-dialog backend, or Zenity as a fallback. DEB and RPM packages recommend the portal and Zenity, Arch lists them as optional dependencies, and Snap stages Zenity. A portable tarball or AppImage needs one of these dialog paths available on the host. The command-line wallet import/export commands accept file paths directly and do not open a dialog.
+
 Once the matching listings are published to Flathub and the Snap Store, those stores provide the update channel. These commands are for the published listings, not the local test bundles:
 
 ```sh

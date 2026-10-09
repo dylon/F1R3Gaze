@@ -14,6 +14,8 @@ Requires:       fontconfig
 Requires:       libxkbcommon
 Requires:       vulkan-loader
 %endif
+Recommends:     xdg-desktop-portal
+Recommends:     zenity
 
 %description
 F1R3Gaze renders sites with an in-process RSpace. F1R3Node is an optional,

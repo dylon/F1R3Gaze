@@ -7,7 +7,11 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/F1R3FLY-io/F1R3Gaze'
 license=('Apache-2.0')
 depends=('glibc' 'gcc-libs' 'fontconfig' 'libxkbcommon' 'vulkan-icd-loader' 'hicolor-icon-theme')
-optdepends=('f1r3node: optional separately deployed node service')
+optdepends=(
+  'f1r3node: optional separately deployed node service'
+  'xdg-desktop-portal: native wallet file dialogs with a desktop portal backend'
+  'zenity: wallet file dialogs when a desktop portal is unavailable'
+)
 source=()
 sha256sums=()
 options=('!debug')

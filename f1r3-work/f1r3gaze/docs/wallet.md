@@ -15,9 +15,15 @@ it is). `wallet/wallets.tsv` lists addresses and labels, and
 `wallet/wallet-active` names the payer.
 
 A key leaves the keystore only when you export it: `f1r3gaze wallet export
-ADDRESS FILE` writes the file you name (`0600`), and the Wallet panel's
-**Export** writes `wallet/exports/<address>.json` in the data folder
-(`0600`). Start-up never writes, copies or removes a key file: a damaged
+ADDRESS FILE` writes the file you name (`0600`). In the Wallet panel,
+**Export** asks you to choose a folder, then writes `<address>.json` there
+with owner-only permissions (`0600` on Unix). The folder selection lets a
+sandboxed macOS app write the export outside its container without broad
+disk access. **Choose wallet file** opens the system file picker and imports
+the selected F1R3Sky file; the text field accepts a pasted hex key or file
+contents. [Apple's sandbox file-access guide](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)
+explains why the native panel grants access to the selected file or folder.
+Start-up never writes, copies or removes a key file: a damaged
 one is reported, and left as it is (`docs/storage/README.md`, section 9.6).
 Nothing else writes a key anywhere.
 

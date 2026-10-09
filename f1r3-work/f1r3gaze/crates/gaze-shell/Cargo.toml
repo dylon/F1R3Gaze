@@ -12,7 +12,7 @@ path = "src/main.rs"
 [features]
 default = ["window"]
 # The windowed browser (winit + vello). Without it: headless tools only.
-window = ["dep:blitz-shell", "dep:anyrender_vello", "dep:anyrender", "dep:winit"]
+window = ["dep:blitz-shell", "dep:anyrender_vello", "dep:anyrender", "dep:winit", "dep:rfd"]
 os-keyring = ["gaze-shard/os-keyring"]
 # Per-frame timings on stdout, for profiling the render loop: Blitz's resolve
 # phases, Vello's frame phases, and the window's own line per frame
@@ -34,6 +34,7 @@ blitz-shell = { workspace = true, optional = true, features = ["clipboard"] }
 anyrender_vello = { workspace = true, optional = true }
 anyrender = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
+rfd = { version = "0.17.1", default-features = false, features = ["xdg-portal"], optional = true }
 gaze-broker.workspace = true
 gaze-dom-blitz.workspace = true
 gaze-exec.workspace = true
