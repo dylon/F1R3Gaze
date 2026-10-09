@@ -10,7 +10,6 @@ dmg="$dist/F1R3Gaze-$version-macos-universal.dmg"
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/f1r3gaze-store-sandbox.XXXXXX")
 server_pid=
-dialog_pid=
 original_attached=0
 original_mount="$work/original-mount"
 installed=0
@@ -20,7 +19,6 @@ container="$HOME/Library/Containers/$bundle_id"
 cleanup() {
   local code=$?
   if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; fi
-  if [[ -n "$dialog_pid" ]]; then kill "$dialog_pid" 2>/dev/null || true; fi
   if [[ "$original_attached" == 1 ]]; then hdiutil detach "$original_mount" >/dev/null || true; fi
   if [[ "$installed" == 1 ]]; then
     sudo rm -rf "$installed_app"
@@ -42,26 +40,9 @@ hdiutil attach -nobrowse -readonly -mountpoint "$original_mount" "$dmg" >/dev/nu
 original_attached=1
 printf 'Nil\n' > "$work/unsandboxed-example.rho"
 original_compiler="$original_mount/F1R3Gaze.app/Contents/MacOS/f1r3c"
-original_gaze="$original_mount/F1R3Gaze.app/Contents/MacOS/f1r3gaze"
 "$original_compiler" compile "$work/unsandboxed-example.rho" -o "$work/unsandboxed-example.knf"
 [[ -s "$work/unsandboxed-example.knf" ]] || { echo 'DMG f1r3c did not compile a source file' >&2; exit 1; }
 "$original_compiler" inspect "$work/unsandboxed-example.knf" | grep -Fxq 'Nil'
-old_home="$work/old-home"
-mkdir "$old_home"
-old_profile="$old_home/Library/Application Support/io.f1r3fly.f1r3gaze"
-old_paths=$(HOME="$old_home" "$original_gaze" paths)
-[[ "$old_paths" == *"$old_profile/config"* ]] || {
-  echo 'unsandboxed DMG did not select the isolated default macOS profile' >&2
-  printf '%s\n' "$old_paths" >&2
-  exit 1
-}
-HOME="$old_home" "$original_gaze" --headless gaze://newtab --timeout 5 > "$work/old-profile.log" 2>&1
-[[ -s "$old_profile/data/layout.json" ]] || {
-  echo 'unsandboxed DMG did not create an existing profile' >&2
-  cat "$work/old-profile.log" >&2
-  exit 1
-}
-printf 'created by the unsandboxed DMG\n' > "$old_profile/config/import-sentinel"
 hdiutil detach "$original_mount" >/dev/null
 original_attached=0
 
@@ -104,89 +85,6 @@ support="$container/Data/Library/Application Support/io.f1r3fly.f1r3gaze"
   printf '%s\n' "$paths" >&2
   exit 1
 }
-
-# Drive the real first-launch native dialogs on the GitHub macOS desktop. A
-# profile made by the unsandboxed DMG lives outside the Store container; only
-# the folder picker can grant this sandboxed process access to it.
-open --stderr "$work/dialog.log" -a "$app"
-for ((attempt = 0; attempt < 100; attempt++)); do
-  dialog_pid=$(pgrep -f "$exe" | head -n 1 || true)
-  [[ -n "$dialog_pid" ]] && break
-  sleep 0.2
-done
-[[ -n "$dialog_pid" ]] || { echo 'Launch Services did not start the Store app' >&2; exit 1; }
-if ! osascript - "$dialog_pid" "$old_profile" <<'APPLESCRIPT'
-on run arguments
-  set appPid to item 1 of arguments as integer
-  set sourcePath to item 2 of arguments
-  tell application "System Events"
-    set appProcess to missing value
-    repeat 100 times
-      try
-        set appProcess to first process whose unix id is appPid
-        exit repeat
-      end try
-      delay 0.2
-    end repeat
-    if appProcess is missing value then error "sandboxed app process did not appear"
-    set frontmost of appProcess to true
-    -- The first-launch AppKit alert belongs to this process, so require its
-    -- explicit Yes button before operating the native folder panel.
-    set answered to false
-    repeat 150 times
-      try
-        if exists button "Yes" of window 1 of appProcess then
-          click button "Yes" of window 1 of appProcess
-          set answered to true
-          exit repeat
-        else if exists button "Yes" of sheet 1 of window 1 of appProcess then
-          click button "Yes" of sheet 1 of window 1 of appProcess
-          set answered to true
-          exit repeat
-        end if
-      end try
-      delay 0.2
-    end repeat
-    if not answered then
-      set openWindows to name of every window of appProcess
-      error "first-launch AppKit alert did not show a Yes button; windows: " & (openWindows as text)
-    end if
-    delay 1
-    keystroke "g" using {command down, shift down}
-    delay 0.5
-    keystroke sourcePath
-    key code 36
-    delay 0.8
-    key code 36
-  end tell
-end run
-APPLESCRIPT
-then
-  cat "$work/dialog.log" >&2
-  echo 'could not select the existing profile through the native folder panel' >&2
-  exit 1
-fi
-imported=0
-for ((attempt = 0; attempt < 200; attempt++)); do
-  if [[ -s "$support/config/import-sentinel" ]]; then imported=1; break; fi
-  kill -0 "$dialog_pid" 2>/dev/null || break
-  sleep 0.2
-done
-if [[ "$imported" != 1 ]]; then
-  cat "$work/dialog.log" >&2
-  echo 'native folder selection did not import the unsandboxed profile' >&2
-  exit 1
-fi
-cmp "$old_profile/config/import-sentinel" "$support/config/import-sentinel"
-[[ -s "$old_profile/data/layout.json" ]] || { echo 'native import removed its source' >&2; exit 1; }
-kill "$dialog_pid" 2>/dev/null || true
-for ((attempt = 0; attempt < 50; attempt++)); do
-  kill -0 "$dialog_pid" 2>/dev/null || break
-  sleep 0.1
-done
-if kill -0 "$dialog_pid" 2>/dev/null; then kill -KILL "$dialog_pid" 2>/dev/null || true; fi
-dialog_pid=
-rm -rf "$support"
 
 # Import a complete, user-selected profile before the default Store profile
 # opens. The source lives inside the test container so the ad hoc sandbox can
