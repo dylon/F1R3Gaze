@@ -116,6 +116,37 @@ PY
 }
 grep -Fq '<h1>F1R3Gaze</h1>' "$work/headless.log"
 
+# A portable profile remains usable when its root is inside the app's
+# container. Exercise the actual sandboxed binary, not just layout tests.
+portable="$container/Data/Documents/portable-profile"
+portable_paths=$("$exe" --profile "$portable" paths)
+for class in config data state cache runtime; do
+  grep -Fxq "$class"$'\t'"$portable/$class" <<< "$portable_paths" || {
+    echo "sandboxed --profile placed $class outside the selected root" >&2
+    printf '%s\n' "$portable_paths" >&2
+    exit 1
+  }
+done
+python3 - "$exe" "$portable" "$work/portable.log" <<'PY'
+import subprocess
+import sys
+
+with open(sys.argv[3], "wb") as output:
+    subprocess.run(
+        [sys.argv[1], "--profile", sys.argv[2], "--headless", "gaze://newtab", "--timeout", "5"],
+        stdout=output,
+        stderr=subprocess.STDOUT,
+        check=True,
+        timeout=60,
+    )
+PY
+[[ -s "$portable/data/layout.json" ]] || {
+  echo "sandboxed --profile did not create its profile marker" >&2
+  cat "$work/portable.log" >&2
+  exit 1
+}
+grep -Fq '<h1>F1R3Gaze</h1>' "$work/portable.log"
+
 mkdir "$work/site"
 printf '<html><head><title>CI sandbox page</title></head><body><h1>network-ready</h1></body></html>\n' > "$work/site/index.html"
 python3 -u "$here/../linux/serve-smoke-page.py" "$work/site" "$work/port" > "$work/server.log" 2>&1 &
