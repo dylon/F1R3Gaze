@@ -38,7 +38,11 @@ EOF
     # pacman expands $arch, not this shell.
     # shellcheck disable=SC2016
     printf '\n[f1r3gaze]\nSigLevel = Required DatabaseRequired\nServer = file://%s/arch/$arch\n' "$repo" >> /etc/pacman.conf
-    pacman -Sy --noconfirm f1r3gaze
+    pacman -Sy --noconfirm f1r3gaze 2>&1 | tee /tmp/f1r3gaze-pacman-install.log
+    if grep -Fq 'signature format error' /tmp/f1r3gaze-pacman-install.log; then
+      echo 'pacman reported an unsupported package signature format' >&2
+      exit 1
+    fi
     [[ $(pacman -Q f1r3gaze) == "f1r3gaze $version-1" ]]
     # Refresh only our signed files index; the image's upstream mirrors are
     # unrelated to this check and may be unavailable during a release.

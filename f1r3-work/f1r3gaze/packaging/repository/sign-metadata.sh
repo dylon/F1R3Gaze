@@ -32,25 +32,28 @@ done < <(find "$tree/rpm" -type f -name '*.rpm' -print0)
 
 sign_detached() {
   local input=$1 output=$2
-  gpg --batch --yes --armor --local-user "$key" --detach-sign \
+  shift 2
+  gpg --batch --yes "$@" --local-user "$key" --detach-sign \
     --output "$output" "$input"
   gpg --batch --verify "$output" "$input"
 }
 
 if [[ -f "$tree/apt/dists/stable/Release" ]]; then
   release=$tree/apt/dists/stable/Release
-  sign_detached "$release" "$release.gpg"
+  sign_detached "$release" "$release.gpg" --armor
   gpg --batch --yes --armor --local-user "$key" --clearsign \
     --output "${release%Release}InRelease" "$release"
   gpg --batch --verify "${release%Release}InRelease"
 fi
 while IFS= read -r -d '' database; do
+  # pacman expects a binary OpenPGP packet in a detached .sig file. An
+  # ASCII-armored signature verifies with gpg but emits a format error there.
   sign_detached "$database" "${database%.tar.gz}.sig"
 done < <(find "$tree/arch" -type f \( -name '*.db.tar.gz' -o -name '*.files.tar.gz' \) -print0 2>/dev/null)
 while IFS= read -r -d '' package; do
   sign_detached "$package" "$package.sig"
 done < <(find "$tree/arch" -type f -name '*.pkg.tar.zst' -print0 2>/dev/null)
 while IFS= read -r -d '' metadata; do
-  sign_detached "$metadata" "$metadata.asc"
+  sign_detached "$metadata" "$metadata.asc" --armor
 done < <(find "$tree/rpm" -type f -name 'repomd.xml' -print0 2>/dev/null)
 echo "signed repository metadata; run promotion_check.py before publication"
