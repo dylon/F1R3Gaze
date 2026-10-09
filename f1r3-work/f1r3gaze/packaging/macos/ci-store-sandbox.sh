@@ -147,6 +147,23 @@ PY
 }
 grep -Fq '<h1>F1R3Gaze</h1>' "$work/portable.log"
 
+# The Store app must be able to round-trip a wallet through a file it owns.
+# Keep the private key out of CI logs and remove it before the container cleanup.
+wallet_address=$("$exe" --profile "$portable" wallet new 'CI sandbox')
+[[ -n "$wallet_address" ]] || { echo 'sandboxed wallet creation returned no address' >&2; exit 1; }
+wallet_file="$portable/wallet-export.key"
+"$exe" --profile "$portable" wallet export "$wallet_address" "$wallet_file" > "$work/wallet-export.log"
+[[ -s "$wallet_file" ]] || { echo 'sandboxed wallet export did not write a key file' >&2; exit 1; }
+"$exe" --profile "$portable" wallet remove "$wallet_address"
+imported_address=$("$exe" --profile "$portable" wallet import "$wallet_file" 'CI imported')
+[[ "$imported_address" == "$wallet_address" ]] || {
+  echo 'sandboxed wallet import did not recover the exported address' >&2
+  exit 1
+}
+"$exe" --profile "$portable" wallet list | grep -Fq "$wallet_address"
+"$exe" --profile "$portable" wallet remove "$wallet_address"
+rm -f "$wallet_file"
+
 mkdir "$work/site"
 printf '<html><head><title>CI sandbox page</title></head><body><h1>network-ready</h1></body></html>\n' > "$work/site/index.html"
 python3 -u "$here/../linux/serve-smoke-page.py" "$work/site" "$work/port" > "$work/server.log" 2>&1 &
