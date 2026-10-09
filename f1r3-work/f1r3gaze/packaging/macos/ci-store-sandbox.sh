@@ -21,7 +21,8 @@ cleanup() {
     sudo rm -rf "$installed_app"
     sudo pkgutil --forget "$bundle_id" >/dev/null 2>&1 || true
   fi
-  rm -rf "$work" "$container"
+  sudo rm -rf "$work"
+  rm -rf "$container"
   exit "$code"
 }
 trap cleanup EXIT
@@ -122,6 +123,9 @@ with open(sys.argv[2], "wb") as output:
     )
 PY
 grep -Fq '<h1>network-ready</h1>' "$work/network.log"
+# Installer relocates a bundle when it finds the same identifier elsewhere.
+# Remove the inspected build copy so this exercises a fresh /Applications install.
+rm -rf "$app"
 installed=1
 sudo installer -pkg "$pkg" -target /
 [[ -x "$installed_app/Contents/MacOS/f1r3gaze" ]] || { echo 'Store package did not install Gaze' >&2; exit 1; }
