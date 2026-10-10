@@ -125,6 +125,16 @@ fn macos_uses_the_bundle_id_its_caches_and_tmpdir() {
     assert_eq!((l.runtime.clone(), l.runtime_is_fallback), (support.join("state/runtime"), true));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_container_home_is_distinct_from_an_unsandboxed_home() {
+    assert!(is_macos_container_home(Path::new(
+        "/Users/u/Library/Containers/io.f1r3fly.f1r3gaze/Data"
+    )));
+    assert!(!is_macos_container_home(Path::new("/Users/u")));
+    assert!(!is_macos_container_home(Path::new("/tmp/isolated-test-home")));
+}
+
 #[test]
 fn windows_prefers_known_folders_then_the_environment() {
     let roaming = r"C:\Users\u\AppData\Roaming";
@@ -253,7 +263,8 @@ fn the_skeleton_and_the_description_cover_every_root() {
         }
     }
     let description = l.describe();
-    assert!(description.starts_with("config\t/p/config\ndata\t/p/data\n"), "{description}");
+    let expected = format!("config\t{}\ndata\t{}\n", l.config.display(), l.data.display());
+    assert!(description.starts_with(&expected), "{description}");
     assert!(description.contains("legacy\t/p\n"));
 }
 
@@ -275,5 +286,6 @@ fn a_profile_argument_is_a_portable_root_made_absolute() {
     assert_eq!(l.kind, Kind::Portable(root.clone()));
     assert_eq!(l.config, root.join("config"));
     let l = locate(Some(PathBuf::from("/abs/profile")), &m).expect("a layout");
-    assert_eq!(l.data, Path::new("/abs/profile/data"));
+    let root = std::path::absolute("/abs/profile").expect("the rooted path");
+    assert_eq!(l.data, root.join("data"));
 }

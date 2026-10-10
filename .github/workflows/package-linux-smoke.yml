@@ -1,0 +1,271 @@
+name: Native Linux package smoke test
+
+on:
+  push:
+    branches: [feature/additional-packages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: f1r3-work/f1r3gaze
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      value: ${{ steps.read.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  source_checks:
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --user -r packaging/winget/requirements.txt
+      - run: packaging/verify-source.sh
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.95" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: f1r3-work/f1r3gaze }
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libvulkan-dev
+      - name: Build native binaries and test system theme selection
+        run: |
+          cargo build --locked --release -p gaze-shell -p f1r3c
+          bash packaging/verify-system-theme.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-smoke-binaries-${{ matrix.arch }}
+          path: |
+            f1r3-work/f1r3gaze/target/release/f1r3gaze
+            f1r3-work/f1r3gaze/target/release/f1r3c
+      - name: Build and launch DEB, tarball and AppImage
+        run: |
+          packaging/linux/build.sh --format deb --version "$VERSION" --out dist
+          packaging/linux/build.sh --format tar --version "$VERSION" --out dist
+          packaging/linux/fetch-appimagetool.sh "$RUNNER_TEMP/appimagetool"
+          APPIMAGETOOL=packaging/linux/appimagetool-wrapper.sh \
+            APPIMAGETOOL_IMAGE="$RUNNER_TEMP/appimagetool/appimagetool-${{ matrix.arch }}.AppImage" \
+            APPIMAGETOOL_RUNTIME_FILE="$RUNNER_TEMP/appimagetool/runtime-${{ matrix.arch }}" \
+            packaging/linux/build.sh --format appimage --version "$VERSION" --out dist
+          dpkg-deb --field "dist/f1r3gaze_${VERSION}_$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64).deb"
+          bash packaging/linux/ci-portable.sh "$VERSION"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-packages-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*
+
+  debian_lifecycle:
+    needs: [version, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:12" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:12" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:13" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:13" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:22.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:22.04" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:26.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:26.04" }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-smoke-packages-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+          path: f1r3-work/f1r3gaze/dist
+      - name: Install older DEB, upgrade, launch and remove on target distro
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            -v "$PWD:/src" -w /src ${{ matrix.image }} \
+            bash packaging/linux/ci-deb.sh "$VERSION"
+
+  arch:
+    needs: [version, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64, image: "archlinux:base-devel" }
+          - { runner: ubuntu-22.04-arm, arch: aarch64, image: "menci/archlinuxarm:base-devel" }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-smoke-binaries-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - run: chmod +x target/release/f1r3gaze target/release/f1r3c
+      - name: Build Arch package, upgrade, launch and remove
+        run: |
+          docker run --rm --platform "linux/$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64)" \
+            -v "$GITHUB_WORKSPACE:/src" -w /src/f1r3-work/f1r3gaze ${{ matrix.image }} \
+            packaging/linux/ci-arch.sh "$VERSION"
+          test -s "dist/f1r3gaze-$VERSION-1-${{ matrix.arch }}.pkg.tar.zst"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-arch-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.pkg.tar.zst
+
+  rpm:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04, image: "rockylinux/rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux/rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04, image: "opensuse/leap:16.0", channel: opensuse16 }
+          - { runner: ubuntu-22.04-arm, image: "opensuse/leap:16.0", channel: opensuse16 }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - name: Install checkout prerequisites
+        working-directory: /
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf -y install git tar gzip
+          else
+            zypper --non-interactive install git tar gzip
+          fi
+      - uses: actions/checkout@v4
+      - name: Build RPM, upgrade, launch and remove
+        run: packaging/linux/ci-rpm.sh "$VERSION"
+      - run: rpm -qip dist/*.rpm
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-rpm-${{ matrix.channel }}-${{ runner.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.rpm
+
+  flatpak:
+    needs: [version, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-smoke-binaries-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder xvfb xauth xdotool mesa-vulkan-drivers
+      - name: Build, install, exercise sandbox and remove Flatpak
+        run: bash packaging/flatpak/ci-smoke.sh "$VERSION"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-flatpak-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.flatpak
+
+  snap:
+    needs: [version, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64, binary_arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64, binary_arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-smoke-binaries-${{ matrix.binary_arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - name: Stage Snapcraft source
+        run: packaging/snap/stage.sh target/release dist/snap-input "$VERSION"
+      - run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool mesa-vulkan-drivers
+      - uses: snapcore/action-build@v1
+        id: snapcraft
+        with:
+          path: f1r3-work/f1r3gaze/dist/snap-input
+      - name: Install, exercise sandbox and remove snap
+        run: bash packaging/snap/ci-smoke.sh '${{ steps.snapcraft.outputs.snap }}' "$VERSION"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-snap-${{ matrix.arch }}
+          path: ${{ steps.snapcraft.outputs.snap }}
+
+  repository_staging:
+    needs: [version, linux, arch, rpm]
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - name: Install repository index tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-smoke-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-smoke-arch-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-smoke-rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - name: Stage and verify every repository index
+        run: |
+          python packaging/repository/stage.py --dist dist --out repository-staging --version "$VERSION" --require-complete
+          python packaging/repository/verify-staging.py --tree repository-staging --version "$VERSION"
+      - name: Sign a private copy and verify repository signatures
+        run: bash packaging/repository/ci-signing-smoke.sh dist "$VERSION"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-repository-staging
+          path: f1r3-work/f1r3gaze/repository-staging

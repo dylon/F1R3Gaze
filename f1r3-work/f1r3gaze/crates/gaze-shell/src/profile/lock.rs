@@ -30,7 +30,9 @@
 use super::layout::Layout;
 use super::report::{Event, EventKind, Report, Severity};
 use crate::display::utc_date;
-use gaze_fs::{Fs, PRIVATE_FILE_MODE, Perm, StdFs};
+use gaze_fs::{Fs, Perm, StdFs};
+#[cfg(unix)]
+use gaze_fs::PRIVATE_FILE_MODE;
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Seek, SeekFrom, Write};

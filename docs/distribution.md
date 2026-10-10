@@ -1,0 +1,310 @@
+# F1R3Gaze distribution design and build guide
+
+## Components and compatibility
+
+F1R3Gaze contains the RSpace it needs to execute f1r3lang inside the application. The `f1r3c` command is shipped alongside the browser. F1R3Node is a separate, optional service: a customer does not need it merely to launch Gaze. Embers is not installed by any Gaze package. The release catalog currently lists only Gaze. A future organization installer may present several independently upgradable systems after each has an installer and the catalog records the exact combinations tested together.
+
+Linux package managers install declared system libraries and can express versioned package dependencies. macOS DMGs are app delivery images, while component PKGs can be chained by a distribution PKG. Windows MSIs are independent components; a WiX Burn bootstrapper can select and chain them. The templates in `packaging/macos/organization-distribution.xml.in` and `packaging/windows/organization.wxs.in` deliberately expose only Gaze. The selector validator rejects an unknown system or an untested pair.
+
+![Artifact and promotion flow](packaging-flow.svg)
+
+## Artifact matrix
+
+| Target | Artifact | Builder | Current state |
+| --- | --- | --- | --- |
+| Debian 12+/Ubuntu 22.04+ x86_64, arm64 | `.deb` | Ubuntu 22.04 runner; x86_64 build available locally | Both architectures passed lower-version upgrade, launch and removal on all ten distro targets |
+| Arch x86_64; Arch Linux ARM aarch64 | `.pkg.tar.zst` | `makepkg` on matching architecture | Both architectures passed build, lower-version upgrade, launch and removal in fork CI |
+| Fedora 43/44, Enterprise Linux 9/10, openSUSE Leap 16 | `.rpm` | Matching distro and architecture container | All ten distro/architecture jobs passed build, lower-version upgrade, launch and removal in fork CI |
+| Linux x86_64, aarch64 | `.tar.gz` and `.AppImage` | Matching Linux runner | Both architectures built and launched in fork CI |
+| macOS Intel and Apple Silicon | universal `.dmg` and component `.pkg` | macOS 14 ARM runner; macOS 15 Intel installer runner | Unsigned build, DMG mount, PKG upgrade and installed URL delivery passed on both CPU families; signing and notarization await credentials |
+| Windows 11 x64 | `.msi` and portable `.zip` | Windows Server 2022 runner; local cross-build for ZIP | Unsigned build, MSI major upgrade, installed running-app URL delivery, removal and ZIP launch passed; Windows 11 device pending |
+| Linux sandbox channels | `.flatpak` and `.snap` | Matching Linux runners | Both architectures pass install, page/network/file access, URL desktop metadata, visible X11 window startup with Vulkan selected, and removal in fork CI |
+
+The branch smoke workflows build the actual distribution payloads. Linux jobs build DEB, tarball and AppImage on native x86_64 and ARM64 runners, then install a lower-version DEB, upgrade to the release, launch and remove it in Debian 12/13 and Ubuntu 22.04/24.04/26.04 containers. Separate native jobs build, upgrade, launch and remove Arch and Arch Linux ARM packages and Fedora 43/44, Rocky Linux 9/10 and openSUSE Leap 16 RPMs. The older-version fixtures reuse the release payload while changing package metadata; they test package-manager transactions, while a future released older binary can test data migration. Flatpak and Snap jobs build and install on each native architecture, run both packaged commands, execute a built-in page, fetch a deterministic loopback page, compile a source file, inspect installed URL-handler metadata and open a visible X11 window with Vulkan selected before removal. The installer workflow mounts the macOS DMG, upgrades its component PKG, installs and removes the Windows MSI after an upgrade, checks the portable ZIP, exercises registered URL delivery, and runs Intel Mac theme, CLI and installer jobs. The tag release workflow runs the same smoke scripts before its draft-publication job can run.
+
+`packaging/verify-system-theme.sh` runs in the native Linux x86_64/ARM64, macOS Apple Silicon/Intel and Windows x64 build jobs, including tag releases. It checks Linux portal queries with both dark and light replies, the macOS/Windows window-event source, light/dark/unspecified preference transitions, the browser's displayed palette, explicit theme overrides, title-bar behavior and stale labels after an OS theme change. These unit tests use controlled preference reports. The macOS and Windows jobs also run `native_system_theme` through the real winit event loop and compare its detected appearance with the CI user's macOS global setting or Windows app setting. That live check tests whichever preference the runner currently uses; the controlled tests exercise both preferences on every supported platform. Neither check changes the runner's desktop setting. A customer-device test of live OS setting changes remains separate.
+
+The host on which this guide was written is Arch Linux x86_64. It has `makepkg`, `dpkg-deb`, `repo-add`, and `dpkg-scanpackages`. It does not have Apple's `hdiutil` or a Microsoft SDK link tool. An offline Windows-target Cargo check reached `ring` and then stopped because `lib.exe` was absent; that is a toolchain limitation, not evidence about the Windows application binary. Apple describes native `hdiutil`, code signing and notarization in its [macOS distribution guide](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution). GitHub documents the [native runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) used by the release workflow.
+
+## Build on the current machine
+
+Build the two Rust executables and then package them:
+
+```sh
+cd f1r3-work/f1r3gaze
+cargo build --locked --release -p gaze-shell -p f1r3c
+packaging/linux/build.sh --format arch --version 0.1.0 --out dist
+packaging/linux/build.sh --format deb --version 0.1.0 --out dist
+packaging/linux/build.sh --format tar --version 0.1.0 --out dist
+packaging/verify-source.sh
+```
+
+`build.sh` accepts `--bin DIR` to package a different native build. It compares the requested version with `[workspace.package]` in Cargo and compares both ELF machine types with the host. It fails rather than labeling a cross-architecture binary as a native package. The Debian dependency list includes the libraries linked by the local binary: glibc, libgcc and fontconfig; window-system and graphics loader dependencies are declared as well. RPMs are compiled on each supported distro baseline because Enterprise Linux 9 has a different library floor from the Debian build host.
+
+The AppImage tool and runtime are fixed to versioned upstream releases and verified against their published SHA-256 digests:
+
+```sh
+packaging/linux/fetch-appimagetool.sh dist/appimagetool-tools
+APPIMAGETOOL=packaging/linux/appimagetool-wrapper.sh \
+APPIMAGETOOL_IMAGE="$PWD/dist/appimagetool-tools/appimagetool-x86_64.AppImage" \
+APPIMAGETOOL_RUNTIME_FILE="$PWD/dist/appimagetool-tools/runtime-x86_64" \
+packaging/linux/build.sh --format appimage --version 0.1.0 --out dist
+```
+
+The wrapper runs the AppImage tool without requiring FUSE on CI. The tool release and runtime checksums are taken from the [appimagetool](https://github.com/AppImage/appimagetool/releases/tag/1.9.1) and [type2 runtime](https://github.com/AppImage/type2-runtime/releases/tag/20251108) release assets.
+
+Inspect the resulting Arch and Debian packages before installing them:
+
+```sh
+pacman -Qip dist/f1r3gaze-0.1.0-1-x86_64.pkg.tar.zst
+pacman -Qlp dist/f1r3gaze-0.1.0-1-x86_64.pkg.tar.zst
+dpkg-deb --field dist/f1r3gaze_0.1.0_amd64.deb
+dpkg-deb --contents dist/f1r3gaze_0.1.0_amd64.deb
+```
+
+Install local packages with `sudo pacman -U FILE.pkg.tar.zst` on Arch or `sudo apt install ./FILE.deb` on Debian/Ubuntu. For Fedora or Enterprise Linux use `sudo dnf install ./FILE.rpm`; on openSUSE use `sudo zypper install ./FILE.rpm`. These local commands use the package manager's dependency resolver. The tarball and AppImage are portable artifacts and do not create a package-manager upgrade path.
+
+From `f1r3-work/f1r3gaze`, the following commands install a locally built 0.1.0 package for the current CPU. Use a newer version and repeat the install command to upgrade a local DEB, Arch package or RPM. Select the RPM channel that matches the running distribution (`fc43`, `fc44`, `el9`, `el10` or `opensuse16`):
+
+```sh
+VERSION=0.1.0
+sudo pacman -U "dist/f1r3gaze-${VERSION}-1-$(uname -m).pkg.tar.zst"
+f1r3gaze --version
+sudo pacman -R f1r3gaze
+
+sudo apt install "./dist/f1r3gaze_${VERSION}_$(dpkg --print-architecture).deb"
+f1r3gaze --version
+sudo apt remove f1r3gaze
+
+RPM_CHANNEL=fc44  # choose the channel for this host
+sudo dnf install "./dist/f1r3gaze-${VERSION}-1.${RPM_CHANNEL}.$(rpm --eval '%{_arch}').rpm"
+f1r3gaze --version
+sudo dnf remove f1r3gaze
+
+RPM_CHANNEL=opensuse16
+sudo zypper install "./dist/f1r3gaze-${VERSION}-1.${RPM_CHANNEL}.$(rpm --eval '%{_arch}').rpm"
+f1r3gaze --version
+sudo zypper remove f1r3gaze
+```
+
+Run only the commands for the current distribution. The sandbox bundles have their own install and removal commands:
+
+```sh
+VERSION=0.1.0
+flatpak --user install "dist/F1R3Gaze-${VERSION}-$(uname -m).flatpak"
+flatpak run --user io.f1r3fly.F1R3Gaze
+flatpak --user uninstall io.f1r3fly.F1R3Gaze
+
+SNAP_ARCH=$(dpkg --print-architecture)  # amd64 or arm64
+sudo snap install --dangerous "dist/f1r3gaze_${VERSION}_${SNAP_ARCH}.snap"
+snap run f1r3gaze.f1r3gaze
+sudo snap remove f1r3gaze
+```
+
+The Flatpak bundle declares its runtime repository in the bundle; Flatpak may fetch that runtime during installation. The local Snap is unsigned, so `--dangerous` is for development and [does not establish a Store trust or automatic update path](https://snapcraft.io/docs/explanation/snap-development/install-modes/). Store-based installs and refreshes become available after publication.
+
+The Wallet panel opens a native file picker for imports and a folder picker for exports. On Linux, [the dialog library](https://docs.rs/rfd/0.17.2/rfd/) uses an XDG desktop portal with a matching file-dialog backend, or Zenity as a fallback. DEB and RPM packages recommend the portal and Zenity, Arch lists them as optional dependencies, and Snap stages Zenity. A portable tarball or AppImage needs one of these dialog paths available on the host. The command-line wallet import/export commands accept file paths directly and do not open a dialog.
+
+Once the matching listings are published to Flathub and the Snap Store, those stores provide the update channel. These commands are for the published listings, not the local test bundles:
+
+```sh
+flatpak --user install flathub io.f1r3fly.F1R3Gaze
+flatpak --user update io.f1r3fly.F1R3Gaze
+flatpak --user uninstall io.f1r3fly.F1R3Gaze
+
+sudo snap install f1r3gaze
+sudo snap refresh f1r3gaze
+sudo snap remove f1r3gaze
+```
+
+Flatpak trusts the configured Flathub remote, and Snap validates Store assertions. Neither command uses the separate APT/pacman/RPM signing key. The Store listings and their publisher identities still need external approval before customers can use these commands.
+
+## Repository and trust flow
+
+`packaging/repository/stage.py` creates an unsigned publication tree in a *fresh* output directory:
+
+```sh
+python3 packaging/repository/stage.py --dist dist --out dist/repository-0.1.0
+python3 packaging/release_metadata.py catalog --version 0.1.0 --dist dist \
+  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.0 \
+  --out dist/catalog.json
+```
+
+The tree contains Debian `Packages` and `Release` files, pacman `.db`/`.files` indexes, and RPM `repodata` when `createrepo_c` and RPMs are available. RPM metadata uses gzip explicitly because [createrepo_c supports multiple compression formats](https://man.archlinux.org/man/extra/createrepo_c/createrepo_c.8.en) and its default varies by host. Both branch CI and the release workflow stage the complete DEB, Arch, and RPM matrix with `--version 0.1.0 --require-complete`, then run `packaging/repository/verify-staging.py --tree TREE --version 0.1.0` to check each index references its staged package. The release workflow uploads a compressed copy of the staging tree for review. It is marked `UNSIGNED-STAGING`. It must not be published until its repository signatures, package signatures, public key, fingerprint instructions, and install/update checks are ready. The publication host must be separate from the existing Reach demo Pages site. Staging stops before the tree reaches its configured size budget.
+
+To prepare a signed promotion, work from a copy of the release artifacts. Sign the RPM files **before** creating repository indexes: RPM signatures change package bytes, so an index made earlier would contain stale hashes. `rpmsign --addsign` inserts the package signature, and `rpmkeys --checksig` verifies it against a temporary key database; both operations follow the [RPM signing](https://rpm.org/docs/6.1.x/man/rpmsign.1) and [key verification](https://rpm.org/docs/6.1.x/man/rpmkeys.8) interfaces. Then stage the repository from those signed bytes, sign its metadata, regenerate the catalog and checksums, and run the promotion gate:
+
+```sh
+VERSION=0.1.0
+FINGERPRINT=YOUR_FULL_PUBLISHED_OPENPGP_FINGERPRINT
+PUBLIC_KEY=/path/to/verified-public-key.asc
+RELEASE_URL=https://YOUR_RELEASE_HOST/releases/v${VERSION}
+cp -a dist dist-promotion
+packaging/repository/sign-rpms.sh dist-promotion "$VERSION" "$FINGERPRINT"
+python3 packaging/repository/stage.py --dist dist-promotion \
+  --out repository-promotion --version "$VERSION" --require-complete
+packaging/repository/sign-metadata.sh repository-promotion "$FINGERPRINT" "$VERSION"
+python3 packaging/release_metadata.py catalog --dist dist-promotion \
+  --version "$VERSION" --base-url "$RELEASE_URL" \
+  --out dist-promotion/catalog.json --require-complete
+GPG_SIGNING_KEY_ID="$FINGERPRINT" packaging/sign-checksums.sh dist-promotion
+python3 packaging/repository/promotion_check.py --dist dist-promotion \
+  --tree repository-promotion --catalog dist-promotion/catalog.json \
+  --public-key "$PUBLIC_KEY" --fingerprint "$FINGERPRINT" \
+  --version "$VERSION" --finalize
+python3 packaging/repository/promotion_check.py --dist dist-promotion \
+  --tree repository-promotion --catalog dist-promotion/catalog.json \
+  --public-key "$PUBLIC_KEY" --fingerprint "$FINGERPRINT" --version "$VERSION"
+```
+
+The normal production entry point executes that sequence with a protected key. Set `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` through a secure local secret source, then run this from `f1r3-work/f1r3gaze` after collecting the complete unsigned artifact matrix in `dist`:
+
+```sh
+VERSION=0.1.0
+FINGERPRINT=YOUR_INDEPENDENTLY_REVIEWED_FULL_PRIMARY_FINGERPRINT
+RELEASE_URL=https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v${VERSION}
+packaging/repository/promote.sh --dist dist --out "signed-promotion-${VERSION}" \
+  --version "$VERSION" --base-url "$RELEASE_URL" --fingerprint "$FINGERPRINT"
+```
+
+The output is a fresh `signed-promotion-${VERSION}` directory containing `dist/` with the RPMs signed before `catalog.json` and `SHA256SUMS.asc` are generated, and `repository/` with signed APT, pacman and RPM indexes. The command imports the private key into a temporary GPG home, compares its primary fingerprint with the separately supplied value, unlocks it for the run, and checks the complete promotion before moving the output into place. It never uploads the tree or retains the private key in the output. It requires `rpmsign`, `rpmkeys`, `repo-add`, `dpkg-scanpackages`, `createrepo_c`, GnuPG and Python on the host.
+
+The last manual command above is a read-only dry run. The `--finalize` invocation removes `UNSIGNED-STAGING` only after it checks the complete artifact matrix, catalog URLs and digests, tree size, staged package copies and indexes, APT/pacman/RPM signatures, and the signed checksum file including `catalog.json`. The release URL and independently published fingerprint must be real before production use. The branch workflow exercises the signing order on copies of real Linux packages with a temporary CI key. The tag workflow runs `promote.sh` with a temporary passphrase-protected key on copies of every native artifact and saves the finalized release and repository as a CI-only artifact. A separate job downloads that artifact, rechecks its signatures and package copies, requires the publication URL to match the signed catalog, generates the Homebrew and WinGet manifests, and validates the latter against pinned schemas and the signed MSI. Other jobs install from its signed APT, pacman, DNF and Zypper indexes on native x86_64 and ARM64 runners; all those jobs gate draft publication. Tags pushed to a fork validate without creating a draft; only the upstream repository may create a release draft. On upstream, a separate production promotion job uses the configured key to create signed release assets and a signed repository tree. The publish job downloads both, runs the same publication assembly check with the independently configured fingerprint, and creates a draft from those exact signed assets. Upstream publication requires the full macOS signing and notarization inputs, Windows signing inputs, a GPG signing key and passphrase, and the independently reviewed full `GPG_EXPECTED_FINGERPRINT` repository variable. Missing inputs fail the workflow. A manual dispatch is available once the workflow exists on the repository's default branch, and creates a draft only if `publish_draft` is explicitly selected. Temporary CI keys and signed copies are never published as production packages or repositories.
+
+`sign-metadata.sh` also exports `f1r3gaze-signing-key.asc` at the signed tree's root. Arch package, database and files-index `.sig` files use binary detached OpenPGP signatures; APT and RPM metadata signatures retain their existing armored formats. The promotion gate verifies signatures using the published key copy and compares its primary fingerprint with the separately supplied trusted key. It verifies both pacman's package database and its separate files index, so `pacman -Fy` can also run with mandatory database signatures. The Arch client smoke fails if pacman reports a signature-format error while installing. This ensures the key customers download is the key that verified the staged packages and indexes. A fingerprint learned only from the package host is insufficient to establish trust.
+
+### Customer repository configuration after publication
+
+Run the common preparation below in Bash after the signed tree is published over HTTPS. Enter the repository root URL and the **full 40- or 64-digit primary fingerprint obtained independently from F1R3FLY.io**. The command stops before installing any trust material if they differ. The current unsigned staging tree must never be used as the repository root.
+
+```bash
+set -euo pipefail
+read -r -p 'Published repository HTTPS root: ' BASE
+read -r -p 'Independently verified full signing-key fingerprint: ' EXPECTED_FPR
+BASE=${BASE%/}
+EXPECTED_FPR=${EXPECTED_FPR^^}
+[[ $BASE =~ ^https://[^/]+(/.*)?$ && $EXPECTED_FPR =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]
+KEY_FILE=$PWD/f1r3gaze-signing-key.asc
+curl --fail --location --silent --show-error \
+  "$BASE/f1r3gaze-signing-key.asc" --output "$KEY_FILE"
+ACTUAL_FPR=$(gpg --batch --show-keys --with-colons --fingerprint "$KEY_FILE" |
+  awk -F: '$1 == "fpr" {print toupper($10); exit}')
+[[ $ACTUAL_FPR == "$EXPECTED_FPR" ]] || {
+  echo 'Signing-key fingerprint mismatch; repository was not configured' >&2
+  exit 1
+}
+```
+
+Run **one** of the following blocks in that same Bash session. For Debian 12/13 and Ubuntu 22.04/24.04/26.04, the source is a Deb822 `.sources` file scoped to this key, as [APT documents](https://manpages.debian.org/testing/apt/sources.list.5.en.html):
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+gpg --batch --yes --dearmor --output f1r3gaze-signing-key.gpg "$KEY_FILE"
+sudo install -m 0644 f1r3gaze-signing-key.gpg /etc/apt/keyrings/f1r3gaze.gpg
+printf 'Types: deb\nURIs: %s/apt\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/f1r3gaze.gpg\n' "$BASE" |
+  sudo tee /etc/apt/sources.list.d/f1r3gaze.sources >/dev/null
+sudo apt update
+sudo apt install f1r3gaze
+# Later: sudo apt update && sudo apt upgrade f1r3gaze
+# Remove: sudo apt remove f1r3gaze
+```
+
+For Arch Linux x86_64 or Arch Linux ARM aarch64, pacman expands `$arch` to the system architecture. The repository requires both package and database signatures, following [pacman.conf](https://man.archlinux.org/man/pacman.conf.5.en):
+
+```bash
+sudo pacman-key --add "$KEY_FILE"
+sudo pacman-key --lsign-key "$EXPECTED_FPR"
+if grep -qx '\[f1r3gaze\]' /etc/pacman.conf; then
+  echo 'f1r3gaze already exists in pacman.conf; inspect it before changing it' >&2
+  exit 1
+fi
+printf '\n[f1r3gaze]\nSigLevel = Required DatabaseRequired\nServer = %s/arch/$arch\n' "$BASE" |
+  sudo tee -a /etc/pacman.conf >/dev/null
+sudo pacman -Syu f1r3gaze
+# Later: sudo pacman -Syu f1r3gaze
+# Remove: sudo pacman -R f1r3gaze
+```
+
+For Fedora 43/44 and Enterprise Linux 9/10, the channel names match the generated RPM directories. DNF checks both the signed RPMs and signed `repomd.xml`, as its [configuration reference](https://dnf.readthedocs.io/en/latest/conf_ref.html) specifies:
+
+```bash
+. /etc/os-release
+case "$ID" in
+  fedora) CHANNEL=fc${VERSION_ID%%.*} ;;
+  rocky|rhel) CHANNEL=el${VERSION_ID%%.*} ;;
+  *) echo "Unsupported RPM distribution: $ID" >&2; exit 1 ;;
+esac
+case "$CHANNEL" in fc43|fc44|el9|el10) ;; *) echo "Unsupported channel: $CHANNEL" >&2; exit 1 ;; esac
+sudo install -d -m 0755 /etc/pki/rpm-gpg
+sudo install -m 0644 "$KEY_FILE" /etc/pki/rpm-gpg/F1R3Gaze.asc
+printf '[f1r3gaze]\nname=F1R3Gaze\nbaseurl=%s/rpm/%s/$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/F1R3Gaze.asc\n' "$BASE" "$CHANNEL" |
+  sudo tee /etc/yum.repos.d/f1r3gaze.repo >/dev/null
+sudo dnf install f1r3gaze
+# Later: sudo dnf upgrade f1r3gaze
+# Remove: sudo dnf remove f1r3gaze
+```
+
+For openSUSE Leap 16, libzypp accepts mandatory repository and RPM signature checks in the `.repo` file; see [libzypp's repository security model](https://opensuse.github.io/libzypp/classzypp_1_1RepoInfo.html):
+
+```bash
+sudo install -d -m 0755 /etc/zypp/keys
+sudo install -m 0644 "$KEY_FILE" /etc/zypp/keys/f1r3gaze.asc
+printf '[f1r3gaze]\nname=F1R3Gaze\nbaseurl=%s/rpm/opensuse16/$basearch\nenabled=1\nautorefresh=1\ngpgcheck=1\nrepo_gpgcheck=1\npkg_gpgcheck=1\ngpgkey=file:///etc/zypp/keys/f1r3gaze.asc\n' "$BASE" |
+  sudo tee /etc/zypp/repos.d/f1r3gaze.repo >/dev/null
+sudo zypper refresh f1r3gaze
+sudo zypper install f1r3gaze
+# Later: sudo zypper update f1r3gaze
+# Remove: sudo zypper remove f1r3gaze
+```
+
+The published tree uses `apt`, `arch/x86_64`, `arch/aarch64`, and `rpm/{fc43,fc44,el9,el10,opensuse16}/{x86_64,aarch64}` beneath its root. DNF and Zypper expand `$basearch` on the client; APT uses `amd64` and `arm64` inside its index. A public domain and independent fingerprint must be provided before customer use.
+
+The draft GitHub release collects artifacts first, generates `catalog.json`, and then generates `SHA256SUMS` and its detached signature when a key is configured. CI also generates candidate Homebrew and WinGet manifests from the actual DMG and MSI bytes. Publish those manifests only after the DMG is notarized and the MSI is signed:
+
+```sh
+python3 packaging/release_metadata.py homebrew --version 0.1.0 --dist dist \
+  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.0 \
+  --out metadata/Casks/f1r3gaze.rb
+python3 packaging/release_metadata.py winget --version 0.1.0 --dist dist \
+  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.0 \
+  --out metadata/winget
+```
+
+The cask points to the DMG and links `f1r3c` from the installed app. This follows Homebrew's [cask artifact model](https://docs.brew.sh/Cask-Cookbook). The branch installer and tag release workflows use `packaging/macos/ci-homebrew.sh` to create a temporary local tap from each CI-built DMG. On Apple Silicon and Intel runners, Homebrew installs the cask, runs the app and `f1r3c` binaries, and removes both. Only the CI tap uses a `file://` URL; the publication cask uses the verified release URL and digest. The WinGet output is a three-file manifest set matching the [community repository format](https://github.com/microsoft/winget-pkgs/blob/master/.github/instructions/manifests.instructions.md). `packaging/winget/validate.py metadata/winget/F1R3FLY.F1R3Gaze/0.1.0 --dist dist` validates all three files against a pinned copy of [Microsoft's 1.12.0 manifest schemas](https://github.com/microsoft/winget-cli/tree/49d0f8291b40f88744a29ae7ca0d1df962ade537/schemas/JSON/manifests/v1.12.0), checks their shared identity and version, and compares the installer hash with the built MSI. Install `packaging/winget/requirements.txt` first. Microsoft's `winget validate` and its community submission checks remain publication steps. Neither generator submits or publishes anything.
+
+After a signing key and verified fingerprint are published, a customer can check a release download with:
+
+```sh
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS
+```
+
+Do not infer trust from a checksum downloaded from the same unauthenticated location. Compare the signing-key fingerprint with an independently published source first. No production signing key or fingerprint has been provisioned yet.
+
+## Native installers and optional stores
+
+The macOS script creates one universal `F1R3Gaze.app` and stages only its two executables, metadata, icon and license. The DMG supports drag-and-drop installation; the component PKG is the building block for a later organization selector. Developer ID Application and Developer ID Installer credentials are separate. The script signs and notarizes both artifacts when those credentials are present. The app registers `f1r3://` and `f1r3h://` as separate URL types in `Info.plist`, following [Apple's URL type contract](https://developer.apple.com/documentation/bundleresources/information-property-list/cfbundleurltypes). Its AppKit delegate receives [`application:openURLs:`](https://developer.apple.com/documentation/AppKit/NSApplicationDelegate/application%28_%3Aopen%3A%29) for cold launches and running instances, accepts only syntactically valid addresses of those two types, and opens each in a browser tab in delivery order. The macOS build jobs compile and test that handler, check the installed bundle's registration, exercise a running-app URL delivery and test cold launch through the system's registered URL association.
+
+The Mac App Store is a separate distribution target. [Apple requires App Sandbox for Store apps](https://developer.apple.com/macos/distribution/); the Developer ID build has hardened-runtime entitlements without the sandbox. `packaging/macos/store-package.sh VERSION DIST OUTPUT_DIR BUNDLE_ID` copies the universal DMG app, assigns the Store bundle ID, signs the app and its embedded compiler with separate sandbox entitlements, and creates the [App Store installer format with `productbuild`](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution). It rejects unexpected payload files, verifies the app signature and checks the package payload. Without Store credentials it produces an ad hoc signed app and unsigned PKG for native CI. A submission build requires `MACOS_STORE_APP_CERT_P12`, `MACOS_STORE_APP_CERT_PASSWORD`, `MACOS_STORE_APP_SIGN_IDENTITY`, `MACOS_STORE_INSTALLER_CERT_P12`, `MACOS_STORE_INSTALLER_CERT_PASSWORD`, `MACOS_STORE_INSTALLER_SIGN_IDENTITY`, `MACOS_STORE_PROFILE`, and `MACOS_STORE_TEAM_ID`. The script checks that the provisioning profile is current and names that team and bundle ID, then signs the app with the Apple Distribution identity and the package with the installer identity. Supply credentials through a protected build environment and choose the bundle ID registered in App Store Connect.
+
+`packaging/macos/ci-store-sandbox.sh` calls that builder with a disposable bundle ID. On both Mac CPU families it checks the signatures, entitlements, compiler and app commands, profile storage inside the sandbox container, built-in and loopback network pages, then installs and launches the generated PKG before removing the disposable app and receipt. The Store compiler is launched as `F1R3Gaze.app/Contents/MacOS/f1r3gaze compiler ARGS...`; the app starts its embedded `f1r3c` as a child so it inherits the app sandbox. Directly invoking the embedded helper from Terminal is not the supported Store command. The CI compile smoke uses files inside the app container. On macOS, profile discovery selects Foundation's `NSHomeDirectory()` when it names an app container and continues to honor `HOME` for an unsandboxed Developer ID or command-line run. Apple documents that [the API returns the sandbox directory for a sandboxed app](https://developer.apple.com/documentation/foundation/nshomedirectory%28%29) and that an [embedded CLI must inherit the app sandbox](https://developer.apple.com/documentation/xcode/embedding-a-helper-tool-in-a-sandboxed-app).
+
+On the first window launch of a fresh Store container, F1R3Gaze asks whether to import an existing profile. Close the Developer ID or Homebrew app, choose **Yes**, then select `~/Library/Application Support/io.f1r3fly.f1r3gaze` in the native folder panel. The Store app copies config, data and state into private staging, compares each copied file with its source, and publishes the complete directory with macOS exclusive rename. The source is preserved; an existing Store profile is never overwritten or merged. A canceled picker or failure before publication leaves the target absent so the next launch can retry. If the app stops just after publication, the next launch removes the import marker from the already complete copy. An accessible source can also be imported into a fresh Store container with `F1R3Gaze.app/Contents/MacOS/f1r3gaze profile import SOURCE`; an outside-container source normally needs the GUI panel's sandbox access grant. The CI Store smoke imports a populated portable profile before opening its default container and checks copied files, wallet metadata, source preservation, and refusal to replace it.
+
+macOS Keychain items are separate from the profile's files. Before switching channels, export each wallet from the old app to a private file; then use the Store app's **Choose wallet file** action to import each key and verify its address. A copied wallet list alone does not prove that the Store signing identity may read the old app's Keychain entries. Production-signed customer-device testing must verify this flow, URL delivery, `--profile`, theme behavior and native file selection under the final entitlements. The Store build needs its own App Store Connect record and review. The Developer ID DMG/PKG and Homebrew cask continue to use their existing build and profile layout.
+
+The Windows script produces a per-machine MSI and a portable ZIP. On Linux, after installing `cargo-xwin`, PowerShell and the Rust Windows target, run `packaging/windows/build-local.sh 0.1.0 dist` to cross-compile the PE binaries and create the portable ZIP. The local x86_64 ZIP was built and its three files inspected. WiX v4 states it supports Windows only; an MSI build on this Arch host failed in its directory compiler, so the MSI uses a Windows runner. That runner installed a synthetic older MSI, upgraded to the release MSI, delivered a registered URL to the running installed app, removed the MSI and launched both ZIP commands. The MSI registers `f1r3://` and `f1r3h://` and supports silent installation and major upgrades. The smoke check also verifies its publisher in Add/Remove Programs and its Start menu shortcut, including shortcut removal. Stable numeric `X.Y.Z` releases avoid mapping distinct prereleases to the same MSI version. WinGet publication is separate from MSI creation.
+
+The [Microsoft Store accepts a direct MSI or EXE listing](https://learn.microsoft.com/en-us/windows/apps/publish/get-started#app-submission-msiexe), so MSIX conversion is not a format prerequisite. The Gaze-only MSI is a candidate after production Authenticode signing and Windows 11 validation. Partner Center needs a verified publisher account and a versioned, immutable HTTPS URL to an offline installer; [certification checks](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/app-certification-process) include silent installation while logged in as a standard user, Start menu and Programs discovery, clean uninstall, malware and content review. The current MSI is per machine and may request administrator authorization. [Microsoft explicitly allows User Account Control prompts](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/manual-package-validation) in its manual Store validation procedure, so a per-user MSI is not automatically required. Test the actual signed Store candidate from a standard Windows 11 account before submission. Signing the MSI and its embedded executables with a trusted certificate is strongly recommended by Microsoft and is already supported by `packaging/windows/package.ps1` when credentials are supplied. A Store MSI listing does **not** give existing customers automatic Store updates: [the app or installer must provide those](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/publish-update-to-your-app-on-store). This project currently has MSI major upgrades and a WinGet update path, but no in-app update service; decide whether to add one before promoting the Store listing to customers. MSIX remains an optional later project if automatic Store updates and other MSIX services justify a separate package.
+
+Flatpak and Snap definitions use the same Gaze and compiler payload. Install `xvfb`, `xauth`, `xdotool` and a Mesa Vulkan driver on the smoke host. On a Linux machine with Flatpak Builder, use `packaging/flatpak/ci-smoke.sh 0.1.0` after building the native executables. It stages the input, creates `dist/F1R3Gaze-0.1.0-$(uname -m).flatpak`, installs it for the current user, exercises the sandbox and removes it. This test adds the Flathub remote for the matching runtime and needs network access. For Snap, prepare `packaging/snap/stage.sh target/release dist/snap-input 0.1.0`, then run Snapcraft 9 or newer on a matching Ubuntu 24.04 builder to pack it; `packaging/snap/ci-smoke.sh FILE.snap 0.1.0` installs, exercises and removes the unsigned snap. Both scripts run the built-in page, fetch a local HTTP page, compile and inspect a source file in the application writable area, check the installed desktop file's custom URL declarations, and open a visible window on an isolated X11 display with the Vulkan backend selected. The Snapcraft 8 `8_core24` OCI image does not support the recipe's GPU extension. The manifests are `packaging/flatpak/io.f1r3fly.F1R3Gaze.json` and `dist/snap-input/snap/snapcraft.yaml`. CI checks a virtual X11 display; real Wayland sessions, hardware GPUs and host desktop URL dispatch still need customer-device validation. Store publication follows those checks.
+
+## Release sequence and pending work
+
+The tag workflow builds native Linux binaries and packages, universal macOS and Windows artifacts, and candidate Homebrew and WinGet manifests. The `package-linux-smoke.yml` and `package-installers-smoke.yml` workflows run on `feature/additional-packages` pushes; the installer workflow also runs on `v*` tags. Branch smoke runs cancel older runs for the same workflow and branch, while tag runs are retained. The fork builds unsigned native installers and tests them on GitHub-hosted runners. Its release workflow also signs a complete repository tree with a disposable CI key and tests package-manager installation against that tree. Only the upstream repository can proceed to production promotion and draft publication after the required credentials pass preflight.
+
+At commit `69b93a51385ef46fa4c19620ce41d5714dcd3144`, [PR CI](https://github.com/dylon/F1R3Gaze/actions/runs/37982123638) passed nine jobs; [Linux package smoke](https://github.com/dylon/F1R3Gaze/actions/runs/37982117683) passed all 31 build, upgrade and lifecycle jobs, including both Flatpak and Snap architectures, virtual-display graphics and repository staging; and [branch installer smoke](https://github.com/dylon/F1R3Gaze/actions/runs/37982117661) passed all four native installer jobs. The [exact-tag installer smoke](https://github.com/dylon/F1R3Gaze/actions/runs/37983606440) passed all four jobs, including the Intel Mac PKG upgrade and Windows MSI upgrade. The [exact-tag release](https://github.com/dylon/F1R3Gaze/actions/runs/37983606417) passed all 38 applicable jobs, including signed-repository promotion dry run and installation from its APT, pacman, DNF and Zypper indexes on both architectures. Its production promotion and publish jobs were skipped on the fork. The pacman client also refreshed and queried the signed `.files` index.
+
+The Apple Silicon package runner checks the universal app's two Mach-O slices and tests the installed ARM slice. A separate Intel job downloads and installs that exact universal artifact, checks its native slice, PKG upgrade, running-app and cold URL handling, and gates the release draft; another Intel job checks the native compiler, CLI and system theme. The Store candidate's import engine, consent decisions and ad hoc sandbox package import pass native checks on both CPU families. GitHub-hosted macOS UI automation did not drive the actual pre-window native consent and folder panels, so that interaction still needs a clean interactive Mac with the final Store entitlements. The Windows runner is Windows Server 2022, so Windows 11 customer validation remains separate. Arch Linux ARM uses the third-party `menci/archlinuxarm` image; its package and lifecycle passed on that image.
+
+Publishing package repositories, a Homebrew tap, WinGet, Flathub, Snap Store, Microsoft Store or Mac App Store requires external accounts or credentials. Signed install, upgrade and removal tests on customer macOS and Windows 11 machines also remain pending. Each of these is a leaf in the external pgmcp child epic.

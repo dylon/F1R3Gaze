@@ -1,0 +1,54 @@
+name: f1r3gaze
+base: core24
+version: '0.1.0'
+summary: Browser with in-process f1r3lang execution
+description: |
+  F1R3Gaze renders sites with its in-process RSpace and includes f1r3c.
+  F1R3Node is a separate optional service. Embers is not bundled.
+grade: devel
+confinement: strict
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+  arm64:
+    build-on: [arm64]
+    build-for: [arm64]
+apps:
+  f1r3gaze:
+    command: usr/bin/f1r3gaze
+    desktop: usr/share/applications/f1r3gaze.desktop
+    environment:
+      XKB_CONFIG_ROOT: $SNAP/usr/share/X11/xkb
+    extensions: [gpu]
+    plugs: [network, home, x11, wayland, opengl, desktop]
+  f1r3c:
+    command: usr/bin/f1r3c
+    plugs: [home]
+parts:
+  f1r3gaze:
+    plugin: nil
+    source: .
+    stage-packages:
+      - dbus-bin
+      - libfontconfig1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - xkb-data
+      - libwayland-client0
+      - libwayland-cursor0
+      - libx11-6
+      - libx11-xcb1
+      - libxi6
+      - libxcb1
+      - libvulkan1
+      - zenity
+    override-build: |
+      install -Dm755 "$CRAFT_PART_SRC/f1r3gaze" "$CRAFT_PART_INSTALL/usr/bin/f1r3gaze"
+      install -Dm755 "$CRAFT_PART_SRC/f1r3c" "$CRAFT_PART_INSTALL/usr/bin/f1r3c"
+      install -Dm644 "$CRAFT_PART_SRC/f1r3gaze.desktop" "$CRAFT_PART_INSTALL/usr/share/applications/f1r3gaze.desktop"
+      for size in 16 32 48 64 128 256 512; do
+        install -Dm644 "$CRAFT_PART_SRC/icons/$size.png" "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/${size}x${size}/apps/f1r3gaze.png"
+      done
+      install -Dm644 "$CRAFT_PART_SRC/icons/f1r3gaze.svg" "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/f1r3gaze.svg"
+      install -Dm644 "$CRAFT_PART_SRC/LICENSE" "$CRAFT_PART_INSTALL/usr/share/licenses/f1r3gaze/LICENSE"

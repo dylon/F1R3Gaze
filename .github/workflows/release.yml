@@ -1,10 +1,15 @@
 # Tag vX.Y.Z to publish signed installers for macOS, Windows and Linux.
 #
-# Secrets (each platform ships unsigned, with a warning, if its are absent):
+# Fork smoke builds may be unsigned. Production publication requires every
+# signing and notarization credential below and fails before creating a draft.
 #   macOS:   MACOS_CERT_P12 (base64 Developer ID Application .p12), MACOS_CERT_PASSWORD,
-#            MACOS_SIGN_IDENTITY, APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (notarisation)
+#            MACOS_SIGN_IDENTITY, MACOS_INSTALLER_CERT_P12,
+#            MACOS_INSTALLER_CERT_PASSWORD, MACOS_INSTALLER_SIGN_IDENTITY,
+#            APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (notarisation)
 #   Windows: WINDOWS_CERT_PFX (base64 .pfx), WINDOWS_CERT_PASSWORD
-#   Linux:   GPG_PRIVATE_KEY (armoured), GPG_PASSPHRASE — signs SHA256SUMS for every artifact
+#   Linux:   GPG_PRIVATE_KEY (armoured), GPG_PASSPHRASE, and the repository
+#            variable GPG_EXPECTED_FINGERPRINT — signs RPMs, repository metadata,
+#            and SHA256SUMS for the production release
 name: release
 on:
   push:
@@ -14,8 +19,12 @@ on:
       version:
         description: "Version to build (no v)"
         required: true
+      publish_draft:
+        description: "Create a draft GitHub release after validation"
+        type: boolean
+        default: false
 permissions:
-  contents: write
+  contents: read
 defaults:
   run:
     shell: bash
@@ -24,29 +33,216 @@ env:
   CARGO_TERM_COLOR: always
   VERSION: ${{ inputs.version || github.ref_name }}
 jobs:
+  source_checks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --user -r packaging/winget/requirements.txt
+      - run: packaging/verify-source.sh
+
   linux:
-    runs-on: ubuntu-22.04   # glibc 2.35, the .deb's floor
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.95" }
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: f1r3-work/f1r3gaze }
-      - run: cargo build --locked --release -p gaze-shell -p f1r3c
-      - name: Package
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libvulkan-dev
+      - run: |
+          cargo build --locked --release -p gaze-shell -p f1r3c
+          bash packaging/verify-system-theme.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries-${{ matrix.arch }}
+          path: |
+            f1r3-work/f1r3gaze/target/release/f1r3gaze
+            f1r3-work/f1r3gaze/target/release/f1r3c
+      - name: Package Debian, tarball and AppImage
         run: |
           V="${VERSION#v}"
-          curl -sSL -o /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x /tmp/appimagetool
-          printf '#!/bin/sh\nexec /tmp/appimagetool --appimage-extract-and-run "$@"\n' > /tmp/ait && chmod +x /tmp/ait
-          APPIMAGETOOL=/tmp/ait DIST=dist packaging/linux/package.sh "$V" target/release
+          packaging/linux/build.sh --format deb --version "$V" --out dist
+          packaging/linux/build.sh --format tar --version "$V" --out dist
+          packaging/linux/fetch-appimagetool.sh "$RUNNER_TEMP/appimagetool"
+          APPIMAGETOOL=packaging/linux/appimagetool-wrapper.sh \
+            APPIMAGETOOL_IMAGE="$RUNNER_TEMP/appimagetool/appimagetool-${{ matrix.arch }}.AppImage" \
+            APPIMAGETOOL_RUNTIME_FILE="$RUNNER_TEMP/appimagetool/runtime-${{ matrix.arch }}" \
+            packaging/linux/build.sh --format appimage --version "$V" --out dist
+          dpkg-deb --field "dist/f1r3gaze_${V}_$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64).deb"
+          bash packaging/linux/ci-portable.sh "$V"
       - uses: actions/upload-artifact@v4
-        with: { name: linux, path: f1r3-work/f1r3gaze/dist/* }
+        with:
+          name: linux-packages-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*
+
+  arch:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64, image: "archlinux:base-devel" }
+          - { runner: ubuntu-22.04-arm, arch: aarch64, image: "menci/archlinuxarm:base-devel" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - run: chmod +x target/release/f1r3gaze target/release/f1r3c
+      - name: Build Arch package, upgrade, launch and remove
+        run: |
+          docker run --rm --platform "linux/$([[ ${{ matrix.arch }} == x86_64 ]] && echo amd64 || echo arm64)" \
+            -v "$GITHUB_WORKSPACE:/src" -w /src/f1r3-work/f1r3gaze ${{ matrix.image }} \
+            packaging/linux/ci-arch.sh "${VERSION#v}"
+          test -f "dist/f1r3gaze-${VERSION#v}-1-${{ matrix.arch }}.pkg.tar.zst"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.pkg.tar.zst
+
+  debian_lifecycle:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:12" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:12" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "debian:13" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "debian:13" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:22.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:22.04" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:24.04" }
+          - { runner: ubuntu-22.04, arch: amd64, image: "ubuntu:26.04" }
+          - { runner: ubuntu-22.04-arm, arch: arm64, image: "ubuntu:26.04" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+          path: f1r3-work/f1r3gaze/dist
+      - name: Install older DEB, upgrade, launch and remove on target distro
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            -v "$PWD:/src" -w /src ${{ matrix.image }} \
+            bash packaging/linux/ci-deb.sh "${VERSION#v}"
+
+  rpm:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:43", channel: fc43 }
+          - { runner: ubuntu-22.04, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04-arm, image: "fedora:44", channel: fc44 }
+          - { runner: ubuntu-22.04, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux:9", channel: el9 }
+          - { runner: ubuntu-22.04, image: "rockylinux/rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04-arm, image: "rockylinux/rockylinux:10", channel: el10 }
+          - { runner: ubuntu-22.04, image: "opensuse/leap:16.0", channel: opensuse16 }
+          - { runner: ubuntu-22.04-arm, image: "opensuse/leap:16.0", channel: opensuse16 }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install checkout prerequisites
+        working-directory: /
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf -y install git tar gzip
+          else
+            zypper --non-interactive install git tar gzip
+          fi
+      - uses: actions/checkout@v4
+      - name: Build RPM, upgrade, launch and remove on target distro
+        run: packaging/linux/ci-rpm.sh "${VERSION#v}"
+      - run: rpm -qip dist/*.rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.channel }}-${{ runner.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.rpm
+
+  flatpak:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder xvfb xauth xdotool mesa-vulkan-drivers
+      - name: Build, install, exercise sandbox and remove Flatpak
+        run: bash packaging/flatpak/ci-smoke.sh "${VERSION#v}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: f1r3-work/f1r3gaze/dist/*.flatpak
+
+  snap:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64, binary_arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64, binary_arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries-${{ matrix.binary_arch }}
+          path: f1r3-work/f1r3gaze/target/release
+      - name: Stage Snapcraft source
+        run: packaging/snap/stage.sh target/release dist/snap-input "${VERSION#v}"
+      - run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool mesa-vulkan-drivers
+      - uses: snapcore/action-build@v1
+        id: snapcraft
+        with:
+          path: f1r3-work/f1r3gaze/dist/snap-input
+      - name: Install, exercise sandbox and remove snap
+        run: bash packaging/snap/ci-smoke.sh '${{ steps.snapcraft.outputs.snap }}' "${VERSION#v}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snap-${{ matrix.arch }}
+          path: ${{ steps.snapcraft.outputs.snap }}
 
   macos:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Require production macOS signing and notarization credentials
+        if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_INSTALLER_CERT_P12: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
+          MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_INSTALLER_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: python3 packaging/release_preflight.py macos
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
@@ -57,51 +253,356 @@ jobs:
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
             cargo build --locked --release --target $t -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
           done
+      - name: Test native system theme selection
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
+      - name: Compare live macOS appearance with the browser's native source
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
+      - name: Test native macOS URL event validation
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
+      - name: Test Store profile copy and first-launch consent
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
       - name: Package, sign, notarise
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_INSTALLER_CERT_P12: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
+          MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_INSTALLER_SIGN_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           DIST=dist packaging/macos/package.sh "${VERSION#v}" \
             target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
+      - name: Install and remove generated Homebrew cask
+        run: bash packaging/macos/ci-homebrew.sh "${VERSION#v}"
+      - name: Exercise isolated macOS App Sandbox prototype
+        run: bash packaging/macos/ci-store-sandbox.sh "${VERSION#v}"
+      - name: Mount DMG, upgrade PKG and deliver URL
+        run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
       - uses: actions/upload-artifact@v4
+        if: always()
         with: { name: macos, path: f1r3-work/f1r3gaze/dist/* }
+
+  macos_intel_theme:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: f1r3-work/f1r3gaze }
+      - name: Build and launch native Intel binaries
+        run: |
+          cargo build --locked --release --target x86_64-apple-darwin -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+          test "$(target/x86_64-apple-darwin/release/f1r3gaze --version)" = "f1r3gaze ${VERSION#v}"
+      - name: Test native Intel system theme selection
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
+      - name: Compare live Intel macOS appearance with the browser's native source
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
+      - name: Test native Intel URL event validation
+        run: |
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
+      - name: Test Intel Store profile copy and first-launch consent
+        run: |
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
+
+  macos_intel_installer:
+    needs: macos
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: f1r3-work/f1r3gaze/dist
+      - name: Install and remove generated Homebrew cask on Intel Mac
+        run: bash packaging/macos/ci-homebrew.sh "${VERSION#v}"
+      - name: Exercise isolated macOS App Sandbox prototype on Intel
+        run: bash packaging/macos/ci-store-sandbox.sh "${VERSION#v}"
+      - name: Upgrade PKG and deliver URLs on Intel Mac
+        run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
 
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Require production Windows signing credentials
+        if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: python packaging/release_preflight.py windows
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.95" }
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: f1r3-work/f1r3gaze }
+      - name: Check PowerShell installer syntax
+        shell: pwsh
+        run: |
+          foreach ($script in @('packaging/windows/package.ps1', 'packaging/windows/ci-theme.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { throw "${script}: $($errors | Out-String)" }
+          }
       - run: cargo build --locked --release -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+      - name: Test native system theme selection
+        shell: bash
+        env:
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
+      - name: Compare live Windows appearance with the browser's native source
+        shell: pwsh
+        run: .\packaging\windows\ci-theme.ps1
+      - name: Test Windows URL handoff
+        shell: pwsh
+        run: |
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib windows_url::tests::
+          if ($LASTEXITCODE) { throw 'Windows URL handoff test failed' }
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib external_url::tests::
+          if ($LASTEXITCODE) { throw 'External URL validation test failed' }
+      - run: python packaging/verify_binary.py target/release/f1r3gaze.exe target/release/f1r3c.exe
       - run: dotnet tool install --global wix --version 4.0.5
       - name: Package and sign
         shell: pwsh
         env:
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
+        run: |
+          .\packaging\windows\package.ps1 -Version ("$env:VERSION" -replace '^v','') -Bin target\release -Dist dist
+          if (Get-ChildItem dist -Filter *.wixpdb) { throw 'WiX debug database must not enter release dist' }
+      - name: Install older MSI, upgrade, deliver URL, remove and check ZIP
+        shell: pwsh
+        run: .\packaging\windows\ci-smoke.ps1 -Version ("$env:VERSION" -replace '^v','')
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: f1r3-work/f1r3gaze/dist/* }
+        if: always()
+        with:
+          name: windows
+          path: |
+            f1r3-work/f1r3gaze/dist/*.msi
+            f1r3-work/f1r3gaze/dist/*-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-install-logs
+          path: ${{ runner.temp }}/f1r3gaze-msi-*.log
 
-  publish:
-    needs: [linux, macos, windows]
+  repository_staging:
+    needs: [linux, arch, rpm]
     runs-on: ubuntu-22.04
+    container: archlinux:base
+    steps:
+      - name: Install repository index tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "arch-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - name: Stage unsigned APT, pacman and RPM repositories
+        run: |
+          python packaging/repository/stage.py --dist dist --out repository-staging --version "${VERSION#v}" --require-complete
+          python packaging/repository/verify-staging.py --tree repository-staging --version "${VERSION#v}"
+          tar -czf "repository-staging-${VERSION#v}.tar.gz" repository-staging
+      - name: Sign a private copy and verify repository signatures
+        run: bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repository-staging
+          path: f1r3-work/f1r3gaze/repository-staging-*.tar.gz
+
+  promotion_dry_run:
+    needs: [source_checks, linux, arch, rpm, flatpak, snap, macos, windows, repository_staging]
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    steps:
+      - name: Install repository signing and indexing tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "arch-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "flatpak-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "snap-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: macos, path: f1r3-work/f1r3gaze/dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows, path: f1r3-work/f1r3gaze/dist }
+      - name: Sign private artifact copies and dry-run the full promotion gate
+        run: |
+          bash packaging/repository/ci-signing-smoke.sh dist "${VERSION#v}" \
+            full-release ci-only-signed-promotion.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-only-signed-promotion
+          path: f1r3-work/f1r3gaze/ci-only-signed-promotion.tar
+
+  publication_assembly_dry_run:
+    needs: promotion_dry_run
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    steps:
+      - name: Install release verification and manifest tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python python-pip rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/winget-venv"
+          "$RUNNER_TEMP/winget-venv/bin/pip" install -r packaging/winget/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-only-signed-promotion
+          path: f1r3-work/f1r3gaze/publication-input
+      - name: Recheck signed output and assemble package-manager manifests
+        run: |
+          V="${VERSION#v}"
+          tar -C publication-input -xf publication-input/ci-only-signed-promotion.tar
+          fingerprint=$(gpg --batch --show-keys --with-colons --fingerprint \
+            publication-input/repository/f1r3gaze-signing-key.asc | awk -F: '$1 == "fpr" {print $10; exit}')
+          source "$RUNNER_TEMP/winget-venv/bin/activate"
+          bash packaging/repository/assemble-publication.sh \
+            publication-input/dist publication-input/repository "$V" \
+            "https://example.invalid/releases/v$V" "$fingerprint" metadata
+
+  repository_clients:
+    needs: promotion_dry_run
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, platform: amd64, arch_image: "archlinux:base-devel" }
+          - { runner: ubuntu-22.04-arm, platform: arm64, arch_image: "menci/archlinuxarm:base-devel" }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
-      - name: Checksums and signature
+        with:
+          name: ci-only-signed-promotion
+          path: f1r3-work/f1r3gaze/repository-client-input
+      - name: Install through signed repository indexes on target distros
+        run: |
+          set -euo pipefail
+          tar -C repository-client-input -xf repository-client-input/ci-only-signed-promotion.tar
+          tree="$PWD/repository-client-input/repository"
+          test -s "$tree/f1r3gaze-signing-key.asc"
+          test ! -e "$tree/UNSIGNED-STAGING"
+          for image in debian:12 ubuntu:24.04 fedora:43 rockylinux:9 opensuse/leap:16.0 "${{ matrix.arch_image }}"; do
+            docker run --rm --platform linux/${{ matrix.platform }} \
+              -v "$tree:/repo:ro" \
+              -v "$PWD/packaging/repository/ci-client-smoke.sh:/ci-client-smoke.sh:ro" \
+              "$image" bash /ci-client-smoke.sh "${VERSION#v}"
+          done
+
+  production_promotion:
+    if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+    needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, publication_assembly_dry_run, repository_clients, macos, macos_intel_theme, macos_intel_installer, windows]
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    steps:
+      - name: Install repository signing and indexing tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python dpkg createrepo_c rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "linux-packages-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "arch-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "rpm-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "flatpak-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "snap-*", path: f1r3-work/f1r3gaze/dist, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: macos, path: f1r3-work/f1r3gaze/dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows, path: f1r3-work/f1r3gaze/dist }
+      - name: Require production checksum signing credentials
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: packaging/sign-checksums.sh dist
+          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
+        run: python3 packaging/release_preflight.py checksums
+      - name: Sign and verify production release and repositories
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
+        run: |
+          V="${VERSION#v}"
+          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
+          bash packaging/repository/promote.sh --dist dist --out production-promotion \
+            --version "$V" --base-url "$URL" --fingerprint "$GPG_EXPECTED_FINGERPRINT"
+          tar -C production-promotion -cf "signed-repository-$V.tar" repository
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-signed-release
+          path: f1r3-work/f1r3gaze/production-promotion/dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-signed-repository
+          path: f1r3-work/f1r3gaze/signed-repository-*.tar
+
+  publish:
+    if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+    needs: production_promotion
+    runs-on: ubuntu-22.04
+    container: archlinux:base
+    permissions:
+      contents: write
+    steps:
+      - name: Install promotion verifier and manifest tools
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed git python python-pip rpm-tools gnupg
+      - uses: actions/checkout@v4
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/winget-venv"
+          "$RUNNER_TEMP/winget-venv/bin/pip" install -r packaging/winget/requirements.txt
+      - uses: actions/download-artifact@v4
+        with: { name: production-signed-release, path: f1r3-work/f1r3gaze/dist }
+      - uses: actions/download-artifact@v4
+        with: { name: production-signed-repository, path: f1r3-work/f1r3gaze/repository-input }
+      - name: Recheck downloaded signed release and assemble package-manager manifests
+        env:
+          GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
+        run: |
+          V="${VERSION#v}"
+          tar -xf "repository-input/signed-repository-$V.tar"
+          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
+          source "$RUNNER_TEMP/winget-venv/bin/activate"
+          bash packaging/repository/assemble-publication.sh \
+            dist repository "$V" "$URL" "$GPG_EXPECTED_FINGERPRINT" metadata
+      - uses: actions/upload-artifact@v4
+        with: { name: package-manager-manifests, path: f1r3-work/f1r3gaze/metadata }
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', inputs.version) }}

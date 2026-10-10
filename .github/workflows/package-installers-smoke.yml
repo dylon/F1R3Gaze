@@ -1,0 +1,245 @@
+name: Native installer smoke test
+
+on:
+  push:
+    branches: [feature/additional-packages]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+defaults:
+  run:
+    working-directory: f1r3-work/f1r3gaze
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: Build both native architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --locked --release --target "$target" -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+          done
+      - name: Test native system theme selection
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
+      - name: Compare live macOS appearance with the browser's native source
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
+      - name: Test native macOS URL event validation
+        shell: bash
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
+      - name: Test Store profile copy and first-launch consent
+        shell: bash
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
+          cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
+      - name: Build DMG and component PKG
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          log="$RUNNER_TEMP/f1r3gaze-macos-package.log"
+          if DIST=dist bash -x packaging/macos/package.sh "$version" \
+            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release >"$log" 2>&1; then
+            cat "$log"
+          else
+            tail -n 80 "$log"
+            summary="$(tail -n 12 "$log" | tr '\n' ' ' | sed 's/%/%25/g;s/\r/%0D/g')"
+            echo "::error::macOS package build failed: $summary"
+            exit 1
+          fi
+      - name: Install and remove generated Homebrew cask
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-homebrew.sh "$version"
+      - name: Exercise isolated macOS App Sandbox prototype
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-store-sandbox.sh "$version"
+      - name: Mount DMG, upgrade PKG and deliver URL
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-smoke.sh "$version"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-installers
+          path: f1r3-work/f1r3gaze/dist/*
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-package-log
+          path: ${{ runner.temp }}/f1r3gaze-macos-package.log
+
+  macos_intel_theme:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: Build and launch native Intel binaries
+        shell: bash
+        run: |
+          cargo build --locked --release --target x86_64-apple-darwin -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+          test "$(target/x86_64-apple-darwin/release/f1r3gaze --version)" = "f1r3gaze $(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+      - name: Test native Intel system theme selection
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
+      - name: Compare live Intel macOS appearance with the browser's native source
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+        run: bash packaging/macos/ci-theme.sh
+      - name: Test native Intel URL event validation
+        shell: bash
+        run: |
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_url::tests::
+      - name: Test Intel Store profile copy and first-launch consent
+        shell: bash
+        run: |
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
+          cargo test --locked --release --target x86_64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
+
+  macos_intel_installer:
+    needs: macos
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-installers
+          path: f1r3-work/f1r3gaze/dist
+      - name: Install and remove generated Homebrew cask on Intel Mac
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-homebrew.sh "$version"
+      - name: Exercise isolated macOS App Sandbox prototype on Intel
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-store-sandbox.sh "$version"
+      - name: Upgrade PKG and deliver URLs on Intel Mac
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-smoke.sh "$version"
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: Build Windows executables
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
+          if ($LASTEXITCODE) { throw 'cargo build failed' }
+          python packaging/verify_binary.py target/release/f1r3gaze.exe target/release/f1r3c.exe
+          if ($LASTEXITCODE) { throw 'binary verification failed' }
+      - name: Test native system theme selection
+        shell: bash
+        env:
+          GAZE_THEME_OS_KEYRING: "1"
+        run: bash packaging/verify-system-theme.sh
+      - name: Compare live Windows appearance with the browser's native source
+        shell: pwsh
+        run: .\packaging\windows\ci-theme.ps1
+      - name: Test Windows URL handoff
+        shell: pwsh
+        run: |
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib windows_url::tests::
+          if ($LASTEXITCODE) { throw 'Windows URL handoff test failed' }
+          cargo test --locked --release -p gaze-shell --features gaze-shell/os-keyring --lib external_url::tests::
+          if ($LASTEXITCODE) { throw 'External URL validation test failed' }
+      - name: Install WiX and build MSI and portable ZIP
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          if ($LASTEXITCODE) { throw 'WiX installation failed' }
+          $version = $null
+          $inWorkspacePackage = $false
+          foreach ($line in Get-Content Cargo.toml) {
+            if ($line -match '^\[workspace\.package\]') { $inWorkspacePackage = $true; continue }
+            if ($line -match '^\[') { $inWorkspacePackage = $false }
+            if ($inWorkspacePackage -and $line -match '^version\s*=\s*"([^"]+)"') {
+              $version = $Matches[1]
+              break
+            }
+          }
+          if (-not $version) { throw 'Workspace version was not found' }
+          $invalidAccepted = $false
+          try {
+            .\packaging\windows\package.ps1 -Version '256.0.0' -Bin target\release -Dist dist
+            $invalidAccepted = $true
+          } catch {
+            if ($_.Exception.Message -notmatch '^MSI ProductVersion field 1 exceeds') { throw }
+          }
+          if ($invalidAccepted) { throw 'MSI accepted a version Windows Installer cannot upgrade' }
+          .\packaging\windows\package.ps1 -Version $version -Bin target\release -Dist dist
+          if ($LASTEXITCODE) { throw 'Windows package build failed' }
+          if (Get-ChildItem dist -Filter *.wixpdb) { throw 'WiX debug database must not enter release dist' }
+      - name: Install older MSI, upgrade, deliver URL, remove and check ZIP
+        shell: pwsh
+        run: |
+          $version = $null
+          $inWorkspacePackage = $false
+          foreach ($line in Get-Content Cargo.toml) {
+            if ($line -match '^\[workspace\.package\]') { $inWorkspacePackage = $true; continue }
+            if ($line -match '^\[') { $inWorkspacePackage = $false }
+            if ($inWorkspacePackage -and $line -match '^version\s*=\s*"([^"]+)"') {
+              $version = $Matches[1]
+              break
+            }
+          }
+          .\packaging\windows\ci-smoke.ps1 -Version $version
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-installers-and-logs
+          path: |
+            f1r3-work/f1r3gaze/dist/*.msi
+            f1r3-work/f1r3gaze/dist/*-windows-x64.zip
+            ${{ runner.temp }}/f1r3gaze-msi-*.log

@@ -51,6 +51,7 @@ use keyboard_types::{Key, Modifiers};
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fmt::Write as _;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::task::Context as TaskContext;
@@ -560,8 +561,9 @@ const WALLET_FORM_HTML: &str = r#"<div id="walletmsg"></div><div id="walletcard"
 <div id="walletlist"></div>
 <div class="section-head"><span>Add a wallet</span></div><div class="form">
 <div class="form-actions start"><button class="btn" data-action="wallet:new"><i class="fa-solid fa-plus"></i><span>Create new wallet</span></button></div>
-<label class="field-label" for="wallet-import"><span>Import an F1R3Sky wallet file or hex key</span></label>
-<div class="form-row"><div class="field grow"><input id="wallet-import" type="text" aria-label="Wallet file or hex key"></div><button class="btn" data-action="wallet:import"><i class="fa-solid fa-file-import"></i><span>Import</span></button></div></div>"#;
+<label class="field-label" for="wallet-import"><span>Paste a hex key or wallet file contents</span></label>
+<div class="form-row"><div class="field grow"><input id="wallet-import" type="text" aria-label="Hex key or wallet file contents"></div><button class="btn" data-action="wallet:import"><i class="fa-solid fa-file-import"></i><span>Import</span></button></div>
+<div class="form-actions start"><button class="btn" data-action="wallet:import-file"><i class="fa-solid fa-folder-open"></i><span>Choose wallet file</span></button></div></div>"#;
 
 /// Per-panel controls. They are constant, so `#sidecontrols` stays
 /// byte-identical while the user types and the field keeps focus (R4).
@@ -2130,7 +2132,7 @@ fn wallet_card_html(
             }
             put!(
                 html,
-                r#"<div class="card-actions"><button class="btn btn-sm" data-action="wallet:copy:{a}"><i class="fa-solid fa-copy"></i><span>Copy</span><span class="tip tip-below">Copy the address to receive funds</span></button><button class="btn btn-sm" data-action="wallet:export:{a}"><i class="fa-solid fa-file-export"></i><span>Export</span><span class="tip tip-below">Write the wallet file (F1R3Sky can import it)</span></button><button class="btn btn-sm btn-ghost btn-danger" data-action="wallet:remove:{a}"><i class="fa-solid fa-trash-can"></i><span>Remove</span></button></div></div>"#,
+                r#"<div class="card-actions"><button class="btn btn-sm" data-action="wallet:copy:{a}"><i class="fa-solid fa-copy"></i><span>Copy</span><span class="tip tip-below">Copy the address to receive funds</span></button><button class="btn btn-sm" data-action="wallet:export:{a}"><i class="fa-solid fa-file-export"></i><span>Export</span><span class="tip tip-below">Choose a folder for a wallet file F1R3Sky can import</span></button><button class="btn btn-sm btn-ghost btn-danger" data-action="wallet:remove:{a}"><i class="fa-solid fa-trash-can"></i><span>Remove</span></button></div></div>"#,
                 a = escape(&wallet.address)
             );
         }
@@ -2179,7 +2181,7 @@ fn wallet_list_html(fit: &mut TextFitter, others: &[WalletRow], embers: bool) ->
         let address = fit.middle(MONO, &wallet.address, inner).into_owned();
         put!(
             html,
-            r#"<div class="card"><div class="card-head"><i class="fa-solid fa-wallet row-icon"></i><span class="card-title">{title}</span><span class="row-meta">{balance}</span></div><div class="mono wallet-address">{address}</div><div class="card-actions"><button class="btn btn-sm" data-action="wallet:use:{a}"><i class="fa-solid fa-check"></i><span>Use for payments</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:copy:{a}" aria-label="Copy address"><i class="fa-solid fa-copy"></i><span class="tip tip-below-end">Copy address</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:export:{a}" aria-label="Export"><i class="fa-solid fa-file-export"></i><span class="tip tip-below-end">Export the wallet file</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:remove:{a}" aria-label="Remove"><i class="fa-solid fa-trash-can"></i><span class="tip tip-below-end">Remove this wallet</span></button></div></div>"#,
+            r#"<div class="card"><div class="card-head"><i class="fa-solid fa-wallet row-icon"></i><span class="card-title">{title}</span><span class="row-meta">{balance}</span></div><div class="mono wallet-address">{address}</div><div class="card-actions"><button class="btn btn-sm" data-action="wallet:use:{a}"><i class="fa-solid fa-check"></i><span>Use for payments</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:copy:{a}" aria-label="Copy address"><i class="fa-solid fa-copy"></i><span class="tip tip-below-end">Copy address</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:export:{a}" aria-label="Export"><i class="fa-solid fa-file-export"></i><span class="tip tip-below-end">Choose a folder for the wallet file</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:remove:{a}" aria-label="Remove"><i class="fa-solid fa-trash-can"></i><span class="tip tip-below-end">Remove this wallet</span></button></div></div>"#,
             title = escape(&title),
             balance = escape(&balance),
             address = escape(&address),
@@ -2581,6 +2583,29 @@ fn session_target(arg: &str) -> Option<(u64, &str)> {
 
 // ── The chrome document ─────────────────────────────────────────────────
 
+/// Only the trusted browser chrome can open native file panels. A page's
+/// shell provider cannot request one (see `cursor::PageShell`).
+trait WalletFileDialog {
+    fn choose_import_file(&self) -> Option<PathBuf>;
+    fn choose_export_folder(&self) -> Option<PathBuf>;
+}
+
+struct NativeWalletFileDialog;
+
+impl WalletFileDialog for NativeWalletFileDialog {
+    fn choose_import_file(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("Choose a wallet file to import")
+            .pick_file()
+    }
+
+    fn choose_export_folder(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("Choose a folder for the wallet export")
+            .pick_folder()
+    }
+}
+
 pub struct ChromeDocument {
     inner: BaseDocument,
     eng: Rc<Engine>,
@@ -2605,6 +2630,7 @@ pub struct ChromeDocument {
     /// frame, in tab order (`begin_paint`; ledger L9, H9). Kept to be reused.
     paint_hovers: Vec<Option<NodeId>>,
     wallet: Arc<Mutex<WalletView>>,
+    wallet_files: Box<dyn WalletFileDialog>,
     // Was `ui: UiState`, the whole `workspace.json`.
     /// The open tabs and the sidebar's layout (`state/session.json`).
     session: SessionState,
@@ -2759,6 +2785,7 @@ impl ChromeDocument {
             title: String::new(),
             flash: None,
             wallet: Default::default(),
+            wallet_files: Box::new(NativeWalletFileDialog),
             session,
             history,
             parents: BTreeMap::new(),
@@ -2913,6 +2940,15 @@ impl ChromeDocument {
     fn open_tab(&mut self, url: &str) {
         let parent = self.tabs.get(self.active).map(|(t, _)| t.id);
         self.add_tab(url, parent, true, "");
+    }
+
+    /// Open a URL delivered by the OS to the running browser window.
+    #[cfg(any(target_os = "macos", windows))]
+    pub(crate) fn open_external_url(&mut self, url: &str) {
+        self.open_tab(url);
+        // Delivery can precede the first surface, when no document poll has
+        // run yet. Persist the tab now so it survives a slow or failed paint.
+        self.save_state(Instant::now());
     }
 
     fn add_tab(&mut self, url: &str, parent: Option<u64>, load: bool, title: &str) {
@@ -4187,6 +4223,21 @@ impl ChromeDocument {
                     Err(e) => self.say(Tone::Err, format!("Could not import: {e}")),
                 }
             }
+            "import-file" => {
+                let Some(path) = self.wallet_files.choose_import_file() else {
+                    return;
+                };
+                let result = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+                    .and_then(|text| wallets.import(&text, "imported"));
+                match result {
+                    Ok(a) => self.say(
+                        Tone::Ok,
+                        format!("Imported {}.", display::abbreviate(a.as_str(), 8, 6)),
+                    ),
+                    Err(e) => self.say(Tone::Err, format!("Could not import: {e}")),
+                }
+            }
             "use" => match Address::parse(arg).and_then(|a| wallets.set_active(&a)) {
                 Ok(()) => self.say(Tone::Ok, "This wallet now pays for deploys."),
                 Err(e) => self.say(Tone::Err, e),
@@ -4201,24 +4252,25 @@ impl ChromeDocument {
                     if let Some(why) = profile.read_only_reason() {
                         return Err(format!("the wallet file is not written: {why}"));
                     }
+                    let Some(dir) = self.wallet_files.choose_export_folder() else {
+                        return Ok(None);
+                    };
                     let body = wallets.export(&a)?;
-                    // Was `<profile>/exports/`, in the single profile folder.
-                    let dir = profile.layout.exports_dir();
-                    gaze_fs::create_dir_durably(profile.fs(), &dir).map_err(|e| e.to_string())?;
                     let p = dir.join(format!("{a}.json"));
                     // A wallet file is a private key: owner-only from the start.
                     gaze_fs::write_atomic(profile.fs(), &p, body.as_bytes(), Perm::Private)
                         .map_err(|e| e.to_string())?;
-                    Ok(p)
+                    Ok(Some(p))
                 });
                 match r {
-                    Ok(p) => self.say(
+                    Ok(Some(p)) => self.say(
                         Tone::Ok,
                         format!(
                             "Wallet file written to {} (F1R3Sky can import it).",
                             p.display()
                         ),
                     ),
+                    Ok(None) => {}
                     Err(e) => self.say(Tone::Err, e),
                 }
             }
@@ -5345,6 +5397,13 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
         format!("cannot open a window ({e}); use --headless to run pages without one")
     })?;
     event_loop.set_control_flow(ControlFlow::Wait);
+    #[cfg(target_os = "macos")]
+    let _url_delegate = crate::macos_url::install(event_loop.create_proxy())?;
+    #[cfg(windows)]
+    let (_url_server, windows_urls) = {
+        let url_proxy = event_loop.create_proxy();
+        crate::windows_url::start(&eng.profile.layout.runtime, move || url_proxy.wake_up())?
+    };
     let (proxy, rx) = BlitzShellProxy::new(event_loop.create_proxy());
     let app = BlitzApplication::new(proxy, rx);
     // `window.json` as start-up left it, and how to write it: the chrome,
@@ -5369,8 +5428,15 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
         save: Box::new(move |state: &WindowState| keeps.profile.write_state(state)),
     };
     // A resize is painted once, with the chrome already fitted to it (L9, H7).
+    let application = ChromeApplication::new(app, window);
+    #[cfg(windows)]
+    let application = {
+        let mut application = application;
+        application.receive_windows_urls(windows_urls);
+        application
+    };
     event_loop
-        .run_app(ChromeApplication::new(app, window))
+        .run_app(application)
         .map_err(|e| e.to_string())
 }
 

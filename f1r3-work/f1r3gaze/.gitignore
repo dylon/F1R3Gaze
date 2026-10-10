@@ -2,5 +2,6 @@
 # (target/scratch/). What reproduces an experiment is versioned elsewhere:
 # scripts/ and docs/storage/mutations/.
 /target/
+/dist/
 # Python bytecode of the scripts (scripts/mutation-check.py imported as a module).
 __pycache__/
