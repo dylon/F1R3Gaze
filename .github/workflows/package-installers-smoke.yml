@@ -29,13 +29,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: f1r3-work/f1r3gaze
-      - name: Build both native architectures
+      - name: Build universal DMG and component PKG
         shell: bash
         run: |
           set -euo pipefail
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --locked --release --target "$target" -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
-          done
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          log="$RUNNER_TEMP/f1r3gaze-macos-package.log"
+          if bash packaging/macos/build-local.sh "$version" dist >"$log" 2>&1; then
+            tail -n 30 "$log"
+          else
+            tail -n 80 "$log"
+            summary="$(tail -n 12 "$log" | tr '\n' ' ' | sed 's/%/%25/g;s/\r/%0D/g')"
+            echo "::error::macOS package build failed: $summary"
+            exit 1
+          fi
       - name: Test native system theme selection
         shell: bash
         env:
@@ -56,21 +63,6 @@ jobs:
         run: |
           cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
           cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
-      - name: Build DMG and component PKG
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
-          log="$RUNNER_TEMP/f1r3gaze-macos-package.log"
-          if DIST=dist bash -x packaging/macos/package.sh "$version" \
-            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release >"$log" 2>&1; then
-            cat "$log"
-          else
-            tail -n 80 "$log"
-            summary="$(tail -n 12 "$log" | tr '\n' ' ' | sed 's/%/%25/g;s/\r/%0D/g')"
-            echo "::error::macOS package build failed: $summary"
-            exit 1
-          fi
       - name: Install and remove generated Homebrew cask
         shell: bash
         run: |
