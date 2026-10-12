@@ -249,10 +249,18 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: f1r3-work/f1r3gaze }
-      - run: |
-          for t in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --locked --release --target $t -p gaze-shell -p f1r3c --features gaze-shell/os-keyring
-          done
+      - name: Build, sign and notarise universal DMG and component PKG
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_INSTALLER_CERT_P12: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
+          MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_INSTALLER_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: packaging/macos/build-local.sh "${VERSION#v}" dist
       - name: Test native system theme selection
         env:
           CARGO_BUILD_TARGET: aarch64-apple-darwin
@@ -269,20 +277,6 @@ jobs:
         run: |
           cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --lib macos_import::tests::
           cargo test --locked --release --target aarch64-apple-darwin -p gaze-shell --features gaze-shell/os-keyring --bin f1r3gaze store_import_
-      - name: Package, sign, notarise
-        env:
-          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          MACOS_INSTALLER_CERT_P12: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
-          MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
-          MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_INSTALLER_SIGN_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: |
-          DIST=dist packaging/macos/package.sh "${VERSION#v}" \
-            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
       - name: Install and remove generated Homebrew cask
         run: bash packaging/macos/ci-homebrew.sh "${VERSION#v}"
       - name: Exercise isolated macOS App Sandbox prototype

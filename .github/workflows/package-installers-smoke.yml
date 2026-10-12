@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
           log="$RUNNER_TEMP/f1r3gaze-macos-package.log"
-          if bash packaging/macos/build-local.sh "$version" dist >"$log" 2>&1; then
+          if packaging/macos/build-local.sh "$version" dist >"$log" 2>&1; then
             tail -n 30 "$log"
           else
             tail -n 80 "$log"
