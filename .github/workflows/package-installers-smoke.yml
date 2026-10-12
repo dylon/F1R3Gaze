@@ -73,6 +73,19 @@ jobs:
         run: |
           version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
           bash packaging/macos/ci-store-sandbox.sh "$version"
+      - name: Install XcodeGen for native Store profile panel test
+        run: brew install xcodegen
+      - name: Select an external Store profile through the native folder panel
+        shell: bash
+        timeout-minutes: 12
+        run: |
+          version="$(awk '/^\[workspace.package\]/{section=1;next} /^\[/{section=0} section && /^version = / {gsub(/"/,"",$3);print $3;exit}' Cargo.toml)"
+          bash packaging/macos/ci-store-native-panel.sh "$version"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-store-native-panel-log
+          path: ${{ runner.temp }}/f1r3gaze-store-native-panel-*.log
       - name: Mount DMG, upgrade PKG and deliver URL
         shell: bash
         run: |

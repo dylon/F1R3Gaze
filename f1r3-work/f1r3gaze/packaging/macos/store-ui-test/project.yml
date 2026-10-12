@@ -1,0 +1,26 @@
+name: F1R3GazeStoreImportUITest
+options:
+  bundleIdPrefix: io.f1r3fly.f1r3gaze.ci
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_VERSION: "5.0"
+    CODE_SIGNING_ALLOWED: "NO"
+targets:
+  UITestHost:
+    type: application
+    platform: macOS
+    sources: [Host]
+    settings:
+      GENERATE_INFOPLIST_FILE: "YES"
+    scheme:
+      testTargets:
+        - StoreImportUITests
+  StoreImportUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [UITests]
+    dependencies:
+      - target: UITestHost
+    settings:
+      GENERATE_INFOPLIST_FILE: "YES"
