@@ -130,6 +130,8 @@ if [ -n "$SIGN" ] && [ -n "${APPLE_ID:-}" ]; then
     xcrun stapler staple "$artifact"
     xcrun stapler validate "$artifact"
   done
+  spctl --assess --type execute --verbose "$APP"
+  spctl --assess --type install --verbose "$PKG"
   spctl --assess --type open --context context:primary-signature --verbose "$DMG"
 else
   echo "notarisation skipped (needs signing and APPLE_ID)" >&2
