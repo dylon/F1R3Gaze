@@ -281,6 +281,16 @@ jobs:
         run: bash packaging/macos/ci-homebrew.sh "${VERSION#v}"
       - name: Exercise isolated macOS App Sandbox prototype
         run: bash packaging/macos/ci-store-sandbox.sh "${VERSION#v}"
+      - name: Install XcodeGen for native Store profile panel test
+        run: brew install xcodegen
+      - name: Select an external Store profile through the native folder panel
+        timeout-minutes: 12
+        run: bash packaging/macos/ci-store-native-panel.sh "${VERSION#v}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-store-native-panel-arm64-log
+          path: ${{ runner.temp }}/f1r3gaze-store-native-panel-*.log
       - name: Mount DMG, upgrade PKG and deliver URL
         run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
       - uses: actions/upload-artifact@v4
@@ -331,6 +341,16 @@ jobs:
         run: bash packaging/macos/ci-homebrew.sh "${VERSION#v}"
       - name: Exercise isolated macOS App Sandbox prototype on Intel
         run: bash packaging/macos/ci-store-sandbox.sh "${VERSION#v}"
+      - name: Install XcodeGen for native Intel Store profile panel test
+        run: brew install xcodegen
+      - name: Select an external Store profile through the native Intel folder panel
+        timeout-minutes: 12
+        run: bash packaging/macos/ci-store-native-panel.sh "${VERSION#v}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-store-native-panel-intel-log
+          path: ${{ runner.temp }}/f1r3gaze-store-native-panel-*.log
       - name: Upgrade PKG and deliver URLs on Intel Mac
         run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
 
