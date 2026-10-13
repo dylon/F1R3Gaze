@@ -404,6 +404,10 @@ impl ProfileImportDialog for NativeProfileImportDialog {
             return ImportDecision::Cancel;
         };
         let app = NSApplication::sharedApplication(mtm);
+        // This dialog runs before the browser creates its event loop. Complete
+        // AppKit launch first so macOS exposes the alert to accessibility and
+        // UI automation while runModal processes its own events.
+        app.finishLaunching();
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
         let alert = NSAlert::new(mtm);
