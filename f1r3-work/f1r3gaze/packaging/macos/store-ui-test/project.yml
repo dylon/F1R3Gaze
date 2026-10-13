@@ -1,6 +1,8 @@
 name: F1R3GazeStoreImportUITest
 options:
   bundleIdPrefix: io.f1r3fly.f1r3gaze.ci
+  projectFormat: xcode15_3
+  xcodeVersion: "15.4"
 settings:
   base:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
