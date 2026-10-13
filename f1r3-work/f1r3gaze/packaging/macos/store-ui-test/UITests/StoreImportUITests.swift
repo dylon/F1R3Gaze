@@ -13,11 +13,11 @@ final class StoreImportUITests: XCTestCase {
         defer { app.terminate() }
         app.launch()
 
-        let yes = app.buttons["Yes"]
+        let yes = app.dialogs.buttons["Yes"]
         XCTAssertTrue(yes.waitForExistence(timeout: 30), app.debugDescription)
         yes.click()
 
-        let open = app.buttons["Open"]
+        let open = app.buttons["Open"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 30), app.debugDescription)
         app.typeKey("g", modifierFlags: [.command, .shift])
         let pathField = app.textFields.firstMatch
