@@ -1,7 +1,9 @@
-# Tag vX.Y.Z to publish signed installers for macOS, Windows and Linux.
+# Tag vX.Y.Z in any repository to validate the full release matrix.
 #
-# Fork smoke builds may be unsigned. Production publication requires every
-# signing and notarization credential below and fails before creating a draft.
+# Set the repository variable RELEASE_PUBLISH_ENABLED=true to publish signed
+# tag builds. A manual dispatch from an existing tag may select publish_draft.
+# Production publication requires every signing and notarization credential
+# below and fails before creating a draft.
 #   macOS:   MACOS_CERT_P12 (base64 Developer ID Application .p12), MACOS_CERT_PASSWORD,
 #            MACOS_SIGN_IDENTITY, MACOS_INSTALLER_CERT_P12,
 #            MACOS_INSTALLER_CERT_PASSWORD, MACOS_INSTALLER_SIGN_IDENTITY,
@@ -20,7 +22,7 @@ on:
         description: "Version to build (no v)"
         required: true
       publish_draft:
-        description: "Create a draft GitHub release after validation"
+        description: "Publish a signed draft from the selected existing vX.Y.Z tag"
         type: boolean
         default: false
 permissions:
@@ -37,10 +39,28 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check release version against the selected checkout
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            python3 packaging/release_context.py check-source "$VERSION" --tag-name "$GITHUB_REF_NAME"
+          else
+            python3 packaging/release_context.py check-source "$VERSION"
+          fi
+      - name: Require an existing tag for manual publication
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_draft == true }}
+        run: |
+          [[ "$GITHUB_REF_TYPE" == tag ]] || {
+            echo "select an existing vX.Y.Z tag to publish; branches are for validation" >&2
+            exit 2
+          }
+      - name: Reject an existing release tag on another commit
+        if: ${{ github.ref_type == 'tag' && ((github.event_name == 'push' && vars.RELEASE_PUBLISH_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish_draft == true)) }}
+        run: python3 packaging/release_context.py check-publication-tag "$VERSION" --require-existing
       - run: python3 -m pip install --user -r packaging/winget/requirements.txt
       - run: packaging/verify-source.sh
 
   linux:
+    needs: source_checks
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +158,7 @@ jobs:
             bash packaging/linux/ci-deb.sh "${VERSION#v}"
 
   rpm:
+    needs: source_checks
     strategy:
       fail-fast: false
       matrix:
@@ -227,11 +248,12 @@ jobs:
           path: ${{ steps.snapcraft.outputs.snap }}
 
   macos:
+    needs: source_checks
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Require production macOS signing and notarization credentials
-        if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+        if: ${{ github.ref_type == 'tag' && ((github.event_name == 'push' && vars.RELEASE_PUBLISH_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish_draft == true)) }}
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -298,6 +320,7 @@ jobs:
         with: { name: macos, path: f1r3-work/f1r3gaze/dist/* }
 
   macos_intel_theme:
+    needs: source_checks
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
@@ -355,13 +378,14 @@ jobs:
         run: bash packaging/macos/ci-smoke.sh "${VERSION#v}"
 
   windows:
+    needs: source_checks
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Require production Windows signing credentials
-        if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+        if: ${{ github.ref_type == 'tag' && ((github.event_name == 'push' && vars.RELEASE_PUBLISH_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish_draft == true)) }}
         env:
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
@@ -503,9 +527,11 @@ jobs:
           fingerprint=$(gpg --batch --show-keys --with-colons --fingerprint \
             publication-input/repository/f1r3gaze-signing-key.asc | awk -F: '$1 == "fpr" {print $10; exit}')
           source "$RUNNER_TEMP/winget-venv/bin/activate"
+          URL=$(python3 packaging/release_context.py url "$V" \
+            --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY")
           bash packaging/repository/assemble-publication.sh \
             publication-input/dist publication-input/repository "$V" \
-            "https://example.invalid/releases/v$V" "$fingerprint" metadata
+            "$URL" "$fingerprint" metadata
 
   repository_clients:
     needs: promotion_dry_run
@@ -537,7 +563,7 @@ jobs:
           done
 
   production_promotion:
-    if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+    if: ${{ github.ref_type == 'tag' && ((github.event_name == 'push' && vars.RELEASE_PUBLISH_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish_draft == true)) }}
     needs: [source_checks, linux, debian_lifecycle, arch, rpm, flatpak, snap, repository_staging, promotion_dry_run, publication_assembly_dry_run, repository_clients, macos, macos_intel_theme, macos_intel_installer, windows]
     runs-on: ubuntu-22.04
     container: archlinux:base
@@ -573,7 +599,8 @@ jobs:
           GPG_EXPECTED_FINGERPRINT: ${{ vars.GPG_EXPECTED_FINGERPRINT }}
         run: |
           V="${VERSION#v}"
-          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
+          URL=$(python3 packaging/release_context.py url "$V" \
+            --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY")
           bash packaging/repository/promote.sh --dist dist --out production-promotion \
             --version "$V" --base-url "$URL" --fingerprint "$GPG_EXPECTED_FINGERPRINT"
           tar -C production-promotion -cf "signed-repository-$V.tar" repository
@@ -587,7 +614,7 @@ jobs:
           path: f1r3-work/f1r3gaze/signed-repository-*.tar
 
   publish:
-    if: ${{ github.repository == 'F1R3FLY-io/F1R3Gaze' && (github.ref_type == 'tag' || inputs.publish_draft == true) }}
+    if: ${{ github.ref_type == 'tag' && ((github.event_name == 'push' && vars.RELEASE_PUBLISH_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish_draft == true)) }}
     needs: production_promotion
     runs-on: ubuntu-22.04
     container: archlinux:base
@@ -611,14 +638,18 @@ jobs:
         run: |
           V="${VERSION#v}"
           tar -xf "repository-input/signed-repository-$V.tar"
-          URL="https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v$V"
+          URL=$(python3 packaging/release_context.py url "$V" \
+            --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY")
           source "$RUNNER_TEMP/winget-venv/bin/activate"
           bash packaging/repository/assemble-publication.sh \
             dist repository "$V" "$URL" "$GPG_EXPECTED_FINGERPRINT" metadata
       - uses: actions/upload-artifact@v4
         with: { name: package-manager-manifests, path: f1r3-work/f1r3gaze/metadata }
-      - uses: softprops/action-gh-release@v2
+      - name: Recheck release tag before drafting
+        run: python3 packaging/release_context.py check-publication-tag "$VERSION" --require-existing
+      - uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', inputs.version) }}
+          tag_name: ${{ github.ref_name }}
           draft: true
+          fail_on_unmatched_files: true
           files: f1r3-work/f1r3gaze/dist/*

@@ -5,6 +5,7 @@ dist=${1:?release package directory required}
 version=${2:?stable version required}
 mode=${3:-repository}
 output=${4:-}
+base_url=${5:-}
 [[ "$mode" == repository || "$mode" == full-release ]] ||
   { echo "mode must be repository or full-release" >&2; exit 2; }
 [[ -z "$output" || "$mode" == full-release ]] ||
@@ -17,6 +18,9 @@ trap 'rm -rf "$work"' EXIT
 export GNUPGHOME="$work/gnupg"
 mkdir -m 700 "$GNUPGHOME"
 if [[ "$mode" == full-release ]]; then
+  if [[ -z "$base_url" ]]; then
+    base_url=$(python3 "$project/packaging/release_context.py" url "$version")
+  fi
   passphrase='CI-only repository signing passphrase'
   printf '%s' "$passphrase" | gpg --batch --yes --pinentry-mode loopback \
     --passphrase-fd 0 --quick-generate-key \
@@ -31,7 +35,7 @@ if [[ "$mode" == full-release ]]; then
   export GPG_PRIVATE_KEY
   GPG_PASSPHRASE=$passphrase bash "$here/promote.sh" \
     --dist "$dist" --out "$work/promotion-root" --version "$version" \
-    --base-url "https://example.invalid/releases/v$version" \
+    --base-url "$base_url" \
     --fingerprint "$fingerprint"
   if [[ -n "$output" ]]; then
     [[ ! -e "$output" ]] || { echo "signed-tree output already exists: $output" >&2; exit 2; }
