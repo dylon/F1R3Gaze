@@ -1,6 +1,6 @@
 name: f1r3gaze
 base: core24
-version: '0.1.0'
+version: '0.1.1'
 summary: Browser with in-process f1r3lang execution
 description: |
   F1R3Gaze renders sites with its in-process RSpace and includes f1r3c.

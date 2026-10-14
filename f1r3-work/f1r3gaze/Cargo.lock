@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "f1r3c"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gaze-fs",
  "gaze-knf",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-blob"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gaze-fs",
  "gaze-net",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-broker"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gaze-knf",
  "k1ndl1ng-parse",
@@ -1187,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-dom-blitz"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blitz-dom",
  "blitz-html",
@@ -1204,14 +1204,14 @@ dependencies = [
 
 [[package]]
 name = "gaze-dom-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "k1ndl1ng-norm",
 ]
 
 [[package]]
 name = "gaze-exec"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "b3ll0ws",
  "campf1r3-core",
@@ -1225,15 +1225,15 @@ dependencies = [
 
 [[package]]
 name = "gaze-fs"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "gaze-graded"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "gaze-knf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "k1ndl1ng-norm",
  "k1ndl1ng-parse",
@@ -1241,7 +1241,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-net"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blitz-traits",
  "k1ndl1ng-norm",
@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-reach"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gaze-dom-core",
  "gaze-exec",
@@ -1263,7 +1263,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-shard"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gaze-blob",
  "gaze-fs",
@@ -1280,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-shell"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyrender",
  "anyrender_vello",
@@ -1322,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gaze-fs",
  "k1ndl1ng-norm",
@@ -1330,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "gaze-wallet"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "bs58",

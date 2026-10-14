@@ -1,4 +1,4 @@
-<!-- WiX v4. Build: wix build f1r3gaze.wxs -arch x64 -d Version=0.1.0 -d Bin=..\bin -d Icons=..\icons -o F1R3Gaze.msi -->
+<!-- WiX v4. Build: wix build f1r3gaze.wxs -arch x64 -d Version=0.1.1 -d Bin=..\bin -d Icons=..\icons -o F1R3Gaze.msi -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="F1R3Gaze" Manufacturer="F1R3FLY.io" Version="$(var.Version)"
            UpgradeCode="6B0E6C2A-3F1D-4C55-9E6B-F1A3C0DE2026" Scope="perMachine" Language="1033">

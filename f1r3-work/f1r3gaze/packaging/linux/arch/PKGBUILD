@@ -1,6 +1,6 @@
 # Run through packaging/linux/build.sh, or set the three F1R3GAZE_* variables.
 pkgname=f1r3gaze
-pkgver=${F1R3GAZE_VERSION:-0.1.0}
+pkgver=${F1R3GAZE_VERSION:-0.1.1}
 pkgrel=1
 pkgdesc='Browser with in-process RSpace and f1r3c'
 arch=('x86_64' 'aarch64')

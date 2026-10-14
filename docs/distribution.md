@@ -33,9 +33,9 @@ Build the two Rust executables and then package them:
 ```sh
 cd f1r3-work/f1r3gaze
 cargo build --locked --release -p gaze-shell -p f1r3c
-packaging/linux/build.sh --format arch --version 0.1.0 --out dist
-packaging/linux/build.sh --format deb --version 0.1.0 --out dist
-packaging/linux/build.sh --format tar --version 0.1.0 --out dist
+packaging/linux/build.sh --format arch --version 0.1.1 --out dist
+packaging/linux/build.sh --format deb --version 0.1.1 --out dist
+packaging/linux/build.sh --format tar --version 0.1.1 --out dist
 packaging/verify-source.sh
 ```
 
@@ -48,7 +48,7 @@ packaging/linux/fetch-appimagetool.sh dist/appimagetool-tools
 APPIMAGETOOL=packaging/linux/appimagetool-wrapper.sh \
 APPIMAGETOOL_IMAGE="$PWD/dist/appimagetool-tools/appimagetool-x86_64.AppImage" \
 APPIMAGETOOL_RUNTIME_FILE="$PWD/dist/appimagetool-tools/runtime-x86_64" \
-packaging/linux/build.sh --format appimage --version 0.1.0 --out dist
+packaging/linux/build.sh --format appimage --version 0.1.1 --out dist
 ```
 
 The wrapper runs the AppImage tool without requiring FUSE on CI. The tool release and runtime checksums are taken from the [appimagetool](https://github.com/AppImage/appimagetool/releases/tag/1.9.1) and [type2 runtime](https://github.com/AppImage/type2-runtime/releases/tag/20251108) release assets.
@@ -56,18 +56,18 @@ The wrapper runs the AppImage tool without requiring FUSE on CI. The tool releas
 Inspect the resulting Arch and Debian packages before installing them:
 
 ```sh
-pacman -Qip dist/f1r3gaze-0.1.0-1-x86_64.pkg.tar.zst
-pacman -Qlp dist/f1r3gaze-0.1.0-1-x86_64.pkg.tar.zst
-dpkg-deb --field dist/f1r3gaze_0.1.0_amd64.deb
-dpkg-deb --contents dist/f1r3gaze_0.1.0_amd64.deb
+pacman -Qip dist/f1r3gaze-0.1.1-1-x86_64.pkg.tar.zst
+pacman -Qlp dist/f1r3gaze-0.1.1-1-x86_64.pkg.tar.zst
+dpkg-deb --field dist/f1r3gaze_0.1.1_amd64.deb
+dpkg-deb --contents dist/f1r3gaze_0.1.1_amd64.deb
 ```
 
 Install local packages with `sudo pacman -U FILE.pkg.tar.zst` on Arch or `sudo apt install ./FILE.deb` on Debian/Ubuntu. For Fedora or Enterprise Linux use `sudo dnf install ./FILE.rpm`; on openSUSE use `sudo zypper install ./FILE.rpm`. These local commands use the package manager's dependency resolver. The tarball and AppImage are portable artifacts and do not create a package-manager upgrade path.
 
-From `f1r3-work/f1r3gaze`, the following commands install a locally built 0.1.0 package for the current CPU. Use a newer version and repeat the install command to upgrade a local DEB, Arch package or RPM. Select the RPM channel that matches the running distribution (`fc43`, `fc44`, `el9`, `el10` or `opensuse16`):
+From `f1r3-work/f1r3gaze`, the following commands install a locally built 0.1.1 package for the current CPU. Use a newer version and repeat the install command to upgrade a local DEB, Arch package or RPM. Select the RPM channel that matches the running distribution (`fc43`, `fc44`, `el9`, `el10` or `opensuse16`):
 
 ```sh
-VERSION=0.1.0
+VERSION=0.1.1
 sudo pacman -U "dist/f1r3gaze-${VERSION}-1-$(uname -m).pkg.tar.zst"
 f1r3gaze --version
 sudo pacman -R f1r3gaze
@@ -90,7 +90,7 @@ sudo zypper remove f1r3gaze
 Run only the commands for the current distribution. The sandbox bundles have their own install and removal commands:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.1.1
 flatpak --user install "dist/F1R3Gaze-${VERSION}-$(uname -m).flatpak"
 flatpak run --user io.f1r3fly.F1R3Gaze
 flatpak --user uninstall io.f1r3fly.F1R3Gaze
@@ -124,18 +124,18 @@ Flatpak trusts the configured Flathub remote, and Snap validates Store assertion
 `packaging/repository/stage.py` creates an unsigned publication tree in a *fresh* output directory:
 
 ```sh
-python3 packaging/repository/stage.py --dist dist --out dist/repository-0.1.0
-python3 packaging/release_metadata.py catalog --version 0.1.0 --dist dist \
-  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.0 \
+python3 packaging/repository/stage.py --dist dist --out dist/repository-0.1.1
+python3 packaging/release_metadata.py catalog --version 0.1.1 --dist dist \
+  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.1 \
   --out dist/catalog.json
 ```
 
-The tree contains Debian `Packages` and `Release` files, pacman `.db`/`.files` indexes, and RPM `repodata` when `createrepo_c` and RPMs are available. RPM metadata uses gzip explicitly because [createrepo_c supports multiple compression formats](https://man.archlinux.org/man/extra/createrepo_c/createrepo_c.8.en) and its default varies by host. Both pull-request/main CI and the release workflow stage the complete DEB, Arch, and RPM matrix with `--version 0.1.0 --require-complete`, then run `packaging/repository/verify-staging.py --tree TREE --version 0.1.0` to check each index references its staged package. The release workflow uploads a compressed copy of the staging tree for review. It is marked `UNSIGNED-STAGING`. It must not be published until its repository signatures, package signatures, public key, fingerprint instructions, and install/update checks are ready. The publication host must be separate from the existing Reach demo Pages site. Staging stops before the tree reaches its configured size budget.
+The tree contains Debian `Packages` and `Release` files, pacman `.db`/`.files` indexes, and RPM `repodata` when `createrepo_c` and RPMs are available. RPM metadata uses gzip explicitly because [createrepo_c supports multiple compression formats](https://man.archlinux.org/man/extra/createrepo_c/createrepo_c.8.en) and its default varies by host. Both pull-request/main CI and the release workflow stage the complete DEB, Arch, and RPM matrix with `--version 0.1.1 --require-complete`, then run `packaging/repository/verify-staging.py --tree TREE --version 0.1.1` to check each index references its staged package. The release workflow uploads a compressed copy of the staging tree for review. It is marked `UNSIGNED-STAGING`. It must not be published until its repository signatures, package signatures, public key, fingerprint instructions, and install/update checks are ready. The publication host must be separate from the existing Reach demo Pages site. Staging stops before the tree reaches its configured size budget.
 
 To prepare a signed promotion, work from a copy of the release artifacts. Sign the RPM files **before** creating repository indexes: RPM signatures change package bytes, so an index made earlier would contain stale hashes. `rpmsign --addsign` inserts the package signature, and `rpmkeys --checksig` verifies it against a temporary key database; both operations follow the [RPM signing](https://rpm.org/docs/6.1.x/man/rpmsign.1) and [key verification](https://rpm.org/docs/6.1.x/man/rpmkeys.8) interfaces. Then stage the repository from those signed bytes, sign its metadata, regenerate the catalog and checksums, and run the promotion gate:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.1.1
 FINGERPRINT=YOUR_FULL_PUBLISHED_OPENPGP_FINGERPRINT
 PUBLIC_KEY=/path/to/verified-public-key.asc
 RELEASE_URL=https://YOUR_RELEASE_HOST/releases/v${VERSION}
@@ -160,7 +160,7 @@ python3 packaging/repository/promotion_check.py --dist dist-promotion \
 The normal production entry point executes that sequence with a protected key. Set `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` through a secure local secret source, then run this from `f1r3-work/f1r3gaze` after collecting the complete unsigned artifact matrix in `dist`:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.1.1
 FINGERPRINT=YOUR_INDEPENDENTLY_REVIEWED_FULL_PRIMARY_FINGERPRINT
 RELEASE_URL=https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v${VERSION}
 packaging/repository/promote.sh --dist dist --out "signed-promotion-${VERSION}" \
@@ -262,15 +262,15 @@ The published tree uses `apt`, `arch/x86_64`, `arch/aarch64`, and `rpm/{fc43,fc4
 The draft GitHub release collects artifacts first, generates `catalog.json`, and then generates `SHA256SUMS` and its detached signature when a key is configured. CI also generates candidate Homebrew and WinGet manifests from the actual DMG and MSI bytes. Publish those manifests only after the DMG is notarized and the MSI is signed:
 
 ```sh
-python3 packaging/release_metadata.py homebrew --version 0.1.0 --dist dist \
-  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.0 \
+python3 packaging/release_metadata.py homebrew --version 0.1.1 --dist dist \
+  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.1 \
   --out metadata/Casks/f1r3gaze.rb
-python3 packaging/release_metadata.py winget --version 0.1.0 --dist dist \
-  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.0 \
+python3 packaging/release_metadata.py winget --version 0.1.1 --dist dist \
+  --base-url https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.1 \
   --out metadata/winget
 ```
 
-The cask points to the DMG and links `f1r3c` from the installed app. This follows Homebrew's [cask artifact model](https://docs.brew.sh/Cask-Cookbook). The pull-request/main installer and tag release workflows use `packaging/macos/ci-homebrew.sh` to create a temporary local tap from each CI-built DMG. On Apple Silicon and Intel runners, Homebrew installs the cask, runs the app and `f1r3c` binaries, and removes both. Only the CI tap uses a `file://` URL; the publication cask uses the verified release URL and digest. The WinGet output is a three-file manifest set matching the [community repository format](https://github.com/microsoft/winget-pkgs/blob/master/.github/instructions/manifests.instructions.md). `packaging/winget/validate.py metadata/winget/F1R3FLY.F1R3Gaze/0.1.0 --dist dist` validates all three files against a pinned copy of [Microsoft's 1.12.0 manifest schemas](https://github.com/microsoft/winget-cli/tree/49d0f8291b40f88744a29ae7ca0d1df962ade537/schemas/JSON/manifests/v1.12.0), checks their shared identity and version, and compares the installer hash with the built MSI. Install `packaging/winget/requirements.txt` first. Microsoft's `winget validate` and its community submission checks remain publication steps. Neither generator submits or publishes anything.
+The cask points to the DMG and links `f1r3c` from the installed app. This follows Homebrew's [cask artifact model](https://docs.brew.sh/Cask-Cookbook). The pull-request/main installer and tag release workflows use `packaging/macos/ci-homebrew.sh` to create a temporary local tap from each CI-built DMG. On Apple Silicon and Intel runners, Homebrew installs the cask, runs the app and `f1r3c` binaries, and removes both. Only the CI tap uses a `file://` URL; the publication cask uses the verified release URL and digest. The WinGet output is a three-file manifest set matching the [community repository format](https://github.com/microsoft/winget-pkgs/blob/master/.github/instructions/manifests.instructions.md). `packaging/winget/validate.py metadata/winget/F1R3FLY.F1R3Gaze/0.1.1 --dist dist` validates all three files against a pinned copy of [Microsoft's 1.12.0 manifest schemas](https://github.com/microsoft/winget-cli/tree/49d0f8291b40f88744a29ae7ca0d1df962ade537/schemas/JSON/manifests/v1.12.0), checks their shared identity and version, and compares the installer hash with the built MSI. Install `packaging/winget/requirements.txt` first. Microsoft's `winget validate` and its community submission checks remain publication steps. Neither generator submits or publishes anything.
 
 After a signing key and verified fingerprint are published, a customer can check a release download with:
 
@@ -290,8 +290,8 @@ To build the DMG and component PKG on an Apple Silicon or Intel Mac, install Xco
 ```sh
 rustup toolchain install 1.95.0
 rustup target add --toolchain 1.95.0 aarch64-apple-darwin x86_64-apple-darwin
-RUSTUP_TOOLCHAIN=1.95.0 packaging/macos/build-local.sh 0.1.0 dist
-open dist/F1R3Gaze-0.1.0-macos-universal.dmg
+RUSTUP_TOOLCHAIN=1.95.0 packaging/macos/build-local.sh 0.1.1 dist
+open dist/F1R3Gaze-0.1.1-macos-universal.dmg
 ```
 
 Drag `F1R3Gaze.app` from the mounted DMG to Applications, then open it there. The same script runs in installer CI and the tag release workflow.
@@ -308,11 +308,11 @@ On the first window launch of a fresh Store container, F1R3Gaze asks whether to 
 
 macOS Keychain items are separate from the profile's files. Before switching channels, export each wallet from the old app to a private file; then use the Store app's **Choose wallet file** action to import each key and verify its address. A copied wallet list alone does not prove that the Store signing identity may read the old app's Keychain entries. Production-signed customer-device testing must verify this flow, URL delivery, `--profile`, theme behavior and native file selection under the final entitlements. The Store build needs its own App Store Connect record and review. The Developer ID DMG/PKG and Homebrew cask continue to use their existing build and profile layout.
 
-The Windows script produces a per-machine MSI and a portable ZIP. On Linux, after installing `cargo-xwin`, PowerShell and the Rust Windows target, run `packaging/windows/build-local.sh 0.1.0 dist` to cross-compile the PE binaries and create the portable ZIP. The local x86_64 ZIP was built and its three files inspected. WiX v4 states it supports Windows only; an MSI build on this Arch host failed in its directory compiler, so the MSI uses a Windows runner. That runner installed a synthetic older MSI, upgraded to the release MSI, delivered a registered URL to the running installed app, removed the MSI and launched both ZIP commands. The MSI registers `f1r3://` and `f1r3h://` and supports silent installation and major upgrades. The smoke check also verifies its publisher in Add/Remove Programs and its Start menu shortcut, including shortcut removal. Stable numeric `X.Y.Z` releases avoid mapping distinct prereleases to the same MSI version. WinGet publication is separate from MSI creation.
+The Windows script produces a per-machine MSI and a portable ZIP. On Linux, after installing `cargo-xwin`, PowerShell and the Rust Windows target, run `packaging/windows/build-local.sh 0.1.1 dist` to cross-compile the PE binaries and create the portable ZIP. The local x86_64 ZIP was built and its three files inspected. WiX v4 states it supports Windows only; an MSI build on this Arch host failed in its directory compiler, so the MSI uses a Windows runner. That runner installed a synthetic older MSI, upgraded to the release MSI, delivered a registered URL to the running installed app, removed the MSI and launched both ZIP commands. The MSI registers `f1r3://` and `f1r3h://` and supports silent installation and major upgrades. The smoke check also verifies its publisher in Add/Remove Programs and its Start menu shortcut, including shortcut removal. Stable numeric `X.Y.Z` releases avoid mapping distinct prereleases to the same MSI version. WinGet publication is separate from MSI creation.
 
 The [Microsoft Store accepts a direct MSI or EXE listing](https://learn.microsoft.com/en-us/windows/apps/publish/get-started#app-submission-msiexe), so MSIX conversion is not a format prerequisite. The Gaze-only MSI is a candidate after production Authenticode signing and Windows 11 validation. Partner Center needs a verified publisher account and a versioned, immutable HTTPS URL to an offline installer; [certification checks](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/app-certification-process) include silent installation while logged in as a standard user, Start menu and Programs discovery, clean uninstall, malware and content review. The current MSI is per machine and may request administrator authorization. [Microsoft explicitly allows User Account Control prompts](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/manual-package-validation) in its manual Store validation procedure, so a per-user MSI is not automatically required. Test the actual signed Store candidate from a standard Windows 11 account before submission. Signing the MSI and its embedded executables with a trusted certificate is strongly recommended by Microsoft and is already supported by `packaging/windows/package.ps1` when credentials are supplied. A Store MSI listing does **not** give existing customers automatic Store updates: [the app or installer must provide those](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/publish-update-to-your-app-on-store). This project currently has MSI major upgrades and a WinGet update path, but no in-app update service; decide whether to add one before promoting the Store listing to customers. MSIX remains an optional later project if automatic Store updates and other MSIX services justify a separate package.
 
-Flatpak and Snap definitions use the same Gaze and compiler payload. Install `xvfb`, `xauth`, `xdotool` and a Mesa Vulkan driver on the smoke host. On a Linux machine with Flatpak Builder, use `packaging/flatpak/ci-smoke.sh 0.1.0` after building the native executables. It stages the input, creates `dist/F1R3Gaze-0.1.0-$(uname -m).flatpak`, installs it for the current user, exercises the sandbox and removes it. This test adds the Flathub remote for the matching runtime and needs network access. For Snap, prepare `packaging/snap/stage.sh target/release dist/snap-input 0.1.0`, then run Snapcraft 9 or newer on a matching Ubuntu 24.04 builder to pack it; `packaging/snap/ci-smoke.sh FILE.snap 0.1.0` installs, exercises and removes the unsigned snap. Both scripts run the built-in page, fetch a local HTTP page, compile and inspect a source file in the application writable area, check the installed desktop file's custom URL declarations, and open a visible window on an isolated X11 display with the Vulkan backend selected. The Snapcraft 8 `8_core24` OCI image does not support the recipe's GPU extension. The manifests are `packaging/flatpak/io.f1r3fly.F1R3Gaze.json` and `dist/snap-input/snap/snapcraft.yaml`. CI checks a virtual X11 display; real Wayland sessions, hardware GPUs and host desktop URL dispatch still need customer-device validation. Store publication follows those checks.
+Flatpak and Snap definitions use the same Gaze and compiler payload. Install `xvfb`, `xauth`, `xdotool` and a Mesa Vulkan driver on the smoke host. On a Linux machine with Flatpak Builder, use `packaging/flatpak/ci-smoke.sh 0.1.1` after building the native executables. It stages the input, creates `dist/F1R3Gaze-0.1.1-$(uname -m).flatpak`, installs it for the current user, exercises the sandbox and removes it. This test adds the Flathub remote for the matching runtime and needs network access. For Snap, prepare `packaging/snap/stage.sh target/release dist/snap-input 0.1.1`, then run Snapcraft 9 or newer on a matching Ubuntu 24.04 builder to pack it; `packaging/snap/ci-smoke.sh FILE.snap 0.1.1` installs, exercises and removes the unsigned snap. Both scripts run the built-in page, fetch a local HTTP page, compile and inspect a source file in the application writable area, check the installed desktop file's custom URL declarations, and open a visible window on an isolated X11 display with the Vulkan backend selected. The Snapcraft 8 `8_core24` OCI image does not support the recipe's GPU extension. The manifests are `packaging/flatpak/io.f1r3fly.F1R3Gaze.json` and `dist/snap-input/snap/snapcraft.yaml`. CI checks a virtual X11 display; real Wayland sessions, hardware GPUs and host desktop URL dispatch still need customer-device validation. Store publication follows those checks.
 
 ## Release sequence and pending work
 

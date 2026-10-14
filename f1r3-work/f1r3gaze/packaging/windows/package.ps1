@@ -1,6 +1,6 @@
 # Build dist\F1R3Gaze-<ver>-x64.msi from built binaries, signing the
 # executables and the installer when a certificate is provided.
-#   packaging\windows\package.ps1 -Version 0.1.0 -Bin target\release
+#   packaging\windows\package.ps1 -Version 0.1.1 -Bin target\release
 # Signing env (optional): WINDOWS_CERT_PFX (base64 .pfx), WINDOWS_CERT_PASSWORD,
 # WINDOWS_TIMESTAMP_URL (default http://timestamp.digicert.com).
 # Requires: the WiX v4 CLI (dotnet tool install --global wix) and signtool.
