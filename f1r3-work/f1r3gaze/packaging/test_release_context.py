@@ -51,10 +51,13 @@ class ReleaseContextTests(unittest.TestCase):
             with patch(
                 "release_context.git",
                 return_value="git@github.com:F1R3FLY-io/F1R3Gaze.git",
-            ):
+            ) as command:
                 self.assertEqual(
                     release_url("0.1.1", remote="origin"),
                     "https://github.com/F1R3FLY-io/F1R3Gaze/releases/download/v0.1.1",
+                )
+                command.assert_called_once_with(
+                    "remote", "get-url", "--push", "--all", "origin"
                 )
         self.assertEqual(
             release_url("0.1.1", "https://github.com/F1R3FLY-io/F1R3Gaze"),
@@ -72,9 +75,15 @@ class ReleaseContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             remote = root / "remote.git"
+            upstream = root / "upstream.git"
             clone = root / "clone"
             subprocess.run(
                 ["git", "init", "--bare", str(remote)], check=True, capture_output=True
+            )
+            subprocess.run(
+                ["git", "init", "--bare", str(upstream)],
+                check=True,
+                capture_output=True,
             )
             subprocess.run(["git", "init", str(clone)], check=True, capture_output=True)
 
@@ -87,7 +96,8 @@ class ReleaseContextTests(unittest.TestCase):
 
             git("config", "user.name", "Release Test")
             git("config", "user.email", "release@example.invalid")
-            git("remote", "add", "origin", str(remote))
+            git("remote", "add", "origin", str(upstream))
+            git("remote", "set-url", "--push", "origin", str(remote))
             (clone / "file").write_text("first")
             git("add", "file")
             git("commit", "-m", "first")
@@ -107,6 +117,9 @@ class ReleaseContextTests(unittest.TestCase):
                 (clone / "file").write_text("second")
                 git("commit", "-am", "second")
                 with self.assertRaisesRegex(ValueError, "not checked-out commit"):
+                    check_publication_tag("0.1.1")
+                git("remote", "set-url", "--push", "--add", "origin", str(upstream))
+                with self.assertRaisesRegex(ValueError, "one push destination"):
                     check_publication_tag("0.1.1")
 
 

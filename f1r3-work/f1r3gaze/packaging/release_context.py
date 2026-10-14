@@ -92,6 +92,15 @@ def git(*args: str) -> str:
     return result.stdout.strip()
 
 
+def publishing_remote_url(remote: str) -> str:
+    urls = git("remote", "get-url", "--push", "--all", remote).splitlines()
+    if len(set(urls)) != 1:
+        raise ValueError(
+            f"release remote {remote} must have exactly one push destination"
+        )
+    return urls[0]
+
+
 def release_url(
     value: str, repository_url: str | None = None, remote: str | None = None
 ) -> str:
@@ -105,7 +114,7 @@ def release_url(
             repository_url = f"{server.rstrip('/')}/{repository}"
         else:
             repository_url = repository_from_remote(
-                git("remote", "get-url", remote or "origin")
+                publishing_remote_url(remote or "origin")
             )
     return f"{validate_repository_url(repository_url)}/releases/download/v{version}"
 
@@ -115,7 +124,7 @@ def check_publication_tag(
 ) -> None:
     version = version_number(value)
     tag = f"refs/tags/v{version}"
-    refs = git("ls-remote", "--tags", remote, tag, f"{tag}^{{}}")
+    refs = git("ls-remote", "--tags", publishing_remote_url(remote), tag, f"{tag}^{{}}")
     entries = dict(line.split("\t", 1)[::-1] for line in refs.splitlines() if line)
     commit = entries.get(f"{tag}^{{}}", entries.get(tag))
     if require_existing and commit is None:
@@ -150,7 +159,9 @@ def main() -> None:
             if args.require_existing:
                 print("release tag matches checked-out commit")
             else:
-                print("release tag matches checked-out commit or is available for creation")
+                print(
+                    "release tag matches checked-out commit or is available for creation"
+                )
         else:
             print(release_url(args.version, args.repository_url, args.remote))
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
