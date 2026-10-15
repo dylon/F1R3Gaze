@@ -83,7 +83,7 @@ Architecture: $deb_arch
 Installed-Size: $size
 Depends: libc6 (>= 2.35), libgcc-s1, libfontconfig1, libxkbcommon0, libvulkan1 | libgl1
 Recommends: xdg-desktop-portal, zenity
-Maintainer: F1R3FLY.io <engineering@f1r3fly.io>
+Maintainer: F1R3FLY.io <f1r3fly.ceo@gmail.com>
 Homepage: https://github.com/F1R3FLY-io/F1R3Gaze
 Description: F1R3Gaze browser and f1r3lang compiler
  F1R3Gaze renders sites with its in-process RSpace. F1R3Node is an
