@@ -141,6 +141,8 @@ pub struct ChromeApplication<R: WindowRenderer> {
     kept: Option<KeptWindow>,
     /// Keep `window.json` (S13, part 2).
     keep_window: bool,
+    #[cfg(windows)]
+    windows_urls: Option<std::sync::mpsc::Receiver<String>>,
 }
 
 /// How many times the chrome's requests are drained in a row: carrying one
@@ -163,7 +165,14 @@ impl<R: WindowRenderer> ChromeApplication<R> {
             pending: Some(window),
             kept: None,
             keep_window: enabled("F1R3GAZE_KEEP_WINDOW"),
+            #[cfg(windows)]
+            windows_urls: None,
         }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn receive_windows_urls(&mut self, receiver: std::sync::mpsc::Receiver<String>) {
+        self.windows_urls = Some(receiver);
     }
 
     /// Makes the pending window where it was left (`plan_restore`); then,
@@ -366,6 +375,65 @@ impl<R: WindowRenderer> ChromeApplication<R> {
         for id in ids {
             self.carry_out_requests(event_loop, id);
         }
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    fn has_external_url_target(&self) -> bool {
+        self.pending.is_some()
+            || self.kept.as_ref().and_then(|kept| kept.id).is_some()
+            || !self.blitz.windows.is_empty()
+    }
+
+    /// OS URL events may arrive before the first surface exists or while the
+    /// app runs. Open each accepted address in delivery order.
+    #[cfg(any(target_os = "macos", windows))]
+    fn open_external_urls(&mut self, urls: Vec<String>) {
+        if let Some(pending) = self.pending.as_mut() {
+            for url in urls {
+                pending.chrome.open_external_url(&url);
+            }
+            return;
+        }
+        let id = self
+            .kept
+            .as_ref()
+            .and_then(|kept| kept.id)
+            .or_else(|| self.blitz.windows.keys().next().copied());
+        let Some(id) = id else {
+            return;
+        };
+        if urls.is_empty() {
+            return;
+        }
+        if let Some(chrome) = self.chrome(id) {
+            for url in urls {
+                chrome.open_external_url(&url);
+            }
+        }
+        if let Some(view) = self.blitz.windows.get_mut(&id) {
+            view.poll();
+            view.request_redraw();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_macos_urls(&mut self) {
+        if self.has_external_url_target() {
+            self.open_external_urls(crate::macos_url::take_pending());
+        }
+    }
+
+    #[cfg(windows)]
+    fn open_windows_urls(&mut self) {
+        if !self.has_external_url_target() {
+            return;
+        }
+        let urls = self
+            .windows_urls
+            .as_ref()
+            .map(|receiver| receiver.try_iter().collect())
+            .unwrap_or_default();
+        self.open_external_urls(urls);
     }
 
     /// Shows `effective` in `window_id`: to its pages and in its decorations,
@@ -644,6 +712,10 @@ impl<R: WindowRenderer> ApplicationHandler for ChromeApplication<R> {
     }
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        self.open_macos_urls();
+        #[cfg(windows)]
+        self.open_windows_urls();
         // The system's scheme before the first frame (macOS and Windows; None
         // elsewhere, where the chrome reads the portal instead).
         let preference = event_loop.system_theme().map(scheme_of);
@@ -664,6 +736,10 @@ impl<R: WindowRenderer> ApplicationHandler for ChromeApplication<R> {
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        self.open_macos_urls();
+        #[cfg(windows)]
+        self.open_windows_urls();
         self.blitz.proxy_wake_up(event_loop);
     }
 

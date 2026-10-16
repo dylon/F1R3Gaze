@@ -4,13 +4,16 @@
 //! second writes nothing, an old profile is moved, and the recovery
 //! commands (`trust`, `profile backups`) change only what they say.
 //!
-//! Every run is on a portable profile (`--profile`) under the scratch
-//! folder, with `HOME`, every XDG variable and `F1R3GAZE_PROFILE` pointed
-//! away from the user's own: no run can find, or move, a real profile.
+//! Every write-capable run is on a portable profile (`--profile`) under the
+//! scratch folder, with `HOME`, every XDG variable and `F1R3GAZE_PROFILE`
+//! pointed away from the user's own: no run can move a real profile. The
+//! bare `paths` command only prints the platform's default folders.
 // The cases write their fixtures directly.
 #![allow(clippy::disallowed_methods)]
 
 use gaze_shell::profile::layout::Layout;
+#[cfg(windows)]
+use gaze_shell::profile::layout::{Machine, Platform, platform_layout};
 use gaze_shell::profile::lock::{InstanceLock, Mode};
 use gaze_shell::profile::report::Report;
 use std::collections::BTreeMap;
@@ -200,14 +203,25 @@ fn paths_names_the_roots_and_creates_nothing() {
     }
     assert!(printed.contains(&format!("legacy\t{}\n", s.root().display())), "{printed}");
     assert!(!s.root().exists(), "nothing was made");
-    // Without --profile: the platform's folders, under the isolated home.
+    // Without --profile, paths only prints the platform's folders.
     let bare = s.run_bare(&["paths"]);
     assert!(bare.status.success(), "{}", text(&bare.stderr));
-    let home = s.dir.join("home");
-    for line in text(&bare.stdout).lines() {
-        let (_, path) = line.split_once('\t').expect("class<TAB>path");
-        let system = path.starts_with("/etc/") || path.starts_with("/usr/") || path.starts_with("/Library/");
-        assert!(Path::new(path).starts_with(&home) || system, "{line} is outside the test's home");
+    let printed = text(&bare.stdout);
+    // Windows Known Folders take precedence over HOME and APPDATA. Verify
+    // the reported paths without writing to those real folders.
+    #[cfg(windows)]
+    {
+        let expected = platform_layout(Platform::Windows, &Machine::detect()).expect("Windows folders");
+        assert_eq!(printed, expected.describe());
+    }
+    #[cfg(not(windows))]
+    {
+        let home = s.dir.join("home");
+        for line in printed.lines() {
+            let (_, path) = line.split_once('\t').expect("class<TAB>path");
+            let system = path.starts_with("/etc/") || path.starts_with("/usr/") || path.starts_with("/Library/");
+            assert!(Path::new(path).starts_with(&home) || system, "{line} is outside the test's home");
+        }
     }
 }
 

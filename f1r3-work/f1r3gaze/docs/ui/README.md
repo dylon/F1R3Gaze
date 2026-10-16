@@ -191,7 +191,7 @@ Controls carry `data-action="verb[:argument]"`. `Action::parse` accepts:
 | `history:clear-ask\|clear-cancel\|clear\|more:0` | — | History controls |
 | `site:<verb>:<arg>` | `store`, `grants`, `cache`, `session:<tab>:<label>` | Site data actions |
 | `revoke:<urn>`, `allow:<tab>:<prompt>`, `deny:…`, `remember` | — | permissions and prompts |
-| `wallet:<verb>[:<arg>]` | `new`, `import`, `send`, `confirm`, `cancel`, `use`, `copy`, `export`, `remove`, `dismiss` | Wallet |
+| `wallet:<verb>[:<arg>]` | `new`, `import`, `import-file`, `send`, `confirm`, `cancel`, `use`, `copy`, `export`, `remove`, `dismiss` | Wallet; `import-file` uses a native open panel and `export` chooses a destination folder |
 | `theme:<op>` | `system`, `dark`, `light`; `use:<name>`, a theme file's name as `theme::check_theme_name` allows it; `new`; `reload`. Anything else is refused: the step-9 `next`, `template` and `custom` no longer parse | Appearance: System follows the operating system's preference, Dark and Light are the built-in schemes, and `use` chooses `themes/<name>.css` (a file that cannot be used is not chosen, and the status bar says why). New theme saves the colours shown as `themes/my-theme.css` (`my-theme-2`, … when a name is taken; never over anything) and chooses it; Reload reads the theme files and the chosen theme again. A choice is saved as `theme` under `[appearance]` in `settings.toml`, and the window is asked to show its scheme (§3.6) |
 | `find:show\|next\|prev\|hide` | — | find |
 | `go`, `suggest:<url>` | url | open the typed address, or a history suggestion |

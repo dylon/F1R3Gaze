@@ -1,0 +1,35 @@
+{
+  "app-id": "io.f1r3fly.F1R3Gaze",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "25.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "f1r3gaze",
+  "finish-args": [
+    "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--filesystem=home",
+    "--talk-name=org.freedesktop.secrets"
+  ],
+  "modules": [
+    {
+      "name": "f1r3gaze",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm755 f1r3gaze /app/bin/f1r3gaze",
+        "install -Dm755 f1r3c /app/bin/f1r3c",
+        "install -Dm644 f1r3gaze.desktop /app/share/applications/io.f1r3fly.F1R3Gaze.desktop",
+        "for size in 16 32 48 64 128 256 512; do install -Dm644 icons/$size.png /app/share/icons/hicolor/${size}x${size}/apps/io.f1r3fly.F1R3Gaze.png; done",
+        "install -Dm644 icons/f1r3gaze.svg /app/share/icons/hicolor/scalable/apps/io.f1r3fly.F1R3Gaze.svg",
+        "install -Dm644 LICENSE /app/share/licenses/io.f1r3fly.F1R3Gaze/LICENSE"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../../dist/flatpak-input"
+        }
+      ]
+    }
+  ]
+}

@@ -124,3 +124,26 @@ fn lines_that_are_not_records_are_refused() {
         assert!(refused.contains(says), "{line}: {refused}");
     }
 }
+
+#[test]
+fn windows_marker_path_uses_the_module_string_parser() {
+    let layout = Layout::portable(Path::new(r"C:\profiles\F1R3Gaze"));
+    let old = xdg();
+    let mem = MemFs::new();
+    mem.seed_file(old.legacy[0].join("settings.conf"), LEGACY_TEMPLATE.as_bytes());
+    let plan = migrate::plan(&old, &mem, &old.legacy[0], UNIX_EPOCH).expect("a plan");
+    let case = Case {
+        name: "windows_marker_path",
+        layout: &layout,
+        plan: &plan,
+        far: &[],
+        ntfs: true,
+        bad_copies: false,
+        taken: &[],
+        events: &[],
+    };
+    let (module, cfg) = tla(&case).expect("a trace module");
+    assert!(module.contains(&format!("TR_MarkerDir == {}", string(&text(&layout.data).unwrap()))));
+    assert!(cfg.contains("MarkerDir <- TR_MarkerDir"));
+    assert!(!cfg.contains("MarkerDir ="));
+}

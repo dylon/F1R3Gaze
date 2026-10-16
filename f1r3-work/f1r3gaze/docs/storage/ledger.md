@@ -2226,7 +2226,7 @@ move) and S14 (the exports' and logs' folder); this entry gathers them.
   tightens every moved file to at most 0600 (a link keeps its mode).
 - **Exports and replay logs** are owner-only: `wallet export ADDRESS FILE`
   writes the file named, and the Wallet panel's Export writes
-  `data/wallet/exports/<address>.json`; replay logs go to
+  `<address>.json` in the folder the user selects; replay logs go to
   `data/replay-logs/`. A session that only reads writes neither.
 - **The OS keystore's name stays `F1R3Gaze`**
   (`OsKeystore::new("F1R3Gaze")`): renaming it would orphan the keychain

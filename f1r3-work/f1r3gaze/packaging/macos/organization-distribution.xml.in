@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Future organization selector. It exposes only Gaze until another
+     component has a signed installer and an explicit tested compatibility
+     entry in the release catalog. -->
+<installer-gui-script minSpecVersion="2">
+  <title>F1R3FLY Systems</title>
+  <options customize="always" rootVolumeOnly="true"/>
+  <choices-outline>
+    <line choice="gaze"/>
+  </choices-outline>
+  <choice id="gaze" title="F1R3Gaze" selected="true">
+    <pkg-ref id="io.f1r3fly.f1r3gaze"/>
+  </choice>
+  <pkg-ref id="io.f1r3fly.f1r3gaze" version="__VERSION__">__GAZE_PKG__</pkg-ref>
+</installer-gui-script>
