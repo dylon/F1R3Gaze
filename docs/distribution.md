@@ -4,6 +4,14 @@
 
 F1R3Gaze contains the RSpace it needs to execute f1r3lang inside the application. The `f1r3c` command is shipped alongside the browser. F1R3Node is a separate, optional service: a customer does not need it merely to launch Gaze. Embers is not installed by any Gaze package. The release catalog currently lists only Gaze. A future organization installer may present several independently upgradable systems after each has an installer and the catalog records the exact combinations tested together.
 
+An opt-in live compatibility test exercises Gaze's node HTTP client against a
+locally running F1R3Node. Set `F1R3NODE_BASE_URL` to its HTTP API address and
+run `cargo test --locked -p gaze-shard --test live_node -- --ignored` from
+`f1r3-work/f1r3gaze`. It checks finalized-block lookup, a missing registry
+entry at that block, and a read-only exploratory deploy. This was run locally
+against the packaged F1R3Node 0.4.46 x86_64 tarball with Gaze 0.1.1. The test
+does not assert broader transaction, consensus or wallet compatibility.
+
 Linux package managers install declared system libraries and can express versioned package dependencies. macOS DMGs are app delivery images, while component PKGs can be chained by a distribution PKG. Windows MSIs are independent components; a WiX Burn bootstrapper can select and chain them. The templates in `packaging/macos/organization-distribution.xml.in` and `packaging/windows/organization.wxs.in` deliberately expose only Gaze. The selector validator rejects an unknown system or an untested pair.
 
 ![Artifact and promotion flow](packaging-flow.svg)
