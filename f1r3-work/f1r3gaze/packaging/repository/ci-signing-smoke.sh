@@ -24,14 +24,16 @@ if [[ "$mode" == full-release ]]; then
   passphrase='CI-only repository signing passphrase'
   printf '%s' "$passphrase" | gpg --batch --yes --pinentry-mode loopback \
     --passphrase-fd 0 --quick-generate-key \
-    'F1R3Gaze CI <packaging-test@example.invalid>' rsa2048 sign 0
+    'F1R3Gaze CI <packaging-test@example.invalid>' rsa2048 cert 2y
   fingerprint=$(gpg --batch --with-colons --fingerprint --list-keys |
     awk -F: '$1 == "fpr" { print $10; exit }')
   [[ "$fingerprint" =~ ^[[:xdigit:]]{40}$ ]] ||
     { echo "temporary signing key fingerprint is invalid" >&2; exit 2; }
+  printf '%s' "$passphrase" | gpg --batch --yes --pinentry-mode loopback \
+    --passphrase-fd 0 --quick-add-key "$fingerprint" rsa2048 sign 1y
   GPG_PRIVATE_KEY=$(printf '%s' "$passphrase" | gpg --batch --yes \
     --pinentry-mode loopback --passphrase-fd 0 --armor \
-    --export-secret-keys "$fingerprint")
+    --export-secret-subkeys "$fingerprint")
   export GPG_PRIVATE_KEY
   GPG_PASSPHRASE=$passphrase bash "$here/promote.sh" \
     --dist "$dist" --out "$work/promotion-root" --version "$version" \
@@ -45,11 +47,13 @@ if [[ "$mode" == full-release ]]; then
   exit 0
 fi
 gpg --batch --yes --pinentry-mode loopback --passphrase '' \
-  --quick-generate-key 'F1R3Gaze CI <packaging-test@example.invalid>' rsa2048 sign 0
+  --quick-generate-key 'F1R3Gaze CI <packaging-test@example.invalid>' rsa2048 cert 2y
 fingerprint=$(gpg --batch --with-colons --fingerprint --list-keys |
   awk -F: '$1 == "fpr" { print $10; exit }')
 [[ "$fingerprint" =~ ^[[:xdigit:]]{40}$ ]] ||
   { echo "temporary signing key fingerprint is invalid" >&2; exit 2; }
+gpg --batch --yes --pinentry-mode loopback --passphrase '' \
+  --quick-add-key "$fingerprint" rsa2048 sign 1y
 gpg --batch --armor --export "$fingerprint" > "$work/public.asc"
 cp -a "$dist" "$work/promotion-dist"
 bash "$here/sign-rpms.sh" "$work/promotion-dist" "$version" "$fingerprint"

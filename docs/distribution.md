@@ -121,6 +121,83 @@ Flatpak trusts the configured Flathub remote, and Snap validates Store assertion
 
 ## Repository and trust flow
 
+### Prepare the production Linux signing identity
+
+The APT, pacman and RPM repository channels can be signed before a repository
+host is registered. They can use one dedicated OpenPGP signing identity. APT
+trusts a signed `InRelease`/`Release.gpg` file; pacman checks detached package
+and database signatures; RPM channels check both signed RPMs and repository
+metadata. This key also signs `SHA256SUMS.asc` for the release downloads.
+Flatpak and Snap stores have their own publisher trust systems, and this key
+does not sign macOS or Windows executables.
+
+Generate a **production** key on a machine controlled by the release owner,
+using GnuPG's passphrase prompt. The helper requires a new key directory
+outside the Git checkout. It creates a 4096-bit RSA primary key for
+certification, expiring after two years, and a separate 4096-bit RSA signing
+subkey, expiring after one year. Keep the primary key off CI; only the signing
+subkey is exported to the release workflow. The user ID matches the current
+DEB maintainer field in `packaging/linux/build.sh`. From `f1r3-work/f1r3gaze`:
+
+```bash
+SIGNING_HOME="$HOME/.gnupg-f1r3fly-release"
+packaging/repository/init-signing-key.sh --home "$SIGNING_HOME" \
+  --uid 'F1R3FLY.io <f1r3fly.ceo@gmail.com>'
+```
+
+The helper prints the full primary fingerprint and writes `public.asc` in
+`SIGNING_HOME`. Record that fingerprint through a channel independent of the
+download host. Back up the protected primary key, signing subkey and
+passphrase separately before using them for a release. Keep the backup
+outside Git and outside any build artifact directory. Plan subkey renewal
+before its one-year expiration and a replacement primary key and customer
+trust update before the two-year expiration. A lost signing key cannot
+authenticate future updates, and a compromised one must be revoked and
+replaced.
+
+The current fork has no production signing secrets. Once the owner has made
+and checked the backup, these commands configure **only the chosen GitHub
+repository**; they do not publish a release. Run them on the machine holding
+the key, with GitHub CLI authenticated to that repository:
+
+```bash
+set -euo pipefail
+RELEASE_REPOSITORY=dylon/F1R3Gaze  # change to the intended release owner
+SIGNING_HOME="$HOME/.gnupg-f1r3fly-release"
+FINGERPRINT=$(gpg --homedir "$SIGNING_HOME" --batch --with-colons \
+  --fingerprint --list-secret-keys |
+  awk -F: '$1 == "fpr" { print toupper($10); exit }')
+[[ $FINGERPRINT =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]
+gpg --homedir "$SIGNING_HOME" --batch --armor \
+  --export-secret-subkeys "$FINGERPRINT" |
+  gh secret set GPG_PRIVATE_KEY --repo "$RELEASE_REPOSITORY"
+gh secret set GPG_PASSPHRASE --repo "$RELEASE_REPOSITORY"
+gh variable set GPG_EXPECTED_FINGERPRINT --repo "$RELEASE_REPOSITORY" \
+  --body "$FINGERPRINT"
+```
+
+The `GPG_PASSPHRASE` command prompts for the value through GitHub CLI; do not
+put it in a command argument, source file or chat message. The signing subkey
+is sent through the pipe and is not written to a checkout file. GitHub Actions
+stores the two values as secrets and the fingerprint as a repository variable.
+The primary private key remains in `SIGNING_HOME` and its separate backup.
+Confirm the variable against the separately recorded fingerprint; publishing
+the public key later must include that same fingerprint. GitHub workflow
+access to those secrets should be limited to trusted release maintainers and
+reviewed workflow changes. Keep `RELEASE_PUBLISH_ENABLED` unset until the
+macOS and Windows credentials, signed candidate checks and release approval
+are ready. The existing branch and tag CI already test the Linux signing flow
+with disposable keys; those tests do not establish a production identity.
+
+macOS distribution outside the App Store requires Apple-issued Developer ID
+Application and Installer certificates and notarization credentials. A
+Homebrew cask points to that same notarized DMG. The Mac App Store instead
+requires its own Apple Distribution identities, profile, App Sandbox and
+App Store Connect record. Windows MSI and executable signing requires a
+trusted Authenticode certificate or a compatible signing service; a
+self-signed certificate does not establish Windows SmartScreen reputation.
+Those identities cannot be replaced by the Linux OpenPGP key.
+
 `packaging/repository/stage.py` creates an unsigned publication tree in a *fresh* output directory:
 
 ```sh
