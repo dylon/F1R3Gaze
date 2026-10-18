@@ -241,6 +241,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Windows package build failed' }
           if (Get-ChildItem dist -Filter *.wixpdb) { throw 'WiX debug database must not enter release dist' }
       - name: Install older MSI, upgrade, deliver URL, remove and check ZIP
+        timeout-minutes: 10
         shell: pwsh
         run: |
           $version = $null
