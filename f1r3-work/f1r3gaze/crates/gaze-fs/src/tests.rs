@@ -535,20 +535,23 @@ fn usable_lines_are_kept_byte_for_byte() {
 
 #[test]
 fn scratch_directories_prefer_tmpdir_then_the_target_directory() {
-    let exe = Path::new("/work/target/debug/deps/gaze_fs-123");
-    let is_target = |dir: &Path| dir == Path::new("/work/target");
+    let root = if cfg!(windows) { PathBuf::from(r"C:\work") } else { PathBuf::from("/work") };
+    let target = root.join("target");
+    let exe = target.join("debug/deps/gaze_fs-123");
+    let tmp = root.join("scratch/tmp");
+    let is_target = |dir: &Path| dir == target;
     assert_eq!(
-        scratch_base(Some(std::ffi::OsStr::new("/scratch/tmp")), exe, is_target),
-        Path::new("/scratch/tmp/f1r3gaze-tests")
+        scratch_base(Some(tmp.as_os_str()), &exe, is_target),
+        tmp.join("f1r3gaze-tests")
     );
     assert_eq!(
-        scratch_base(Some(std::ffi::OsStr::new("relative")), exe, is_target),
-        Path::new("/work/target/scratch")
+        scratch_base(Some(std::ffi::OsStr::new("relative")), &exe, is_target),
+        target.join("scratch")
     );
-    assert_eq!(scratch_base(None, exe, is_target), Path::new("/work/target/scratch"));
+    assert_eq!(scratch_base(None, &exe, is_target), target.join("scratch"));
     assert_eq!(
-        scratch_base(None, exe, |_| false),
-        Path::new("/work/target/debug/deps/scratch")
+        scratch_base(None, &exe, |_| false),
+        exe.parent().expect("test binary directory").join("scratch")
     );
 }
 
