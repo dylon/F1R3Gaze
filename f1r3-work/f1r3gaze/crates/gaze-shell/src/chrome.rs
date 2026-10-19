@@ -51,6 +51,7 @@ use keyboard_types::{Key, Modifiers};
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fmt::Write as _;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::task::Context as TaskContext;
@@ -239,7 +240,7 @@ mod geometry {
 // ── Stylesheet ──────────────────────────────────────────────────────────
 
 /// The chrome stylesheet. Theme colours (`--gaze-*`) come from
-/// [`theme::variables`]; icons and fonts from [`theme::font_css`].
+/// [`theme::variables`]; fonts and fallback icons from [`theme::font_css`].
 const CSS: &str = r#"
 /* Conventions (docs/ui/README.md):
    R1 text runs: labels are elements (<span>), icons <i>; never bare text
@@ -254,8 +255,8 @@ const CSS: &str = r#"
       attribute on stable ids.
    R5 budgets: labels are fitted to their exact width in Rust; overflow is a
       backstop.
-   R6 accent: accent colours icons, bars, and rings; accent text appears only
-      on --gaze-surface.
+   R6 accent: the brand accent colours icons, bars, and rings; link text uses
+      --gaze-accent-link so it reads clearly on every chrome background.
    R7 gutter: sidebar boxes (rows, cards, notices, the controls bar) span the
       6 px panel gutter; headings, labels, notes, and in-flow form controls
       start 8 px further in.
@@ -267,6 +268,8 @@ const CSS: &str = r#"
       border box. */
 :root{--sans:'Noto Sans',system-ui,sans-serif;--mono:'Fira Code',monospace;--radius-sm:5px;--radius-md:7px;--radius-lg:10px}
 *{box-sizing:border-box}
+.leo-icon{display:inline-flex;align-items:center;justify-content:center;vertical-align:-.125em;line-height:1}
+.leo-icon::before{display:block}
 html,body{margin:0;height:100%;font:13px/1.35 var(--sans);color:var(--gaze-text);background:var(--gaze-bg)}
 body{display:flex;flex-direction:column}
 button,input{font:inherit;color:inherit}
@@ -284,7 +287,7 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 .btn-ghost{background:transparent;border-color:transparent}
 .btn-primary{background:var(--gaze-accent);border-color:var(--gaze-accent);color:var(--gaze-accent-text);font-weight:600}
 .btn-primary:hover{background:var(--gaze-accent);box-shadow:inset 0 0 0 40px #00000022}
-.btn-danger{color:var(--gaze-danger)}
+.btn-danger{color:var(--gaze-danger-text)}
 .btn-primary.btn-danger{background:var(--gaze-danger);border-color:var(--gaze-danger);color:var(--gaze-bg)}
 .btn:disabled,.btn:disabled:hover{background:transparent;border-color:var(--gaze-border);color:var(--gaze-border);box-shadow:none}
 .btn-ghost:disabled,.btn-ghost:disabled:hover{border-color:transparent}
@@ -309,7 +312,7 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 .check.on .check-box{background:var(--gaze-accent);border-color:var(--gaze-accent);color:var(--gaze-accent-text)}
 /* Badges hold bare text, so they are never flex boxes (R1). */
 .tag{display:inline-block;height:18px;line-height:18px;padding:0 7px;border-radius:9px;font-size:10.5px;font-weight:600;background:var(--gaze-raised);color:var(--gaze-muted);white-space:nowrap}
-.tag.ok{color:var(--gaze-success)}.tag.warn{color:var(--gaze-warning)}.tag.err{color:var(--gaze-danger)}
+.tag.ok{color:var(--gaze-success)}.tag.warn{color:var(--gaze-warning)}.tag.err{color:var(--gaze-danger-text)}
 .count{display:inline-block;min-width:18px;height:18px;line-height:18px;padding:0 6px;border-radius:9px;text-align:center;font-size:11px;font-weight:600;background:var(--gaze-raised);color:var(--gaze-muted)}
 /* Hover bubbles: Blitz shows no title tooltips. */
 .tip{position:absolute;z-index:40;visibility:hidden;pointer-events:none;white-space:nowrap;padding:4px 8px;border-radius:var(--radius-sm);background:var(--gaze-text);color:var(--gaze-bg);font-size:12px;font-weight:400;line-height:1.3;box-shadow:0 4px 14px #00000055}
@@ -343,7 +346,7 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 .row.on{background:linear-gradient(var(--gaze-accent),var(--gaze-accent)) 0 0/3px 100% no-repeat,var(--gaze-hover)}
 .row-icon{width:16px;flex:none;text-align:center;font-size:12px;color:var(--gaze-muted)}
 .row.on .row-icon{color:var(--gaze-accent)}
-.row-icon.warn{color:var(--gaze-warning)}.row-icon.err{color:var(--gaze-danger)}
+.row-icon.warn{color:var(--gaze-warning)}.row-icon.err{color:var(--gaze-danger-text)}
 .row-text{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .row-label{white-space:nowrap;overflow:hidden}
 .row-detail{font:11px/1.45 var(--mono);color:var(--gaze-muted);white-space:nowrap;overflow:hidden}
@@ -363,7 +366,7 @@ mark{background:transparent;color:inherit}
 .menu-item:hover{background:var(--gaze-hover)}
 .menu-item:disabled,.menu-item:disabled>i{color:var(--gaze-border)}
 .menu-item:disabled:hover{background:transparent}
-.menu-item.danger,.menu-item.danger>i{color:var(--gaze-danger)}
+.menu-item.danger,.menu-item.danger>i{color:var(--gaze-danger-text)}
 .menu-sep{height:1px;margin:3px 6px;background:var(--gaze-border)}
 /* Cards, notices, empty states */
 .card{margin:6px 0 8px;padding:10px 12px;border:1px solid var(--gaze-border);border-radius:var(--radius-lg);background:var(--gaze-bg)}
@@ -396,7 +399,7 @@ mark{background:transparent;color:inherit}
 .tab.narrow{justify-content:center;padding:0;gap:0}
 .tab.narrow .tab-title,.tab.narrow .tab-close{display:none}
 .tab-icon{flex:none;width:14px;text-align:center;font-size:11px}
-.tab-icon.warn{color:var(--gaze-warning)}.tab-icon.err{color:var(--gaze-danger)}
+.tab-icon.warn{color:var(--gaze-warning)}.tab-icon.err{color:var(--gaze-danger-text)}
 .tab-title{flex:1;min-width:0;overflow:hidden}
 .tab-close{flex:none;display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;font-size:11px;visibility:hidden}
 .tab:hover .tab-close,.tab.on .tab-close{visibility:visible}
@@ -456,23 +459,23 @@ mark{background:transparent;color:inherit}
 #findbar.off{visibility:hidden}
 #find{padding-right:70px}
 #findcount{position:absolute;right:9px;top:0;line-height:30px;font-size:11.5px;color:var(--gaze-muted);pointer-events:none}
-#findcount.none{color:var(--gaze-danger)}
+#findcount.none{color:var(--gaze-danger-text)}
 /* Status bar */
 #status{flex:none;display:flex;align-items:center;gap:12px;height:24px;padding:0 10px;background:var(--gaze-bg);border-top:1px solid var(--gaze-border);color:var(--gaze-muted);font-size:11.5px;white-space:nowrap;overflow:hidden}
 .stage-chip{flex:none;display:flex;align-items:center;gap:5px}
 .stage-chip.ok>i{color:var(--gaze-success)}.stage-chip.info>i{color:var(--gaze-accent)}
-.stage-chip.warn{color:var(--gaze-warning)}.stage-chip.err{color:var(--gaze-danger)}
+.stage-chip.warn{color:var(--gaze-warning)}.stage-chip.err{color:var(--gaze-danger-text)}
 .status-text{min-width:0;overflow:hidden}
 .status-warn{min-width:0;overflow:hidden;color:var(--gaze-warning)}
 .flash{flex:none;display:flex;align-items:center;gap:5px;color:var(--gaze-text)}
 .flash.ok>i{color:var(--gaze-success)}.flash.info>i{color:var(--gaze-accent)}
-.flash.warn>i{color:var(--gaze-warning)}.flash.err{color:var(--gaze-danger)}
+.flash.warn>i{color:var(--gaze-warning)}.flash.err{color:var(--gaze-danger-text)}
 /* Console and appearance */
 .log-line{--bar:var(--gaze-border);display:flex;gap:8px;margin:1px 0;padding:5px 8px;border-radius:var(--radius-sm);background:linear-gradient(var(--bar),var(--bar)) 0 0/3px 100% no-repeat;font:11.5px/1.45 var(--mono)}
 .log-level{flex:none;width:40px;color:var(--gaze-muted)}
 .log-text{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .log-line.warn{--bar:var(--gaze-warning)}.log-line.warn .log-level{color:var(--gaze-warning)}
-.log-line.err{--bar:var(--gaze-danger)}.log-line.err .log-level{color:var(--gaze-danger)}
+.log-line.err{--bar:var(--gaze-danger)}.log-line.err .log-level{color:var(--gaze-danger-text)}
 .log-line.debug .log-text{color:var(--gaze-muted)}
 .swatches{display:flex;flex-wrap:wrap;gap:6px 10px;padding:2px 8px}
 .swatch{display:flex;align-items:center;gap:6px;width:126px}
@@ -560,8 +563,9 @@ const WALLET_FORM_HTML: &str = r#"<div id="walletmsg"></div><div id="walletcard"
 <div id="walletlist"></div>
 <div class="section-head"><span>Add a wallet</span></div><div class="form">
 <div class="form-actions start"><button class="btn" data-action="wallet:new"><i class="fa-solid fa-plus"></i><span>Create new wallet</span></button></div>
-<label class="field-label" for="wallet-import"><span>Import an F1R3Sky wallet file or hex key</span></label>
-<div class="form-row"><div class="field grow"><input id="wallet-import" type="text" aria-label="Wallet file or hex key"></div><button class="btn" data-action="wallet:import"><i class="fa-solid fa-file-import"></i><span>Import</span></button></div></div>"#;
+<label class="field-label" for="wallet-import"><span>Paste a hex key or wallet file contents</span></label>
+<div class="form-row"><div class="field grow"><input id="wallet-import" type="text" aria-label="Hex key or wallet file contents"></div><button class="btn" data-action="wallet:import"><i class="fa-solid fa-file-import"></i><span>Import</span></button></div>
+<div class="form-actions start"><button class="btn" data-action="wallet:import-file"><i class="fa-solid fa-folder-open"></i><span>Choose wallet file</span></button></div></div>"#;
 
 /// Per-panel controls. They are constant, so `#sidecontrols` stays
 /// byte-identical while the user types and the field keeps focus (R4).
@@ -639,7 +643,7 @@ fn shell_html(css: &str, sidebar_open: bool) -> String {
             "__SIDEBAR_CLASS__",
             if sidebar_open { "" } else { "hidden" },
         );
-    key_labels(&html, KeyPlatform::CURRENT)
+    crate::leo_icons::inline(&key_labels(&html, KeyPlatform::CURRENT))
 }
 
 // ── Actions ─────────────────────────────────────────────────────────────
@@ -2130,7 +2134,7 @@ fn wallet_card_html(
             }
             put!(
                 html,
-                r#"<div class="card-actions"><button class="btn btn-sm" data-action="wallet:copy:{a}"><i class="fa-solid fa-copy"></i><span>Copy</span><span class="tip tip-below">Copy the address to receive funds</span></button><button class="btn btn-sm" data-action="wallet:export:{a}"><i class="fa-solid fa-file-export"></i><span>Export</span><span class="tip tip-below">Write the wallet file (F1R3Sky can import it)</span></button><button class="btn btn-sm btn-ghost btn-danger" data-action="wallet:remove:{a}"><i class="fa-solid fa-trash-can"></i><span>Remove</span></button></div></div>"#,
+                r#"<div class="card-actions"><button class="btn btn-sm" data-action="wallet:copy:{a}"><i class="fa-solid fa-copy"></i><span>Copy</span><span class="tip tip-below">Copy the address to receive funds</span></button><button class="btn btn-sm" data-action="wallet:export:{a}"><i class="fa-solid fa-file-export"></i><span>Export</span><span class="tip tip-below">Choose a folder for a wallet file F1R3Sky can import</span></button><button class="btn btn-sm btn-ghost btn-danger" data-action="wallet:remove:{a}"><i class="fa-solid fa-trash-can"></i><span>Remove</span></button></div></div>"#,
                 a = escape(&wallet.address)
             );
         }
@@ -2179,7 +2183,7 @@ fn wallet_list_html(fit: &mut TextFitter, others: &[WalletRow], embers: bool) ->
         let address = fit.middle(MONO, &wallet.address, inner).into_owned();
         put!(
             html,
-            r#"<div class="card"><div class="card-head"><i class="fa-solid fa-wallet row-icon"></i><span class="card-title">{title}</span><span class="row-meta">{balance}</span></div><div class="mono wallet-address">{address}</div><div class="card-actions"><button class="btn btn-sm" data-action="wallet:use:{a}"><i class="fa-solid fa-check"></i><span>Use for payments</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:copy:{a}" aria-label="Copy address"><i class="fa-solid fa-copy"></i><span class="tip tip-below-end">Copy address</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:export:{a}" aria-label="Export"><i class="fa-solid fa-file-export"></i><span class="tip tip-below-end">Export the wallet file</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:remove:{a}" aria-label="Remove"><i class="fa-solid fa-trash-can"></i><span class="tip tip-below-end">Remove this wallet</span></button></div></div>"#,
+            r#"<div class="card"><div class="card-head"><i class="fa-solid fa-wallet row-icon"></i><span class="card-title">{title}</span><span class="row-meta">{balance}</span></div><div class="mono wallet-address">{address}</div><div class="card-actions"><button class="btn btn-sm" data-action="wallet:use:{a}"><i class="fa-solid fa-check"></i><span>Use for payments</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:copy:{a}" aria-label="Copy address"><i class="fa-solid fa-copy"></i><span class="tip tip-below-end">Copy address</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:export:{a}" aria-label="Export"><i class="fa-solid fa-file-export"></i><span class="tip tip-below-end">Choose a folder for the wallet file</span></button><button class="icon-btn icon-btn-sm" data-action="wallet:remove:{a}" aria-label="Remove"><i class="fa-solid fa-trash-can"></i><span class="tip tip-below-end">Remove this wallet</span></button></div></div>"#,
             title = escape(&title),
             balance = escape(&balance),
             address = escape(&address),
@@ -2581,6 +2585,29 @@ fn session_target(arg: &str) -> Option<(u64, &str)> {
 
 // ── The chrome document ─────────────────────────────────────────────────
 
+/// Only the trusted browser chrome can open native file panels. A page's
+/// shell provider cannot request one (see `cursor::PageShell`).
+trait WalletFileDialog {
+    fn choose_import_file(&self) -> Option<PathBuf>;
+    fn choose_export_folder(&self) -> Option<PathBuf>;
+}
+
+struct NativeWalletFileDialog;
+
+impl WalletFileDialog for NativeWalletFileDialog {
+    fn choose_import_file(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("Choose a wallet file to import")
+            .pick_file()
+    }
+
+    fn choose_export_folder(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("Choose a folder for the wallet export")
+            .pick_folder()
+    }
+}
+
 pub struct ChromeDocument {
     inner: BaseDocument,
     eng: Rc<Engine>,
@@ -2605,6 +2632,7 @@ pub struct ChromeDocument {
     /// frame, in tab order (`begin_paint`; ledger L9, H9). Kept to be reused.
     paint_hovers: Vec<Option<NodeId>>,
     wallet: Arc<Mutex<WalletView>>,
+    wallet_files: Box<dyn WalletFileDialog>,
     // Was `ui: UiState`, the whole `workspace.json`.
     /// The open tabs and the sidebar's layout (`state/session.json`).
     session: SessionState,
@@ -2759,6 +2787,7 @@ impl ChromeDocument {
             title: String::new(),
             flash: None,
             wallet: Default::default(),
+            wallet_files: Box::new(NativeWalletFileDialog),
             session,
             history,
             parents: BTreeMap::new(),
@@ -2913,6 +2942,15 @@ impl ChromeDocument {
     fn open_tab(&mut self, url: &str) {
         let parent = self.tabs.get(self.active).map(|(t, _)| t.id);
         self.add_tab(url, parent, true, "");
+    }
+
+    /// Open a URL delivered by the OS to the running browser window.
+    #[cfg(any(target_os = "macos", windows))]
+    pub(crate) fn open_external_url(&mut self, url: &str) {
+        self.open_tab(url);
+        // Delivery can precede the first surface, when no document poll has
+        // run yet. Persist the tab now so it survives a slow or failed paint.
+        self.save_state(Instant::now());
     }
 
     fn add_tab(&mut self, url: &str, parent: Option<u64>, load: bool, title: &str) {
@@ -4187,6 +4225,21 @@ impl ChromeDocument {
                     Err(e) => self.say(Tone::Err, format!("Could not import: {e}")),
                 }
             }
+            "import-file" => {
+                let Some(path) = self.wallet_files.choose_import_file() else {
+                    return;
+                };
+                let result = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+                    .and_then(|text| wallets.import(&text, "imported"));
+                match result {
+                    Ok(a) => self.say(
+                        Tone::Ok,
+                        format!("Imported {}.", display::abbreviate(a.as_str(), 8, 6)),
+                    ),
+                    Err(e) => self.say(Tone::Err, format!("Could not import: {e}")),
+                }
+            }
             "use" => match Address::parse(arg).and_then(|a| wallets.set_active(&a)) {
                 Ok(()) => self.say(Tone::Ok, "This wallet now pays for deploys."),
                 Err(e) => self.say(Tone::Err, e),
@@ -4201,24 +4254,25 @@ impl ChromeDocument {
                     if let Some(why) = profile.read_only_reason() {
                         return Err(format!("the wallet file is not written: {why}"));
                     }
+                    let Some(dir) = self.wallet_files.choose_export_folder() else {
+                        return Ok(None);
+                    };
                     let body = wallets.export(&a)?;
-                    // Was `<profile>/exports/`, in the single profile folder.
-                    let dir = profile.layout.exports_dir();
-                    gaze_fs::create_dir_durably(profile.fs(), &dir).map_err(|e| e.to_string())?;
                     let p = dir.join(format!("{a}.json"));
                     // A wallet file is a private key: owner-only from the start.
                     gaze_fs::write_atomic(profile.fs(), &p, body.as_bytes(), Perm::Private)
                         .map_err(|e| e.to_string())?;
-                    Ok(p)
+                    Ok(Some(p))
                 });
                 match r {
-                    Ok(p) => self.say(
+                    Ok(Some(p)) => self.say(
                         Tone::Ok,
                         format!(
                             "Wallet file written to {} (F1R3Sky can import it).",
                             p.display()
                         ),
                     ),
+                    Ok(None) => {}
                     Err(e) => self.say(Tone::Err, e),
                 }
             }
@@ -4662,6 +4716,7 @@ impl ChromeDocument {
     }
 
     fn set_html(&mut self, id: &'static str, html: String) -> bool {
+        let html = crate::leo_icons::inline(&html);
         if self.rendered.get(id) == Some(&html) {
             return false;
         }
@@ -5345,6 +5400,13 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
         format!("cannot open a window ({e}); use --headless to run pages without one")
     })?;
     event_loop.set_control_flow(ControlFlow::Wait);
+    #[cfg(target_os = "macos")]
+    let _url_delegate = crate::macos_url::install(event_loop.create_proxy())?;
+    #[cfg(windows)]
+    let (_url_server, windows_urls) = {
+        let url_proxy = event_loop.create_proxy();
+        crate::windows_url::start(&eng.profile.layout.runtime, move || url_proxy.wake_up())?
+    };
     let (proxy, rx) = BlitzShellProxy::new(event_loop.create_proxy());
     let app = BlitzApplication::new(proxy, rx);
     // `window.json` as start-up left it, and how to write it: the chrome,
@@ -5369,8 +5431,15 @@ pub fn launch(eng: Rc<Engine>, url: &str) -> Result<(), String> {
         save: Box::new(move |state: &WindowState| keeps.profile.write_state(state)),
     };
     // A resize is painted once, with the chrome already fitted to it (L9, H7).
+    let application = ChromeApplication::new(app, window);
+    #[cfg(windows)]
+    let application = {
+        let mut application = application;
+        application.receive_windows_urls(windows_urls);
+        application
+    };
     event_loop
-        .run_app(ChromeApplication::new(app, window))
+        .run_app(application)
         .map_err(|e| e.to_string())
 }
 

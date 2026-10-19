@@ -85,11 +85,15 @@ fn a_start_that_died_making_the_data_root_is_followed_by_the_barrier() {
     let fs = MemFs::new();
     // A start made /p/data and died before it synced /: no flag, no marker.
     fs.create_dir_all(&l.data).expect("the folders");
-    assert_eq!(fs.pending(), ["+/p (sync /)", "+/p/data (sync /p)"]);
+    let root = Path::new("/p");
+    assert_eq!(
+        fs.pending(),
+        [format!("+{} (sync /)", root.display()), format!("+{} (sync {})", l.data.display(), root.display())]
+    );
     // The next start cannot tell from the folders; the missing marker says
     // it must sync them.
     assert!(matches!(begin(&l, &fs).expect("begin"), Begun::AfterUnfinished { .. }));
-    assert_eq!(fs.pending(), ["+/p/data/.startup-busy (sync /p/data)"]);
+    assert_eq!(fs.pending(), [format!("+{} (sync {})", l.busy_file().display(), l.data.display())]);
 }
 
 #[test]
@@ -680,8 +684,10 @@ fn symlinks_are_moved_not_followed() {
     let l = xdg();
     let fs = Arc::new(users_profile());
     fs.remove_file(&old("user-id")).expect("rm");
-    fs.seed_file("/elsewhere/id", USER_ID);
-    fs.seed_symlink(old("user-id"), "/elsewhere/id");
+    let elsewhere = if cfg!(windows) { PathBuf::from(r"C:\elsewhere") } else { PathBuf::from("/elsewhere") };
+    let id = elsewhere.join("id");
+    fs.seed_file(&id, USER_ID);
+    fs.seed_symlink(old("user-id"), id.clone());
     fs.seed_file("/elsewhere/wallets.tsv", b"");
     fs.seed_symlink(old("wallets.tsv"), "../../../../elsewhere/wallets.tsv");
     fs.seed_file("/elsewhere/keys/x.key", b"k");
@@ -693,8 +699,8 @@ fn symlinks_are_moved_not_followed() {
     done(&started);
     // The absolute link moved as a link; its target is untouched.
     assert!(matches!(fs.kind(&l.user_id_file()), Ok(Kind::Symlink)));
-    assert_eq!(fs.read_link(&l.user_id_file()).expect("a link"), PathBuf::from("/elsewhere/id"));
-    assert_eq!(fs.files()[Path::new("/elsewhere/id")], USER_ID);
+    assert_eq!(fs.read_link(&l.user_id_file()).expect("a link"), id);
+    assert_eq!(fs.files()[&id], USER_ID);
     // The relative link and the linked folder stay.
     assert!(matches!(fs.kind(&old("wallets.tsv")), Ok(Kind::Symlink)));
     assert!(matches!(fs.kind(&old("keys")), Ok(Kind::Symlink)));

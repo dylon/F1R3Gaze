@@ -143,8 +143,12 @@ Appearance offers System, Dark, and Light, and lists the theme files.
   see it as well: a site's `prefers-color-scheme` styles follow the scheme
   shown, as in other browsers, and a site with no dark styles keeps its own
   colors.
-- The UI bundles Font Awesome Free 7 icons, Noto Sans, and Fira Code; licenses
-  are in `crates/gaze-shell/assets/`.
+- The UI bundles Leo chrome icons, Font Awesome Free 7 fallback icons, Noto
+  Sans, and Fira Code; licenses are in `crates/gaze-shell/assets/`. Leo's SVG
+  sources are converted to a monochrome font by `scripts/build-leo-font.py`
+  (requires Python `fonttools`). The generated font and CSS are checked in, so
+  normal builds need no extra tool. The font lets icons follow theme colors in
+  the native renderer, which does not inherit CSS color into inline SVG paint.
 
 Site data lists the sites that keep something: capability store usage,
 remembered permissions, and live shard sessions. It also shows the verified
@@ -253,11 +257,13 @@ publishes a draft GitHub release with:
 
 | platform | artifacts | signing |
 | --- | --- | --- |
-| macOS | `F1R3Gaze-<v>-macos-universal.dmg` (arm64 + x86_64) | Developer ID, hardened runtime with **no** exceptions (no JIT entitlement: there is no JavaScript), notarised and stapled |
+| macOS | `F1R3Gaze-<v>-macos-universal.dmg` and component `.pkg` (arm64 + x86_64) | Developer ID, hardened runtime with **no** exceptions (no JIT entitlement: there is no JavaScript), notarised and stapled when credentials are configured |
 | Windows | `F1R3Gaze-<v>-x64.msi`, portable `.zip` | Authenticode (`signtool`, SHA-256, RFC 3161 timestamp) on both executables and the MSI |
-| Linux | `.deb`, `.AppImage`, `.tar.gz` | GPG-signed `SHA256SUMS` covering every artifact of every platform |
+| Linux x86_64 and arm64 | `.deb`, Arch `.pkg.tar.zst`, distro-specific `.rpm`, `.AppImage`, `.tar.gz` | GPG-signed `SHA256SUMS` covering every artifact of every platform when a key is configured |
 
 Secrets: `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`,
+`MACOS_INSTALLER_CERT_P12`, `MACOS_INSTALLER_CERT_PASSWORD`,
+`MACOS_INSTALLER_SIGN_IDENTITY`,
 `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`; `WINDOWS_CERT_PFX`,
 `WINDOWS_CERT_PASSWORD`; `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`. A platform whose
 secrets are missing still builds, unsigned, with a warning. The Windows
@@ -266,6 +272,10 @@ installer and the Linux packages register `f1r3://` and `f1r3h://`. Scripts:
 `packaging/icons/`.
 
 Verify a download: `gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c SHA256SUMS`.
+See [the distribution build guide](../../docs/distribution.md) for local builds,
+repository staging, Homebrew and WinGet manifests, and the current limits of
+native installer validation. Gaze packages include `f1r3c` and its in-process
+RSpace; F1R3Node remains a separate optional service and Embers is excluded.
 
 ## Reach tier
 
@@ -281,6 +291,12 @@ demo page to GitHub Pages. A page opts in with
 ```html
 <script type="module" src="gaze-reach.js"></script>
 ```
+
+## Framework design plan
+
+The [F1-R3 design and implementation plan](../../../f1-r3/docs/design/framework-plan.md)
+describes the general-purpose Rholang reactive framework and the F1R3Gaze
+migration. Its canonical home is the separate `f1-r3` repository.
 
 ## Crates
 

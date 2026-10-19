@@ -837,6 +837,13 @@ fn chrome_markup_has_stable_ids() {
 }
 
 #[test]
+fn leo_toolbar_icon_is_parsed_and_laid_out() {
+    let doc = laid_out_shell_with("tabs", "");
+    let width = width_of(&doc, "#back .leo-icon");
+    assert!(width > 0.0, "Leo toolbar glyph should have a visible width");
+}
+
+#[test]
 fn labels_are_never_bare_text_in_flex_boxes() {
     let mut failures = Vec::new();
     for (region, fragment) in sample_fragments() {
@@ -1673,7 +1680,7 @@ fn the_badge_turns_into_a_magnifier_when_the_address_is_edited() {
     attach(&mut chrome, 0);
     chrome.poll(None);
     lay_out_chrome(&mut chrome);
-    let magnifier = |chrome: &ChromeDocument| chrome.rendered["scheme"].contains("fa-magnifying-glass");
+    let magnifier = |chrome: &ChromeDocument| chrome.rendered["scheme"].contains("leo-search");
     assert!(!magnifier(&chrome), "the page's identity while unfocused");
     chrome.act(Action::FocusUrl);
     chrome.poll(None);
@@ -2885,10 +2892,27 @@ fn start_up_notices_are_shown_once() {
     assert!(!chrome.show_next_notice(later), "each notice is shown once");
 }
 
+struct ChosenWalletFiles {
+    import: Option<PathBuf>,
+    export: Option<PathBuf>,
+}
+
+impl WalletFileDialog for ChosenWalletFiles {
+    fn choose_import_file(&self) -> Option<PathBuf> {
+        self.import.clone()
+    }
+
+    fn choose_export_folder(&self) -> Option<PathBuf> {
+        self.export.clone()
+    }
+}
+
 #[test]
-fn replay_logs_and_exports_go_to_the_data_folder() {
+fn replay_logs_stay_in_data_and_wallet_files_use_the_selected_folder() {
     let profile = ScratchProfile::new("logs-and-exports");
     let l = profile.layout().clone();
+    let chosen = profile.path().join("chosen-wallet-folder");
+    std::fs::create_dir(&chosen).expect("make selected folder");
     let mut chrome = ChromeDocument::new(profile.engine(), "gaze://newtab");
     show(&mut chrome, 0, "New tab");
     chrome.act(Action::SaveLog);
@@ -2897,8 +2921,12 @@ fn replay_logs_and_exports_go_to_the_data_folder() {
     let path = std::path::Path::new(path);
     assert_eq!(path.parent(), Some(l.replay_logs_dir().as_path()), "{saved}");
     let address = chrome.eng.wallets.import(&"11".repeat(32), "Export me").expect("a wallet");
+    chrome.wallet_files = Box::new(ChosenWalletFiles {
+        import: None,
+        export: Some(chosen.clone()),
+    });
     chrome.act(Action::Wallet(format!("export:{address}")));
-    let exported = l.exports_dir().join(format!("{address}.json"));
+    let exported = chosen.join(format!("{address}.json"));
     assert!(exported.exists(), "{}", exported.display());
     #[cfg(unix)]
     {
@@ -2908,6 +2936,16 @@ fn replay_logs_and_exports_go_to_the_data_folder() {
             assert_eq!(mode, 0o600, "{}", file.display());
         }
     }
+    chrome.eng.wallets.remove(&address).expect("remove before import");
+    chrome.wallet_files = Box::new(ChosenWalletFiles {
+        import: Some(exported),
+        export: None,
+    });
+    chrome.act(Action::Wallet("import-file".into()));
+    assert!(
+        chrome.eng.wallets.list().iter().any(|(entry, _)| entry.address == address),
+        "the selected wallet file was imported"
+    );
 }
 
 #[test]

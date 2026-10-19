@@ -107,13 +107,13 @@ pub struct Machine {
 }
 
 impl Machine {
-    /// The running machine: the home directory (`$HOME`, else the password
-    /// database), the variables the mapping reads, and on Windows the Known
-    /// Folders.
+    /// The running machine: its home directory, the variables the mapping
+    /// reads, and on Windows the Known Folders. On macOS Foundation returns
+    /// the app container home when App Sandbox is enabled.
     pub fn detect() -> Machine {
         let windows = Platform::current() == Platform::Windows;
         Machine {
-            home: dirs::home_dir(),
+            home: detected_home_dir(),
             env: ENV_READ
                 .iter()
                 .filter_map(|name| std::env::var_os(name).map(|value| (name.to_string(), value)))
@@ -158,6 +158,36 @@ impl Machine {
     fn home(&self) -> Result<&Path, LayoutError> {
         self.home.as_deref().ok_or(LayoutError::NoHome)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn detected_home_dir() -> Option<PathBuf> {
+    // Preserve HOME for the Developer ID build and isolated command-line
+    // profiles. A sandboxed app gets its own .../Library/Containers/ID/Data
+    // home from Foundation, even if HOME still names the user's normal home.
+    let foundation = PathBuf::from(objc2_foundation::NSHomeDirectory().to_string());
+    if is_macos_container_home(&foundation) {
+        Some(foundation)
+    } else {
+        dirs::home_dir().or(Some(foundation))
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn is_macos_container_home(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "Data")
+        && path.parent().and_then(Path::parent).and_then(Path::file_name).is_some_and(|name| name == "Containers")
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "Library")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn detected_home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
 }
 
 /// Why the roots could not be found.

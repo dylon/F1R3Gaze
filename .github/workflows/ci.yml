@@ -65,6 +65,37 @@ jobs:
           cargo clippy -p gaze-shell --all-targets --locked --no-default-features
           --features crash-points,storage-trace -- -D warnings
 
+  chrome-icons:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: f1r3-work/f1r3gaze
+      - name: Install headless display and screenshot tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xdotool imagemagick jq gawk x11-utils mesa-vulkan-drivers
+          if ! command -v magick >/dev/null; then
+            sudo ln -s "$(command -v convert)" /usr/local/bin/magick
+          fi
+      - name: Render Leo icons in both themes
+        run: |
+          cargo build --locked -p gaze-shell --bin f1r3gaze
+          scripts/ui-snapshots.sh --after --only '^0[12]-' \
+            --bin target/debug/f1r3gaze \
+            --out "$RUNNER_TEMP/icon-snapshots" \
+            --work "$RUNNER_TEMP/icon-work"
+      - name: Preserve failed icon screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-icons-failure
+          path: ${{ runner.temp }}/icon-snapshots
+
   reach:
     runs-on: ubuntu-22.04
     steps:
@@ -155,3 +186,13 @@ jobs:
         run: >
           scripts/storage-kill.sh --quick
           --jar "$RUNNER_TEMP/tla2tools.jar" --out "$RUNNER_TEMP/kill"
+      - name: Preserve failed kill trace
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-kill-failure-${{ runner.os }}
+          path: |
+            ${{ runner.temp }}/kill/test.log
+            ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/users_profile_1/events.ndjson
+            ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/tlc/users_profile_1/Trace_users_profile_1.tla
+            ${{ runner.temp }}/kill/tmp/f1r3gaze-tests/crash-points-*/tlc/users_profile_1/Trace_users_profile_1.cfg

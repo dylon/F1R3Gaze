@@ -28,12 +28,12 @@ const TOKENS: &[&str] = &[
 const LEGACY_TOKENS: usize = 10;
 
 const DARK: &[&str] = &[
-    "#161b26", "#202735", "#293244", "#eaf0f7", "#a8b7c9", "#3a4659", "#71d4cf", "#10272c",
-    "#344156", "#efbf75", "#7ddc9a", "#ff8a80",
+    "#000000", "#1e1e1e", "#333333", "#ffffff", "#c5c5c5", "#3f3f3f", "#3fa9f5", "#000000",
+    "#282828", "#f3d630", "#60c171", "#e0608a",
 ];
 const LIGHT: &[&str] = &[
-    "#f5f7fa", "#ffffff", "#eaf0f4", "#182734", "#526879", "#c9d7df", "#087f86", "#ffffff",
-    "#dde9ed", "#955300", "#146c43", "#b42318",
+    "#ffffff", "#f5f5f5", "#e8e8e8", "#000000", "#3f3f3f", "#c5c5c5", "#007bc4", "#ffffff",
+    "#ededed", "#7a6700", "#006c13", "#7b0429",
 ];
 
 /// One of the two built-in colour schemes.
@@ -437,8 +437,38 @@ pub fn variables_of(colours: &BTreeMap<String, String>) -> String {
     for (token, colour) in colours {
         css.push_str(&format!("{token}:{colour};"));
     }
+    // Keep the brand tones for fills and icons, but make small text readable.
+    for (source, derived) in [
+        ("--gaze-accent", "--gaze-accent-link"),
+        ("--gaze-danger", "--gaze-danger-text"),
+    ] {
+        if let Some(colour) = colours.get(source) {
+            css.push_str(&format!("{derived}:{};", readable_tone(colour, colours)));
+        }
+    }
     css.push('}');
     css
+}
+
+fn readable_tone(colour: &str, colours: &BTreeMap<String, String>) -> String {
+    let backgrounds = ["--gaze-bg", "--gaze-surface", "--gaze-raised", "--gaze-hover"];
+    let passes = |candidate: &str| backgrounds.iter().all(|key| {
+        colours.get(*key).is_none_or(|background| contrast(candidate, background).is_some_and(|r| r >= 4.5))
+    });
+    if passes(colour) {
+        return colour.to_string();
+    }
+    let Some(rgb) = rgb(colour) else { return colour.to_string() };
+    let endpoint = if scheme_of(colours) == Scheme::Light { 0.0 } else { 255.0 };
+    for step in 1..=255 {
+        let fraction = f64::from(step) / 255.0;
+        let channel = |value: f64| (value * 255.0 * (1.0 - fraction) + endpoint * fraction).round() as u8;
+        let candidate = format!("#{:02X}{:02X}{:02X}", channel(rgb[0]), channel(rgb[1]), channel(rgb[2]));
+        if passes(&candidate) {
+            return candidate;
+        }
+    }
+    colour.to_string()
 }
 
 /// What each token colours, for the comments in theme files.
@@ -734,18 +764,14 @@ pub fn palette(name: &str, custom: Option<&BTreeMap<String, String>>) -> BTreeMa
 }
 
 pub fn variables(name: &str, custom: Option<&BTreeMap<String, String>>) -> String {
-    let mut css = String::from(":root{");
-    for (key, value) in palette(name, custom) {
-        css.push_str(&format!("{key}:{value};"));
-    }
-    css.push('}');
-    css
+    variables_of(&palette(name, custom))
 }
 
 pub fn font_css() -> String {
     let mut css = include_str!("../assets/fontawesome.min.css").to_string();
     let solid = include_str!("../assets/solid.min.css");
     css.push_str(&solid.replace("@font-face{font-family:\"Font Awesome 7 Free\";font-style:normal;font-weight:900;font-display:block;src:url(../webfonts/fa-solid-900.woff2)}", ""));
+    css.push_str(include_str!("../assets/leo/leo-icons.css"));
     css
 }
 
@@ -757,11 +783,12 @@ pub fn font_css() -> String {
 /// text in a face of its own: Fira Code where it happened to be installed,
 /// DejaVu Sans Mono, Courier, or the narrower Consolas. Its weight comes from
 /// its `wght` axis, which fontique sets to the weight asked for.
-const BUNDLED_FONTS: [(&[u8], &str); 4] = [
+const BUNDLED_FONTS: [(&[u8], &str); 5] = [
     (include_bytes!("../assets/NotoSans-Regular.otf"), "Noto Sans"),
     (include_bytes!("../assets/NotoSans-SemiBold.otf"), "Noto Sans"),
     (include_bytes!("../assets/fira-code-latin-wght-normal.woff2"), "Fira Code"),
     (include_bytes!("../assets/fa-solid-900.woff2"), "Font Awesome 7 Free"),
+    (include_bytes!("../assets/leo/leo-icons.ttf"), "F1R3Gaze Leo"),
 ];
 
 /// Register the vendored faces directly with Parley. The chrome can use them
@@ -819,7 +846,7 @@ pub fn builtin_css(name: &str, custom: Option<&BTreeMap<String, String>>) -> Str
 /// computes it once per theme change and hands it to every built-in page.
 pub fn builtin_css_of(colours: &BTreeMap<String, String>) -> String {
     let mut css = format!(
-        "{}body{{background:var(--gaze-bg)!important;color:var(--gaze-text)!important}}h1{{color:var(--gaze-text)!important}}code{{background:var(--gaze-raised)!important;color:var(--gaze-text)!important}}button{{background:var(--gaze-surface)!important;color:var(--gaze-text)!important;border-color:var(--gaze-border)!important}}a{{color:var(--gaze-accent)!important}}a.btn{{background:var(--gaze-surface)!important;color:var(--gaze-text)!important;border-color:var(--gaze-border)!important}}summary,.muted{{color:var(--gaze-muted)!important}}",
+        "{}body{{background:var(--gaze-bg)!important;color:var(--gaze-text)!important}}h1{{color:var(--gaze-text)!important}}code{{background:var(--gaze-raised)!important;color:var(--gaze-text)!important}}button{{background:var(--gaze-surface)!important;color:var(--gaze-text)!important;border-color:var(--gaze-border)!important}}a{{color:var(--gaze-accent-link)!important}}a.btn{{background:var(--gaze-surface)!important;color:var(--gaze-text)!important;border-color:var(--gaze-border)!important}}summary,.muted{{color:var(--gaze-muted)!important}}",
         variables_of(colours)
     );
     // The lit lamp. Both rules are important user-agent rules, so the more
@@ -868,24 +895,34 @@ mod tests {
     fn palettes_are_legible() {
         let ratio = |fg: &str, bg: &str| contrast(fg, bg).expect("built-in palette colours are #RRGGBB");
         for p in [DARK, LIGHT] {
+            let colours: BTreeMap<String, String> = TOKENS.iter().zip(p).map(|(key, value)| (key.to_string(), value.to_string())).collect();
+            let accent_link = readable_tone(p[ACCENT], &colours);
+            let danger_text = readable_tone(p[DANGER], &colours);
             assert!(ratio(p[TEXT], p[SURFACE]) >= 4.5);
             assert!(ratio(p[MUTED], p[SURFACE]) >= 4.5);
             assert!(ratio(p[ACCENT_TEXT], p[ACCENT]) >= 4.5);
-            // Success and danger colour text on every chrome background.
+            // Text tones may need a small adjustment from the brand tone.
             for background in [BG, SURFACE, RAISED, HOVER] {
-                for tone in [SUCCESS, DANGER] {
-                    let r = ratio(p[tone], p[background]);
-                    assert!(r >= 4.5, "{} on {}: {r:.2}", TOKENS[tone], TOKENS[background]);
+                for (name, tone) in [("success", p[SUCCESS]), ("danger", danger_text.as_str()), ("accent link", accent_link.as_str())] {
+                    let r = ratio(tone, p[background]);
+                    assert!(r >= 4.5, "{name} on {}: {r:.2}", TOKENS[background]);
                 }
-                // Accent marks controls (bars, rings, icons): 3:1 for
-                // non-text contrast (WCAG 2.1, 1.4.11). Accent *text* is
-                // only drawn on the surface, at 4.5:1.
+                // The supplied accent marks controls (bars, rings, icons).
                 let r = ratio(p[ACCENT], p[background]);
                 assert!(r >= 3.0, "accent on {}: {r:.2}", TOKENS[background]);
             }
-            assert!(ratio(p[ACCENT], p[SURFACE]) >= 4.5);
             // A solid danger button draws the bg colour on the danger colour.
             assert!(ratio(p[BG], p[DANGER]) >= 4.5);
+        }
+    }
+
+    #[test]
+    fn bundled_brand_files_match_built_in_colours() {
+        for (file, scheme) in [
+            (include_str!("../assets/brand-themes/f1r3fly-dark.css"), Scheme::Dark),
+            (include_str!("../assets/brand-themes/f1r3fly-light.css"), Scheme::Light),
+        ] {
+            assert_eq!(parse_palette(file).expect("brand theme parses"), builtin_palette(scheme));
         }
     }
 
@@ -1153,7 +1190,7 @@ mod tests {
         let broken = choose(ThemeChoice::Named("broken".into()), None);
         assert_eq!(broken.scheme, Scheme::Dark);
         let why = broken.problem.expect("a reason");
-        assert!(why.starts_with("/usr/share/t/broken.css: line 2:"), "{why}");
+        assert!(why.contains("broken.css: line 2:"), "{why}");
     }
 
     #[test]

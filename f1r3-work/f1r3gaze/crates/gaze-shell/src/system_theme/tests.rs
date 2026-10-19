@@ -85,13 +85,15 @@ fn fake_dbus_send(dir: &Path, name: &str, body: &str) -> PathBuf {
 
 #[cfg(unix)]
 #[test]
-fn a_portal_answer_is_read_through_dbus_send() {
-    let dir = gaze_fs::scratch_dir("gaze-shell-system-theme-answer");
-    let program = fake_dbus_send(&dir, "dbus-send", "printf '   variant       uint32 2\\n'");
+fn portal_answers_are_read_through_dbus_send() {
     let _starts = process_starts();
-    assert_eq!(query_portal(&program, QUERY_DEADLINE), Outcome::Answered(Some(Scheme::Light)));
-    let log = std::fs::read_to_string(dir.join("dbus-send.log")).expect("the log");
-    assert_eq!(log.lines().collect::<Vec<_>>(), portal_args(READ_ONE), "exactly these arguments");
+    for (value, expected) in [(1, Scheme::Dark), (2, Scheme::Light)] {
+        let dir = gaze_fs::scratch_dir(&format!("gaze-shell-system-theme-answer-{value}"));
+        let program = fake_dbus_send(&dir, "dbus-send", &format!("printf '   variant       uint32 {value}\\n'"));
+        assert_eq!(query_portal(&program, QUERY_DEADLINE), Outcome::Answered(Some(expected)));
+        let log = std::fs::read_to_string(dir.join("dbus-send.log")).expect("the log");
+        assert_eq!(log.lines().collect::<Vec<_>>(), portal_args(READ_ONE), "exactly these arguments");
+    }
 }
 
 #[cfg(unix)]
@@ -226,4 +228,37 @@ fn the_effective_scheme_is_dark_unless_light_is_preferred() {
     assert_eq!(reported.known(), Known::Unknown(None));
     reported.set(Some(Scheme::Light));
     assert_eq!(reported.effective(), Scheme::Light);
+}
+
+#[test]
+fn platform_source_and_preference_changes_resolve_the_displayed_palette() {
+    use crate::theme::{self, ThemeChoice, ThemeDirs};
+
+    let reports_through_window = cfg!(any(target_os = "macos", windows));
+    let source = Source::choose(None, reports_through_window).expect("each supported platform has a source");
+    match source {
+        Source::Window => assert!(reports_through_window),
+        Source::Portal(ref program) => {
+            assert!(!reports_through_window);
+            assert_eq!(program, Path::new("dbus-send"));
+        }
+        Source::Fixed(_) => panic!("no override was requested"),
+    }
+
+    let fs = gaze_fs::MemFs::new();
+    let dirs = ThemeDirs { user: PathBuf::from("/unused/themes"), packaged: vec![] };
+    let system = SystemScheme::fixed(Known::Unknown(None));
+    for (preference, expected) in [
+        (Some(Scheme::Light), Scheme::Light),
+        (Some(Scheme::Dark), Scheme::Dark),
+        (None, Scheme::Dark),
+        (Some(Scheme::Light), Scheme::Light),
+    ] {
+        system.set(preference);
+        let resolved = theme::resolve(&ThemeChoice::System, preference, &fs, &dirs);
+        assert_eq!(system.effective(), expected);
+        assert_eq!(resolved.scheme, expected);
+        assert_eq!(resolved.colours, theme::builtin_palette(expected));
+        assert_eq!(theme::resolve(&ThemeChoice::BuiltIn(Scheme::Dark), preference, &fs, &dirs).scheme, Scheme::Dark);
+    }
 }

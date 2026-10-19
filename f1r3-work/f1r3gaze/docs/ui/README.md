@@ -191,7 +191,7 @@ Controls carry `data-action="verb[:argument]"`. `Action::parse` accepts:
 | `history:clear-ask\|clear-cancel\|clear\|more:0` | — | History controls |
 | `site:<verb>:<arg>` | `store`, `grants`, `cache`, `session:<tab>:<label>` | Site data actions |
 | `revoke:<urn>`, `allow:<tab>:<prompt>`, `deny:…`, `remember` | — | permissions and prompts |
-| `wallet:<verb>[:<arg>]` | `new`, `import`, `send`, `confirm`, `cancel`, `use`, `copy`, `export`, `remove`, `dismiss` | Wallet |
+| `wallet:<verb>[:<arg>]` | `new`, `import`, `import-file`, `send`, `confirm`, `cancel`, `use`, `copy`, `export`, `remove`, `dismiss` | Wallet; `import-file` uses a native open panel and `export` chooses a destination folder |
 | `theme:<op>` | `system`, `dark`, `light`; `use:<name>`, a theme file's name as `theme::check_theme_name` allows it; `new`; `reload`. Anything else is refused: the step-9 `next`, `template` and `custom` no longer parse | Appearance: System follows the operating system's preference, Dark and Light are the built-in schemes, and `use` chooses `themes/<name>.css` (a file that cannot be used is not chosen, and the status bar says why). New theme saves the colours shown as `themes/my-theme.css` (`my-theme-2`, … when a name is taken; never over anything) and chooses it; Reload reads the theme files and the chosen theme again. A choice is saved as `theme` under `[appearance]` in `settings.toml`, and the window is asked to show its scheme (§3.6) |
 | `find:show\|next\|prev\|hide` | — | find |
 | `go`, `suggest:<url>` | url | open the typed address, or a history suggestion |
@@ -513,18 +513,23 @@ built-in schemes:
 
 | Token | Role | Dark | Light |
 |---|---|---|---|
-| `--gaze-bg` | window background, fields, cards | `#161b26` | `#f5f7fa` |
-| `--gaze-surface` | toolbar, sidebar, dropdowns, find box | `#202735` | `#ffffff` |
-| `--gaze-raised` | buttons, tags, prompt bar | `#293244` | `#eaf0f4` |
-| `--gaze-text` | text | `#eaf0f7` | `#182734` |
-| `--gaze-muted` | secondary text, idle icons | `#a8b7c9` | `#526879` |
-| `--gaze-border` | borders, disabled text | `#3a4659` | `#c9d7df` |
-| `--gaze-accent` | bars, rings, active icons, primary buttons | `#71d4cf` | `#087f86` |
-| `--gaze-accent-text` | text on an accent background | `#10272c` | `#ffffff` |
-| `--gaze-hover` | hover and active-row background | `#344156` | `#dde9ed` |
-| `--gaze-warning` | prompts, warnings | `#efbf75` | `#955300` |
-| `--gaze-success` | "Allowed", success messages | `#7ddc9a` | `#146c43` |
-| `--gaze-danger` | errors, destructive actions | `#ff8a80` | `#b42318` |
+| `--gaze-bg` | window background, fields, cards | `#000000` | `#FFFFFF` |
+| `--gaze-surface` | toolbar, sidebar, dropdowns, find box | `#1E1E1E` | `#F5F5F5` |
+| `--gaze-raised` | buttons, tags, prompt bar | `#333333` | `#E8E8E8` |
+| `--gaze-text` | text | `#FFFFFF` | `#000000` |
+| `--gaze-muted` | secondary text, idle icons | `#C5C5C5` | `#3F3F3F` |
+| `--gaze-border` | borders, disabled text | `#3F3F3F` | `#C5C5C5` |
+| `--gaze-accent` | bars, rings, active icons, primary buttons | `#3FA9F5` | `#007BC4` |
+| `--gaze-accent-text` | text on an accent background | `#000000` | `#FFFFFF` |
+| `--gaze-hover` | hover and active-row background | `#282828` | `#EDEDED` |
+| `--gaze-warning` | prompts, warnings | `#F3D630` | `#7A6700` |
+| `--gaze-success` | "Allowed", success messages | `#60C171` | `#006C13` |
+| `--gaze-danger` | errors, destructive actions | `#E0608A` | `#7B0429` |
+
+These are the supplied F1R3FLY palettes in `assets/brand-themes`. The chrome
+uses Leo SVGs from `assets/leo` for matching actions and keeps Font Awesome
+for actions without a Leo counterpart. The application icon is the supplied
+F1R3Gaze eye in the window and platform installers.
 
 Built-in pages (`gaze://newtab`, `gaze://about`, error pages) use the same
 tokens through `theme::builtin_css`. The chrome installs that sheet as a
@@ -568,24 +573,13 @@ The chrome's rules:
 - Disabled controls are exempt (WCAG 1.4.3). They use `--gaze-border` on
   purpose, so they recede.
 
-Measured ratios against each background a token is drawn on:
-
-| Foreground | Dark: bg / surface / raised / hover | Light: bg / surface / raised / hover |
-|---|---|---|
-| text | 15.02 / 13.05 / 11.20 / 8.99 | 14.19 / 15.23 / 13.25 / 12.30 |
-| muted | 8.44 / 7.33 / 6.29 / 5.05 | 5.41 / 5.81 / 5.05 / 4.69 |
-| accent | 9.86 / 8.57 / 7.36 / 5.90 | **4.46** / 4.78 / **4.16** / **3.86** |
-| warning | 10.16 / 8.82 / 7.58 / 6.08 | 5.57 / 5.97 / 5.20 / 4.82 |
-| success | 10.32 / 8.96 / 7.70 / 6.18 | 6.01 / 6.45 / 5.61 / 5.21 |
-| danger | 7.55 / 6.56 / 5.63 / 4.52 | 6.13 / 6.57 / 5.72 / 5.31 |
-
-The light accent falls below 4.5:1 on three of the four backgrounds. That is
-the reason for convention **R6**: accent *text* appears only on
-`--gaze-surface`, and elsewhere the accent colours bars, rings, and icons,
-where 3:1 suffices. Two pairings used on accent or danger backgrounds:
-- `--gaze-accent-text` on accent: 8.91 (dark), 4.78 (light).
-- `--gaze-bg` on danger, for the primary danger button: 7.55 (dark), 6.13
-  (light).
+The supplied light accent reaches only 4.16:1 on the surface and 3.70:1 on
+raised controls. The supplied dark danger reaches only 3.74:1 on raised
+controls. `theme::variables_of` derives `--gaze-accent-link` and
+`--gaze-danger-text` by moving those colours toward black or white just enough
+to reach 4.5:1 on all four chrome backgrounds. The original brand colours
+remain on fills, bars, rings, and icons. The theme tests check the actual
+ratios and that the supplied palette files match the built-in values.
 
 The lit lamp (§8.14) keeps its own colours in both schemes:
 - Its label on its yellow: 10.67. The scheme's dark-mode text would give 1.28

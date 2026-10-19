@@ -550,6 +550,11 @@ pub fn tla(case: &Case<'_>) -> Result<(String, String), String> {
     let _ = writeln!(tla, "TR_Checked == << >>");
     let _ = writeln!(tla, "TR_Taken == {}", set(taken));
     let _ = writeln!(tla, "TR_Start == [x \\in {{}} |-> \"missing\"]");
+    // TLC's .cfg parser treats backslashes in quoted strings differently
+    // from the TLA+ module parser. Keep path values in the module and use
+    // an operator override so Windows folders have the same value as the
+    // paths in TR_Log.
+    let _ = writeln!(tla, "TR_MarkerDir == {}", string(&text(&case.layout.data)?));
     let _ = writeln!(tla, "TR_Log == <<");
     for (i, event) in events.iter().enumerate() {
         let comma = if i + 1 < events.len() { "," } else { "" };
@@ -565,7 +570,7 @@ pub fn tla(case: &Case<'_>) -> Result<(String, String), String> {
         ("SrcDir", "<- TR_SrcDir".into()),
         ("DstDir", "<- TR_DstDir".into()),
         ("BakDir", "<- TR_BakDir".into()),
-        ("MarkerDir", format!("= {}", string(&text(&case.layout.data)?))),
+        ("MarkerDir", "<- TR_MarkerDir".into()),
         ("FarDirs", "<- TR_Far".into()),
         ("Checked", "<- TR_Checked".into()),
         ("MaxCrashes", format!("= {crashes}")),

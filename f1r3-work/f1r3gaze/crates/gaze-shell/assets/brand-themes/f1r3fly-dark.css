@@ -1,0 +1,23 @@
+/*
+ * F1R3Gaze theme: F1R3FLY brand, dark. Revised 2026-10-16 (Hannah Adams / Cowork).
+ * Every value is from the F1R3FLY brand color system (June 12, 2026): primaries
+ * Black, White, Yellow #F3D630, Sky #3FA9F5, plus hue-locked ladder values for
+ * the greys (Neutral Gray), success (Partner Green) and danger (Client Scarlet).
+ * The app derives a slightly lighter danger text colour where the supplied
+ * Scarlet is too faint on raised controls. This palette is the built-in dark
+ * scheme; select default-dark under Appearance to pin it.
+ */
+:root {
+  --gaze-bg: #000000; /* Black: the ground */
+  --gaze-surface: #1E1E1E; /* Neutral Gray, darkest: current tab, cards, panels */
+  --gaze-raised: #333333; /* Neutral Gray, dark: selected and raised items, consent bar fill */
+  --gaze-text: #FFFFFF; /* White */
+  --gaze-muted: #C5C5C5; /* Neutral Gray, lighter: secondary text and icons */
+  --gaze-border: #3F3F3F; /* Neutral Gray: borders and fields */
+  --gaze-accent: #3FA9F5; /* Sky: links, focus, active tab and rail, main buttons */
+  --gaze-accent-text: #000000; /* Black on Sky */
+  --gaze-hover: #282828; /* Neutral Gray, darker: what the pointer is over */
+  --gaze-warning: #F3D630; /* Yellow: consent bar edge, warnings, lit states */
+  --gaze-success: #60C171; /* Partner Green, light (passes 4.5:1 on surface) */
+  --gaze-danger: #E0608A; /* Client Scarlet, hue-locked light (passes 4.5:1 on surface) */
+}
