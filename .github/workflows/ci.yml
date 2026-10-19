@@ -85,16 +85,22 @@ jobs:
       - name: Render Leo icons in both themes
         run: |
           cargo build --locked -p gaze-shell --bin f1r3gaze
+          icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$icd"
+          export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" LIBGL_ALWAYS_SOFTWARE=1
           scripts/ui-snapshots.sh --after --only '^0[12]-' \
             --bin target/debug/f1r3gaze \
             --out "$RUNNER_TEMP/icon-snapshots" \
-            --work "$RUNNER_TEMP/icon-work"
+            --work "$RUNNER_TEMP/icon-work" --timeout 45 --keep
       - name: Preserve failed icon screenshots
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: chrome-icons-failure
-          path: ${{ runner.temp }}/icon-snapshots
+          path: |
+            ${{ runner.temp }}/icon-snapshots
+            ${{ runner.temp }}/icon-work/logs
+            ${{ runner.temp }}/icon-work/xvfb.log
 
   reach:
     runs-on: ubuntu-22.04
