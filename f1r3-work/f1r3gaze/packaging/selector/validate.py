@@ -11,13 +11,21 @@ from pathlib import Path
 def validate(catalog: dict, selected: list[str]) -> None:
     if catalog.get("schema_version") != 1:
         raise ValueError("unsupported release catalog schema")
-    components = {entry["id"]: entry for entry in catalog.get("components", [])}
-    if len(components) != len(catalog.get("components", [])):
-        raise ValueError("duplicate component ID")
+    entries = catalog.get("components")
+    if (
+        not isinstance(entries, list)
+        or len(entries) != 1
+        or not isinstance(entries[0], dict)
+        or entries[0].get("id") != "f1r3gaze"
+    ):
+        raise ValueError("version 1 release catalogs support only F1R3Gaze")
+    components = {"f1r3gaze": entries[0]}
     if not selected or len(selected) != len(set(selected)):
         raise ValueError("select one or more distinct systems")
     if set(selected) - components.keys():
-        raise ValueError(f"unknown system(s): {sorted(set(selected) - components.keys())}")
+        raise ValueError(
+            f"unknown system(s): {sorted(set(selected) - components.keys())}"
+        )
     for left_id in selected:
         left = components[left_id]
         for right_id in selected:

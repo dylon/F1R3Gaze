@@ -48,6 +48,21 @@ class ReleaseMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown system"):
             validate(catalog, ["f1r3gaze", "embers"])
 
+    def test_selector_rejects_unreleased_node_in_version_one_catalog(self) -> None:
+        args = argparse.Namespace(version="0.1.0", out=self.root / "catalog.json")
+        release_metadata.generate_catalog(args, self.entries())
+        catalog = json.loads(args.out.read_text())
+        catalog["components"][0]["compatible_with"] = {"f1r3node": ["0.4.46"]}
+        catalog["components"].append(
+            {
+                "id": "f1r3node",
+                "version": "0.4.46",
+                "compatible_with": {"f1r3gaze": ["0.1.0"]},
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "only F1R3Gaze"):
+            validate(catalog, ["f1r3gaze", "f1r3node"])
+
     def test_package_manager_manifests_use_msi_and_dmg_digest(self) -> None:
         entries = self.entries()
         cask = self.root / "Casks/f1r3gaze.rb"
