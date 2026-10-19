@@ -44,17 +44,13 @@ done
 sed -e "s/__VERSION__/$VER/g" -e "s/__BUNDLE_VERSION__/$VER/g" \
   "$HERE/Info.plist" > "$C/Info.plist"
 
-IS="$WORK/f1r3gaze.iconset"; mkdir -p "$IS"
-for s in 16 32 128 256 512; do
-  cp "$ICONS/$s.png" "$IS/icon_${s}x${s}.png"
-  cp "$ICONS/$((s * 2)).png" "$IS/icon_${s}x${s}@2x.png" 2>/dev/null || cp "$ICONS/1024.png" "$IS/icon_${s}x${s}@2x.png"
-done
-iconutil -c icns "$IS" -o "$C/Resources/f1r3gaze.icns"
+cp "$ICONS/f1r3gaze.icns" "$C/Resources/f1r3gaze.icns"
 cp "$HERE/../../../../LICENSE" "$C/Resources/LICENSE"
+cp "$PROJECT/crates/gaze-shell/assets/leo/LICENSE-MPL-2.0.md" "$C/Resources/LICENSE-leo-MPL-2.0.md"
 
 # Assert the complete unsigned payload before signing adds _CodeSignature.
 actual="$(cd "$APP" && find Contents -type f | LC_ALL=C sort)"
-expected="$(printf '%s\n' Contents/Info.plist Contents/MacOS/f1r3c Contents/MacOS/f1r3gaze Contents/Resources/LICENSE Contents/Resources/f1r3gaze.icns | LC_ALL=C sort)"
+expected="$(printf '%s\n' Contents/Info.plist Contents/MacOS/f1r3c Contents/MacOS/f1r3gaze Contents/Resources/LICENSE Contents/Resources/LICENSE-leo-MPL-2.0.md Contents/Resources/f1r3gaze.icns | LC_ALL=C sort)"
 [[ "$actual" == "$expected" ]] ||
   { echo "unexpected macOS app payload:" >&2; printf '%s\n' "$actual" >&2; exit 2; }
 

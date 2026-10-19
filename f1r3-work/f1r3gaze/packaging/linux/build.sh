@@ -61,7 +61,8 @@ stage() {
   install -Dm755 "$bin/f1r3c" "$prefix/bin/f1r3c"
   install -Dm644 "$here/f1r3gaze.desktop" "$prefix/share/applications/f1r3gaze.desktop"
   install -Dm644 "$license" "$prefix/share/licenses/f1r3gaze/LICENSE"
-  for size in 16 32 48 64 128 256 512; do
+  install -Dm644 "$project/crates/gaze-shell/assets/leo/LICENSE-MPL-2.0.md" "$prefix/share/licenses/f1r3gaze/LICENSE-leo-MPL-2.0.md"
+  for size in 16 22 24 32 48 64 128 256 512; do
     install -Dm644 "$here/../icons/$size.png" "$prefix/share/icons/hicolor/${size}x${size}/apps/f1r3gaze.png"
   done
   install -Dm644 "$here/../icons/f1r3gaze.svg" "$prefix/share/icons/hicolor/scalable/apps/f1r3gaze.svg"

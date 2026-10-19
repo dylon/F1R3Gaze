@@ -29,6 +29,9 @@
       <Component Directory="INSTALLFOLDER">
         <File Id="LICENSE" Source="$(var.Bin)/LICENSE" KeyPath="yes" />
       </Component>
+      <Component Directory="INSTALLFOLDER">
+        <File Id="LeoLicense" Name="LICENSE-leo-MPL-2.0.md" Source="$(var.Bin)/LICENSE-leo-MPL-2.0.md" KeyPath="yes" />
+      </Component>
       <!-- f1r3:// and f1r3h:// open in F1R3Gaze. -->
       <Component Id="SchemeF1r3" Directory="INSTALLFOLDER">
         <RegistryKey Root="HKLM" Key="Software\Classes\f1r3">

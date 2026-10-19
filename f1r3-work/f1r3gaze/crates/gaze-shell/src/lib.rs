@@ -43,6 +43,8 @@ pub mod application;
 #[cfg(feature = "window")]
 pub mod chrome;
 #[cfg(feature = "window")]
+mod leo_icons;
+#[cfg(feature = "window")]
 pub mod cursor;
 #[cfg(feature = "window")]
 pub mod system_theme;

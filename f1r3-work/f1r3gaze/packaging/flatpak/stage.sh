@@ -10,8 +10,9 @@ for name in f1r3gaze f1r3c; do
 done
 install -m644 "$here/linux/f1r3gaze.desktop" "$out/f1r3gaze.desktop"
 sed -i 's/^Icon=f1r3gaze$/Icon=io.f1r3fly.F1R3Gaze/' "$out/f1r3gaze.desktop"
-for size in 16 32 48 64 128 256 512; do
+for size in 16 22 24 32 48 64 128 256 512; do
   install -m644 "$here/icons/$size.png" "$out/icons/$size.png"
 done
 install -m644 "$here/icons/f1r3gaze.svg" "$out/icons/f1r3gaze.svg"
 install -m644 "$here/../../../LICENSE" "$out/LICENSE"
+install -m644 "$here/../crates/gaze-shell/assets/leo/LICENSE-MPL-2.0.md" "$out/LICENSE-leo-MPL-2.0.md"

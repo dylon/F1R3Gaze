@@ -240,7 +240,7 @@ mod geometry {
 // ── Stylesheet ──────────────────────────────────────────────────────────
 
 /// The chrome stylesheet. Theme colours (`--gaze-*`) come from
-/// [`theme::variables`]; icons and fonts from [`theme::font_css`].
+/// [`theme::variables`]; fonts and fallback icons from [`theme::font_css`].
 const CSS: &str = r#"
 /* Conventions (docs/ui/README.md):
    R1 text runs: labels are elements (<span>), icons <i>; never bare text
@@ -255,8 +255,8 @@ const CSS: &str = r#"
       attribute on stable ids.
    R5 budgets: labels are fitted to their exact width in Rust; overflow is a
       backstop.
-   R6 accent: accent colours icons, bars, and rings; accent text appears only
-      on --gaze-surface.
+   R6 accent: the brand accent colours icons, bars, and rings; link text uses
+      --gaze-accent-link so it reads clearly on every chrome background.
    R7 gutter: sidebar boxes (rows, cards, notices, the controls bar) span the
       6 px panel gutter; headings, labels, notes, and in-flow form controls
       start 8 px further in.
@@ -268,6 +268,8 @@ const CSS: &str = r#"
       border box. */
 :root{--sans:'Noto Sans',system-ui,sans-serif;--mono:'Fira Code',monospace;--radius-sm:5px;--radius-md:7px;--radius-lg:10px}
 *{box-sizing:border-box}
+.leo-icon{display:inline-flex;align-items:center;justify-content:center;vertical-align:-.125em;line-height:1}
+.leo-icon>svg{display:block;width:1em;height:1em;flex:none}
 html,body{margin:0;height:100%;font:13px/1.35 var(--sans);color:var(--gaze-text);background:var(--gaze-bg)}
 body{display:flex;flex-direction:column}
 button,input{font:inherit;color:inherit}
@@ -285,7 +287,7 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 .btn-ghost{background:transparent;border-color:transparent}
 .btn-primary{background:var(--gaze-accent);border-color:var(--gaze-accent);color:var(--gaze-accent-text);font-weight:600}
 .btn-primary:hover{background:var(--gaze-accent);box-shadow:inset 0 0 0 40px #00000022}
-.btn-danger{color:var(--gaze-danger)}
+.btn-danger{color:var(--gaze-danger-text)}
 .btn-primary.btn-danger{background:var(--gaze-danger);border-color:var(--gaze-danger);color:var(--gaze-bg)}
 .btn:disabled,.btn:disabled:hover{background:transparent;border-color:var(--gaze-border);color:var(--gaze-border);box-shadow:none}
 .btn-ghost:disabled,.btn-ghost:disabled:hover{border-color:transparent}
@@ -310,7 +312,7 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 .check.on .check-box{background:var(--gaze-accent);border-color:var(--gaze-accent);color:var(--gaze-accent-text)}
 /* Badges hold bare text, so they are never flex boxes (R1). */
 .tag{display:inline-block;height:18px;line-height:18px;padding:0 7px;border-radius:9px;font-size:10.5px;font-weight:600;background:var(--gaze-raised);color:var(--gaze-muted);white-space:nowrap}
-.tag.ok{color:var(--gaze-success)}.tag.warn{color:var(--gaze-warning)}.tag.err{color:var(--gaze-danger)}
+.tag.ok{color:var(--gaze-success)}.tag.warn{color:var(--gaze-warning)}.tag.err{color:var(--gaze-danger-text)}
 .count{display:inline-block;min-width:18px;height:18px;line-height:18px;padding:0 6px;border-radius:9px;text-align:center;font-size:11px;font-weight:600;background:var(--gaze-raised);color:var(--gaze-muted)}
 /* Hover bubbles: Blitz shows no title tooltips. */
 .tip{position:absolute;z-index:40;visibility:hidden;pointer-events:none;white-space:nowrap;padding:4px 8px;border-radius:var(--radius-sm);background:var(--gaze-text);color:var(--gaze-bg);font-size:12px;font-weight:400;line-height:1.3;box-shadow:0 4px 14px #00000055}
@@ -344,7 +346,7 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 .row.on{background:linear-gradient(var(--gaze-accent),var(--gaze-accent)) 0 0/3px 100% no-repeat,var(--gaze-hover)}
 .row-icon{width:16px;flex:none;text-align:center;font-size:12px;color:var(--gaze-muted)}
 .row.on .row-icon{color:var(--gaze-accent)}
-.row-icon.warn{color:var(--gaze-warning)}.row-icon.err{color:var(--gaze-danger)}
+.row-icon.warn{color:var(--gaze-warning)}.row-icon.err{color:var(--gaze-danger-text)}
 .row-text{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .row-label{white-space:nowrap;overflow:hidden}
 .row-detail{font:11px/1.45 var(--mono);color:var(--gaze-muted);white-space:nowrap;overflow:hidden}
@@ -364,7 +366,7 @@ mark{background:transparent;color:inherit}
 .menu-item:hover{background:var(--gaze-hover)}
 .menu-item:disabled,.menu-item:disabled>i{color:var(--gaze-border)}
 .menu-item:disabled:hover{background:transparent}
-.menu-item.danger,.menu-item.danger>i{color:var(--gaze-danger)}
+.menu-item.danger,.menu-item.danger>i{color:var(--gaze-danger-text)}
 .menu-sep{height:1px;margin:3px 6px;background:var(--gaze-border)}
 /* Cards, notices, empty states */
 .card{margin:6px 0 8px;padding:10px 12px;border:1px solid var(--gaze-border);border-radius:var(--radius-lg);background:var(--gaze-bg)}
@@ -397,7 +399,7 @@ mark{background:transparent;color:inherit}
 .tab.narrow{justify-content:center;padding:0;gap:0}
 .tab.narrow .tab-title,.tab.narrow .tab-close{display:none}
 .tab-icon{flex:none;width:14px;text-align:center;font-size:11px}
-.tab-icon.warn{color:var(--gaze-warning)}.tab-icon.err{color:var(--gaze-danger)}
+.tab-icon.warn{color:var(--gaze-warning)}.tab-icon.err{color:var(--gaze-danger-text)}
 .tab-title{flex:1;min-width:0;overflow:hidden}
 .tab-close{flex:none;display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;font-size:11px;visibility:hidden}
 .tab:hover .tab-close,.tab.on .tab-close{visibility:visible}
@@ -457,23 +459,23 @@ mark{background:transparent;color:inherit}
 #findbar.off{visibility:hidden}
 #find{padding-right:70px}
 #findcount{position:absolute;right:9px;top:0;line-height:30px;font-size:11.5px;color:var(--gaze-muted);pointer-events:none}
-#findcount.none{color:var(--gaze-danger)}
+#findcount.none{color:var(--gaze-danger-text)}
 /* Status bar */
 #status{flex:none;display:flex;align-items:center;gap:12px;height:24px;padding:0 10px;background:var(--gaze-bg);border-top:1px solid var(--gaze-border);color:var(--gaze-muted);font-size:11.5px;white-space:nowrap;overflow:hidden}
 .stage-chip{flex:none;display:flex;align-items:center;gap:5px}
 .stage-chip.ok>i{color:var(--gaze-success)}.stage-chip.info>i{color:var(--gaze-accent)}
-.stage-chip.warn{color:var(--gaze-warning)}.stage-chip.err{color:var(--gaze-danger)}
+.stage-chip.warn{color:var(--gaze-warning)}.stage-chip.err{color:var(--gaze-danger-text)}
 .status-text{min-width:0;overflow:hidden}
 .status-warn{min-width:0;overflow:hidden;color:var(--gaze-warning)}
 .flash{flex:none;display:flex;align-items:center;gap:5px;color:var(--gaze-text)}
 .flash.ok>i{color:var(--gaze-success)}.flash.info>i{color:var(--gaze-accent)}
-.flash.warn>i{color:var(--gaze-warning)}.flash.err{color:var(--gaze-danger)}
+.flash.warn>i{color:var(--gaze-warning)}.flash.err{color:var(--gaze-danger-text)}
 /* Console and appearance */
 .log-line{--bar:var(--gaze-border);display:flex;gap:8px;margin:1px 0;padding:5px 8px;border-radius:var(--radius-sm);background:linear-gradient(var(--bar),var(--bar)) 0 0/3px 100% no-repeat;font:11.5px/1.45 var(--mono)}
 .log-level{flex:none;width:40px;color:var(--gaze-muted)}
 .log-text{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .log-line.warn{--bar:var(--gaze-warning)}.log-line.warn .log-level{color:var(--gaze-warning)}
-.log-line.err{--bar:var(--gaze-danger)}.log-line.err .log-level{color:var(--gaze-danger)}
+.log-line.err{--bar:var(--gaze-danger)}.log-line.err .log-level{color:var(--gaze-danger-text)}
 .log-line.debug .log-text{color:var(--gaze-muted)}
 .swatches{display:flex;flex-wrap:wrap;gap:6px 10px;padding:2px 8px}
 .swatch{display:flex;align-items:center;gap:6px;width:126px}
@@ -641,7 +643,7 @@ fn shell_html(css: &str, sidebar_open: bool) -> String {
             "__SIDEBAR_CLASS__",
             if sidebar_open { "" } else { "hidden" },
         );
-    key_labels(&html, KeyPlatform::CURRENT)
+    crate::leo_icons::inline(&key_labels(&html, KeyPlatform::CURRENT))
 }
 
 // ── Actions ─────────────────────────────────────────────────────────────
@@ -4714,6 +4716,7 @@ impl ChromeDocument {
     }
 
     fn set_html(&mut self, id: &'static str, html: String) -> bool {
+        let html = crate::leo_icons::inline(&html);
         if self.rendered.get(id) == Some(&html) {
             return false;
         }

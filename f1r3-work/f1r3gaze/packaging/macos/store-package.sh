@@ -106,7 +106,7 @@ import sys
 app = Path(sys.argv[1])
 expected = {
     "Contents/Info.plist", "Contents/MacOS/f1r3gaze", "Contents/MacOS/f1r3c",
-    "Contents/Resources/LICENSE", "Contents/Resources/f1r3gaze.icns",
+    "Contents/Resources/LICENSE", "Contents/Resources/LICENSE-leo-MPL-2.0.md", "Contents/Resources/f1r3gaze.icns",
     "Contents/_CodeSignature/CodeResources",
 }
 if sys.argv[2] == "1":

@@ -88,6 +88,7 @@ use winit::event::{DeviceEvent, DeviceId, PointerKind, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::monitor::{Fullscreen, MonitorHandle};
 use winit::raw_window_handle::RawDisplayHandle;
+use winit::icon::RgbaIcon;
 use winit::window::{Theme, Window, WindowAttributes, WindowId};
 
 /// Writes `window.json`: `Profile::write_state` on the window's profile.
@@ -510,7 +511,12 @@ fn creation_theme(platform: CreationTheme, decorations: Option<Theme>) -> Option
 fn window_attributes(plan: &RestorePlan, system: WindowSystem, theme: Option<Theme>) -> WindowAttributes {
     let attributes = WindowAttributes::default()
         .with_surface_size(LogicalSize::new(plan.size.0, plan.size.1))
-        .with_theme(theme);
+        .with_theme(theme)
+        .with_window_icon(Some(
+            RgbaIcon::new(include_bytes!("../assets/f1r3gaze-64.rgba").to_vec(), 64, 64)
+                .expect("the bundled app icon is 64 × 64 RGBA")
+                .into(),
+        ));
     match (plan.position, system.units()) {
         (Some((x, y)), Some(Units::Points)) => {
             attributes.with_position(Position::Logical(LogicalPosition::new(f64::from(x), f64::from(y))))

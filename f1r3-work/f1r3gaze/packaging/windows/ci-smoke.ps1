@@ -55,7 +55,7 @@ try {
   }
   New-Item -ItemType Directory -Path $scratch | Out-Null
   Expand-Archive -LiteralPath $zip -DestinationPath $portable -Force
-  foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE')) {
+  foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE', 'LICENSE-leo-MPL-2.0.md')) {
     if (-not (Test-Path (Join-Path $portable $name))) { throw "Missing $name in ZIP" }
   }
   $got = & (Join-Path $portable 'f1r3gaze.exe') --version
@@ -78,7 +78,7 @@ try {
   Install-Msi $msi $upgradeLog
   Assert-RegisteredVersion $Version
   if (-not (Test-Path $startMenu)) { throw "MSI did not create its Start menu shortcut: $startMenu" }
-  foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE')) {
+  foreach ($name in @('f1r3gaze.exe', 'f1r3c.exe', 'LICENSE', 'LICENSE-leo-MPL-2.0.md')) {
     if (-not (Test-Path (Join-Path $installed $name))) { throw "Missing installed $name" }
   }
   $got = & (Join-Path $installed 'f1r3gaze.exe') --version

@@ -44,6 +44,7 @@ foreach ($name in @("f1r3gaze.exe", "f1r3c.exe")) {
 }
 Copy-Item "$Bin\f1r3gaze.exe", "$Bin\f1r3c.exe" $stage
 Copy-Item "$here\..\..\..\..\LICENSE" (Join-Path $stage "LICENSE")
+Copy-Item "$here\..\..\crates\gaze-shell\assets\leo\LICENSE-MPL-2.0.md" (Join-Path $stage "LICENSE-leo-MPL-2.0.md")
 
 $signtool = $null
 if ($env:WINDOWS_CERT_PFX) {
@@ -65,7 +66,7 @@ if ($env:WINDOWS_CERT_PFX) {
 }
 
 # Portable output can also be made from a cross-built PE binary on Linux.
-Compress-Archive -Force -Path "$stage\f1r3gaze.exe", "$stage\f1r3c.exe", "$stage\LICENSE" -DestinationPath (Join-Path $Dist "f1r3gaze-$Version-windows-x64.zip")
+Compress-Archive -Force -Path "$stage\f1r3gaze.exe", "$stage\f1r3c.exe", "$stage\LICENSE", "$stage\LICENSE-leo-MPL-2.0.md" -DestinationPath (Join-Path $Dist "f1r3gaze-$Version-windows-x64.zip")
 if ($ZipOnly) {
   Write-Host "built portable Windows ZIP"
   return

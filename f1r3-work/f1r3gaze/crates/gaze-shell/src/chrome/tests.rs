@@ -837,6 +837,13 @@ fn chrome_markup_has_stable_ids() {
 }
 
 #[test]
+fn leo_toolbar_icon_is_parsed_and_laid_out() {
+    let doc = laid_out_shell_with("tabs", "");
+    let width = width_of(&doc, "#back .leo-icon svg");
+    assert!(width > 0.0, "Leo toolbar SVG should have a visible width");
+}
+
+#[test]
 fn labels_are_never_bare_text_in_flex_boxes() {
     let mut failures = Vec::new();
     for (region, fragment) in sample_fragments() {
@@ -1673,7 +1680,7 @@ fn the_badge_turns_into_a_magnifier_when_the_address_is_edited() {
     attach(&mut chrome, 0);
     chrome.poll(None);
     lay_out_chrome(&mut chrome);
-    let magnifier = |chrome: &ChromeDocument| chrome.rendered["scheme"].contains("fa-magnifying-glass");
+    let magnifier = |chrome: &ChromeDocument| chrome.rendered["scheme"].contains(include_str!("../../assets/leo/search.svg"));
     assert!(!magnifier(&chrome), "the page's identity while unfocused");
     chrome.act(Action::FocusUrl);
     chrome.poll(None);
