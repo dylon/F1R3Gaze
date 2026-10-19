@@ -1706,7 +1706,7 @@ new_machine() {
     rm -rf -- "$S"
     mkdir -p -- "$S/home" "$S/xdg/config" "$S/xdg/data" "$S/xdg/state" "$S/xdg/cache" "$S/xdg/config-dirs" \
         "$S/xdg/data-dirs" "$S/xdg/runtime"
-    chmod 700 -- "$S/xdg/runtime"
+    chmod 700 "$S/xdg/runtime"
     portal 0
     : >"$WORK/portal/argv.log"
     MACHINE_ENV=(env -u F1R3GAZE_PROFILE HOME="$S/home" XDG_CONFIG_HOME="$S/xdg/config" XDG_DATA_HOME="$S/xdg/data"
