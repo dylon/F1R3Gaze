@@ -1013,10 +1013,22 @@ effect() {
 # ── Scenes ───────────────────────────────────────────────────────────────
 NOTES_TITLE="Field notes on gaze and capability"
 
+wait_panel_paint() {
+    local theme=$1 color='#007BC4' deadline=$((SECONDS + 15)) image="$WORK/refs/.panel-paint.png" pixels
+    [[ $theme == dark ]] && color='#3FA9F5'
+    while :; do
+        import -window root "$image"
+        pixels=$(count_color_in "$image" "${AT[LINE_TAB_BAR]}" "$color")
+        ((pixels >= 2)) && return 0
+        ((SECONDS < deadline)) || { fail "tab accent did not paint for $theme theme"; return 1; }
+        sleep 0.2
+    done
+}
+
 panel_scene() { # PANEL THEME
     new_profile "$SCENE"
     seed "$2" "$1" true false 0
-    launch && wait_title "$NOTES_TITLE" && pointer NEUTRAL && shot 0.8
+    launch && wait_title "$NOTES_TITLE" && wait_panel_paint "$2" && pointer NEUTRAL && shot 0.8
 }
 scene_01_tabs_dark() {
     panel_scene tabs dark || return 1
