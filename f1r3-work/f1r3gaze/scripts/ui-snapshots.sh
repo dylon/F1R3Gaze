@@ -375,12 +375,12 @@ compare_sheets() {
     mkdir -p -- "$dest"
     for name in "${SCENES[@]}"; do
         [[ -f $before/$name.png && -f $after/$name.png ]] || continue
-        montage -label 'before' "$before/$name.png" -label 'after' "$after/$name.png" \
+        montage -font DejaVu-Sans -label 'before' "$before/$name.png" -label 'after' "$after/$name.png" \
             -tile 2x1 -geometry 640x400+6+6 -title "$name" "$dest/$name.png"
         made=$((made + 1))
     done
     ((made)) || die 1 "no scene exists in both before/ and after/"
-    montage "$dest"/[0-9][0-9]-*.png -tile 2x -geometry 1290x430+4+4 "$dest/index.png"
+    montage -font DejaVu-Sans "$dest"/[0-9][0-9]-*.png -tile 2x -geometry 1290x430+4+4 "$dest/index.png"
     log "wrote $made comparisons and $dest/index.png"
 }
 if ((COMPARE)); then
@@ -388,7 +388,7 @@ if ((COMPARE)); then
     exit 0
 fi
 
-for tool in Xvfb xdotool import magick montage jq gawk xdpyinfo python3 timeout sha256sum flock; do
+for tool in Xvfb xdotool import magick compare montage jq gawk xdpyinfo python3 timeout sha256sum flock; do
     command -v "$tool" >/dev/null || die 2 "missing tool: $tool"
 done
 [[ -x $BIN ]] || die 2 "binary not found or not executable: $BIN (cargo build --release -p gaze-shell)"
@@ -853,12 +853,14 @@ wait_title() {
 # of the mean absolute channel difference (0 to 1 each). It is 0 only for
 # identical images, and a pixel that changes completely counts 1 (ledger L11).
 ae() {
-    local a=$1 b=$2 crop=${3:-}
+    local a=$1 b=$2 crop=${3:-} metric status=0
     if [[ -n $crop ]]; then
-        magick compare -metric AE \( "$a" -crop "$crop" +repage \) \( "$b" -crop "$crop" +repage \) null: 2>&1 | awk '{print $1 + 0}'
+        metric=$(compare -metric AE \( "$a" -crop "$crop" +repage \) \( "$b" -crop "$crop" +repage \) null: 2>&1) || status=$?
     else
-        magick compare -metric AE "$a" "$b" null: 2>&1 | awk '{print $1 + 0}'
+        metric=$(compare -metric AE "$a" "$b" null: 2>&1) || status=$?
     fi
+    ((status <= 1)) || { printf 'ImageMagick compare failed: %s\n' "$metric" >&2; return "$status"; }
+    printf '%s\n' "$metric" | gawk 'match($0, /^[[:space:]]*[0-9]+([.][0-9]+)?/, m) { printf "%.0f\n", m[0]; found = 1; exit } END { if (!found) exit 1 }'
 }
 
 # Two captures 300 ms apart must match (a blinking caret is tolerated).
@@ -2215,7 +2217,7 @@ if ((RAN)); then
     shopt -s nullglob
     pngs=("$OUT"/[0-9][0-9]-*.png)
     if ((${#pngs[@]})); then
-        montage "${pngs[@]}" -label '%t' -tile 4x -geometry 320x200+6+6 -background '#202020' -fill '#dddddd' \
+        montage -font DejaVu-Sans "${pngs[@]}" -label '%t' -tile 4x -geometry 320x200+6+6 -background '#202020' -fill '#dddddd' \
             -title "F1R3Gaze UI — $MODE" "$OUT/contact-sheet.png"
     fi
 fi

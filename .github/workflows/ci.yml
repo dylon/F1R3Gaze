@@ -79,7 +79,7 @@ jobs:
       - name: Install headless display and screenshot tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool imagemagick jq gawk x11-utils mesa-vulkan-drivers libxkbcommon-x11-0
+          sudo apt-get install -y xvfb xdotool imagemagick jq gawk x11-utils mesa-vulkan-drivers libxkbcommon-x11-0 fonts-dejavu-core
           if ! command -v magick >/dev/null; then
             sudo ln -s "$(command -v convert)" /usr/local/bin/magick
           fi
