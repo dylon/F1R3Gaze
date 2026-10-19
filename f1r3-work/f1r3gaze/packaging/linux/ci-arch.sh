@@ -20,7 +20,7 @@ arch=$(uname -m)
 # The container runtime blocks Landlock, which pacman uses for downloads.
 # This changes only the disposable CI image's pacman configuration.
 sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
-pacman -Sy --noconfirm
+pacman -Syu --noconfirm
 command -v zstd >/dev/null || pacman -S --noconfirm zstd
 useradd --create-home --shell /bin/bash gaze-builder
 mkdir -p /tmp/gaze-arch-output
