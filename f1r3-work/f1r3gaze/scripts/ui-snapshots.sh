@@ -233,6 +233,7 @@ coordinates_before() {
     AT[LINE_ROW_BAR]=""
     AT[LINE_RAIL_BAR]=""
     AT[LINE_TAB_BAR]=""
+    AT[CROP_LEO_RAIL]=""
     AT[LINE_NOTICE_BAR]=""
     AT[LINE_PROMPT_BAR]=""
     # The cursor scenes run in after mode only.
@@ -307,6 +308,7 @@ coordinates_after() {
     AT[LINE_ROW_BAR]="10x1+44+190"        # active row, Tabs (light)
     AT[LINE_RAIL_BAR]="10x1+0+107"        # active rail button
     AT[LINE_TAB_BAR]="1x10+100+0"         # active tab's top bar
+    AT[CROP_LEO_RAIL]="20x20+10+96"       # active Leo glyph, excluding the left accent bar
     AT[LINE_NOTICE_BAR]="12x1+56+670"     # the Theme files card's notice, Appearance (light)
     AT[LINE_PROMPT_BAR]="10x1+0+105"      # prompt bar (light)
     # Cursor scenes (L8). Toolbar buttons and the address field sit on y=60.
@@ -1014,14 +1016,18 @@ panel_scene() { # PANEL THEME
     seed "$2" "$1" true false 0
     launch && wait_title "$NOTES_TITLE" && pointer NEUTRAL && shot 0.8
 }
-scene_01_tabs_dark() { panel_scene tabs dark; }
+scene_01_tabs_dark() {
+    panel_scene tabs dark || return 1
+    check "$SCENE" leo_rail_pixels "$(count_color_in "$OUT/$SCENE.png" "${AT[CROP_LEO_RAIL]}" '#3FA9F5')" ge 8
+}
 scene_02_tabs_light() {
     panel_scene tabs light || return 1
+    check "$SCENE" leo_rail_pixels "$(count_color_in "$OUT/$SCENE.png" "${AT[CROP_LEO_RAIL]}" '#007BC4')" ge 8
     edge_check row_edge_artifact_px CROP_ROW_TOP
     edge_check rail_edge_artifact_px CROP_RAIL_ON_TOP
-    bar_check row_bar_px LINE_ROW_BAR '#087F86' 3
-    bar_check rail_bar_px LINE_RAIL_BAR '#087F86' 3
-    bar_check tab_bar_px LINE_TAB_BAR '#087F86' 2
+    bar_check row_bar_px LINE_ROW_BAR '#007BC4' 3
+    bar_check rail_bar_px LINE_RAIL_BAR '#007BC4' 3
+    bar_check tab_bar_px LINE_TAB_BAR '#007BC4' 2
 }
 scene_03_history_dark() { panel_scene history dark; }
 scene_04_history_light() { panel_scene history light; }
@@ -1046,7 +1052,7 @@ scene_15_appearance_dark() { panel_scene appearance dark; }
 scene_16_appearance_light() {
     panel_scene appearance light || return 1
     edge_check notice_edge_artifact_px CROP_NOTICE_TOP
-    bar_check notice_bar_px LINE_NOTICE_BAR '#087F86' 3
+    bar_check notice_bar_px LINE_NOTICE_BAR '#007BC4' 3
 }
 scene_17_appearance_bad_palette() {
     new_profile "$SCENE"

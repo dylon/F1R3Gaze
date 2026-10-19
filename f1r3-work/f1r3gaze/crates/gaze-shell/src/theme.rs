@@ -771,6 +771,7 @@ pub fn font_css() -> String {
     let mut css = include_str!("../assets/fontawesome.min.css").to_string();
     let solid = include_str!("../assets/solid.min.css");
     css.push_str(&solid.replace("@font-face{font-family:\"Font Awesome 7 Free\";font-style:normal;font-weight:900;font-display:block;src:url(../webfonts/fa-solid-900.woff2)}", ""));
+    css.push_str(include_str!("../assets/leo/leo-icons.css"));
     css
 }
 
@@ -782,11 +783,12 @@ pub fn font_css() -> String {
 /// text in a face of its own: Fira Code where it happened to be installed,
 /// DejaVu Sans Mono, Courier, or the narrower Consolas. Its weight comes from
 /// its `wght` axis, which fontique sets to the weight asked for.
-const BUNDLED_FONTS: [(&[u8], &str); 4] = [
+const BUNDLED_FONTS: [(&[u8], &str); 5] = [
     (include_bytes!("../assets/NotoSans-Regular.otf"), "Noto Sans"),
     (include_bytes!("../assets/NotoSans-SemiBold.otf"), "Noto Sans"),
     (include_bytes!("../assets/fira-code-latin-wght-normal.woff2"), "Fira Code"),
     (include_bytes!("../assets/fa-solid-900.woff2"), "Font Awesome 7 Free"),
+    (include_bytes!("../assets/leo/leo-icons.ttf"), "F1R3Gaze Leo"),
 ];
 
 /// Register the vendored faces directly with Parley. The chrome can use them

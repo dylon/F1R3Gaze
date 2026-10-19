@@ -143,8 +143,12 @@ Appearance offers System, Dark, and Light, and lists the theme files.
   see it as well: a site's `prefers-color-scheme` styles follow the scheme
   shown, as in other browsers, and a site with no dark styles keeps its own
   colors.
-- The UI bundles Font Awesome Free 7 icons, Noto Sans, and Fira Code; licenses
-  are in `crates/gaze-shell/assets/`.
+- The UI bundles Leo chrome icons, Font Awesome Free 7 fallback icons, Noto
+  Sans, and Fira Code; licenses are in `crates/gaze-shell/assets/`. Leo's SVG
+  sources are converted to a monochrome font by `scripts/build-leo-font.py`
+  (requires Python `fonttools`). The generated font and CSS are checked in, so
+  normal builds need no extra tool. The font lets icons follow theme colors in
+  the native renderer, which does not inherit CSS color into inline SVG paint.
 
 Site data lists the sites that keep something: capability store usage,
 remembered permissions, and live shard sessions. It also shows the verified

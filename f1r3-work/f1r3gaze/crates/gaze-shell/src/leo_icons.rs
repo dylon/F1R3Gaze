@@ -1,46 +1,42 @@
-//! Inline Leo glyphs in the browser chrome. The source SVG files carry MPL 2.0.
+//! Map chrome markers to the bundled Leo icon font. The source SVGs carry MPL 2.0.
 
 fn glyph(name: &str) -> Option<&'static str> {
     Some(match name {
-        "fa-arrow-left" => include_str!("../assets/leo/browser-back.svg"),
-        "fa-arrow-right" => include_str!("../assets/leo/browser-forward.svg"),
-        "fa-rotate-right" => include_str!("../assets/leo/browser-refresh.svg"),
-        "fa-table-columns" => include_str!("../assets/leo/browser-sidebar.svg"),
-        "fa-layer-group" => include_str!("../assets/leo/window-tab.svg"),
-        "fa-clock-rotate-left" | "fa-clock" => include_str!("../assets/leo/history.svg"),
-        "fa-database" => include_str!("../assets/leo/database.svg"),
-        "fa-shield-halved" => include_str!("../assets/leo/shield.svg"),
-        "fa-wallet" => include_str!("../assets/leo/crypto-wallets.svg"),
-        "fa-terminal" => include_str!("../assets/leo/window-console.svg"),
-        "fa-gear" => include_str!("../assets/leo/settings.svg"),
-        "fa-magnifying-glass" => include_str!("../assets/leo/search.svg"),
-        "fa-lock" => include_str!("../assets/leo/lock-plain.svg"),
-        "fa-xmark" => include_str!("../assets/leo/close.svg"),
-        "fa-plus" => include_str!("../assets/leo/plus-add.svg"),
-        "fa-copy" | "fa-clone" => include_str!("../assets/leo/copy.svg"),
-        "fa-check" | "fa-circle-check" => include_str!("../assets/leo/check-normal.svg"),
-        "fa-triangle-exclamation" | "fa-circle-exclamation" => {
-            include_str!("../assets/leo/warning-triangle-outline.svg")
-        }
-        "fa-file" | "fa-file-lines" => include_str!("../assets/leo/file.svg"),
-        "fa-file-import" => include_str!("../assets/leo/import-arrow.svg"),
-        "fa-file-export" | "fa-arrow-down" => include_str!("../assets/leo/download.svg"),
-        "fa-eye" => include_str!("../assets/leo/eye-on.svg"),
-        "fa-globe" => include_str!("../assets/leo/globe.svg"),
-        "fa-circle-info" => include_str!("../assets/leo/info-outline.svg"),
-        "fa-ellipsis" => include_str!("../assets/leo/more-horizontal.svg"),
-        "fa-trash-can" => include_str!("../assets/leo/trash.svg"),
-        "fa-circle-half-stroke" | "fa-palette" | "fa-swatchbook" => {
-            include_str!("../assets/leo/browser-appearance.svg")
-        }
-        "fa-bars" => include_str!("../assets/leo/browser-menu.svg"),
-        "fa-hourglass-half" => include_str!("../assets/leo/loading-spinner.svg"),
-        "fa-folder-open" => include_str!("../assets/leo/folder-import.svg"),
+        "fa-arrow-left" => "browser-back",
+        "fa-arrow-right" => "browser-forward",
+        "fa-rotate-right" => "browser-refresh",
+        "fa-table-columns" => "browser-sidebar",
+        "fa-layer-group" => "window-tab",
+        "fa-clock-rotate-left" | "fa-clock" => "history",
+        "fa-database" => "database",
+        "fa-shield-halved" => "shield",
+        "fa-wallet" => "crypto-wallets",
+        "fa-terminal" => "window-console",
+        "fa-gear" => "settings",
+        "fa-magnifying-glass" => "search",
+        "fa-lock" => "lock-plain",
+        "fa-xmark" => "close",
+        "fa-plus" => "plus-add",
+        "fa-copy" | "fa-clone" => "copy",
+        "fa-check" | "fa-circle-check" => "check-normal",
+        "fa-triangle-exclamation" | "fa-circle-exclamation" => "warning-triangle-outline",
+        "fa-file" | "fa-file-lines" => "file",
+        "fa-file-import" => "import-arrow",
+        "fa-file-export" | "fa-arrow-down" => "download",
+        "fa-eye" => "eye-on",
+        "fa-globe" => "globe",
+        "fa-circle-info" => "info-outline",
+        "fa-ellipsis" => "more-horizontal",
+        "fa-trash-can" => "trash",
+        "fa-circle-half-stroke" | "fa-palette" | "fa-swatchbook" => "browser-appearance",
+        "fa-bars" => "browser-menu",
+        "fa-hourglass-half" => "loading-spinner",
+        "fa-folder-open" => "folder-import",
         _ => return None,
     })
 }
 
-/// Replace a supported Font Awesome marker with the matching Leo SVG.
+/// Replace a supported Font Awesome marker with the matching Leo font glyph.
 /// Other markers keep their original glyph until the archive supplies one.
 pub fn inline(html: &str) -> String {
     const OPEN: &str = "<i class=\"fa-solid ";
@@ -63,8 +59,10 @@ pub fn inline(html: &str) -> String {
         }
         let end = class_end + 2 + CLOSE.len();
         let icon = classes.split_ascii_whitespace().find_map(glyph);
-        if let Some(svg) = icon {
+        if let Some(name) = icon {
             output.push_str("<i class=\"leo-icon");
+            output.push_str(" leo-");
+            output.push_str(name);
             for class in classes
                 .split_ascii_whitespace()
                 .filter(|class| !class.starts_with("fa-"))
@@ -73,7 +71,6 @@ pub fn inline(html: &str) -> String {
                 output.push_str(class);
             }
             output.push_str("\" aria-hidden=\"true\">");
-            output.push_str(svg);
             output.push_str(CLOSE);
         } else {
             output.push_str(&remaining[..end]);
@@ -92,9 +89,7 @@ mod tests {
     fn replaces_chrome_icon_and_preserves_layout_class() {
         let html = "<button><i class=\"fa-solid fa-arrow-left row-icon\"></i></button>";
         let rendered = inline(html);
-        assert!(rendered.contains("class=\"leo-icon row-icon\""));
-        assert!(rendered.contains("fill=\"currentColor\""));
-        assert!(rendered.contains("viewBox=\"0 0 24 24\""));
+        assert!(rendered.contains("class=\"leo-icon leo-browser-back row-icon\""));
         assert!(!rendered.contains("fa-arrow-left"));
     }
 
