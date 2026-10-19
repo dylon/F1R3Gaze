@@ -9,8 +9,21 @@ locally running F1R3Node. Set `F1R3NODE_BASE_URL` to its HTTP API address and
 run `cargo test --locked -p gaze-shard --test live_node -- --ignored` from
 `f1r3-work/f1r3gaze`. It checks finalized-block lookup, a missing registry
 entry at that block, and a read-only exploratory deploy. This was run locally
-against the packaged F1R3Node 0.4.46 x86_64 tarball with Gaze 0.1.1. The test
-does not assert broader transaction, consensus or wallet compatibility.
+against the packaged F1R3Node 0.4.46 x86_64 tarball with Gaze 0.1.1.
+
+The F1R3Node fork now runs that test against an installed Node package on each
+Linux and macOS architecture. The following exact pair passed. The workflow
+artifacts record the checked-out revisions and package hashes.
+
+| Gaze | Node | Installed package | Architectures | CI evidence |
+| --- | --- | --- | --- | --- |
+| 0.1.1 | 0.4.46 | Linux DEB with systemd service | x86_64, arm64 | [Linux package and client smoke](https://github.com/dylon/f1r3node-rust/actions/runs/39197520719) |
+| 0.1.1 | 0.4.46 | macOS universal PKG with launchd service | Apple Silicon, Intel | [macOS package and client smoke](https://github.com/dylon/f1r3node-rust/actions/runs/39197520738) |
+
+These checks do not establish transaction, consensus, wallet, or other
+version-pair compatibility. The organization selector still
+exposes only Gaze until independent Node releases and their compatibility
+records are ready for customer installation.
 
 Linux package managers install declared system libraries and can express versioned package dependencies. macOS DMGs are app delivery images, while component PKGs can be chained by a distribution PKG. Windows MSIs are independent components; a WiX Burn bootstrapper can select and chain them. The templates in `packaging/macos/organization-distribution.xml.in` and `packaging/windows/organization.wxs.in` deliberately expose only Gaze. The selector validator rejects an unknown system or an untested pair.
 
