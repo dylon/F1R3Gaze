@@ -23,7 +23,8 @@
 # 1 a step failed; 2 a tool or the binary is missing; 3 DIR is unsafe;
 # 64 usage.
 
-set -euo pipefail
+set -Eeuo pipefail
+trap 'printf "storage smoke failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 (($# == 2)) || { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 64; }
