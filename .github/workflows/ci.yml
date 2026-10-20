@@ -73,7 +73,7 @@ jobs:
       - name: Verify generated Leo font
         run: |
           python3 -m pip install --user fonttools==4.66.1
-          python3 f1r3-work/f1r3gaze/scripts/build-leo-font.py --check
+          python3 scripts/build-leo-font.py --check
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
