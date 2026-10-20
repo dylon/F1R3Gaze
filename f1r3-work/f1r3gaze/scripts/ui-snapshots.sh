@@ -1109,11 +1109,34 @@ scene_26_history_search() {
     launch && wait_title "$NOTES_TITLE" && click SIDE_SEARCH && typeit wiki && shot
 }
 
-find_base() { new_profile "$SCENE"; seed dark tabs false false 0; launch && wait_title "$NOTES_TITLE"; }
+wait_find_ready() {
+    local image="$WORK/refs/.find-ready.png" deadline=$((SECONDS + 15)) pixels
+    # The title changes before the file page finishes painting on software
+    # renderers. Capture the closed reference only after its heading is inked.
+    while :; do
+        import -window root "$image"
+        pixels=$(count_color_in "$image" '700x35+300+125' '#222222')
+        ((pixels >= 1000)) && return 0
+        ((SECONDS < deadline)) || { fail "notes page did not paint before Find"; return 1; }
+        sleep 0.2
+    done
+}
+wait_find_open() {
+    local image="$WORK/refs/.find-open.png" deadline=$((SECONDS + 10)) pixels
+    while :; do
+        import -window root "$image"
+        pixels=$(count_color_in "$image" '300x30+920+96' '#1E1E1E')
+        ((pixels >= 500)) && return 0
+        ((SECONDS < deadline)) || { fail "Find bar did not paint"; return 1; }
+        sleep 0.2
+    done
+}
+find_base() { new_profile "$SCENE"; seed dark tabs false false 0; launch && wait_title "$NOTES_TITLE" && wait_find_ready; }
 scene_27_find_open() {
     find_base || return 1
     ref closed 0.8
     key ctrl+f
+    wait_find_open || return 1
     shot
     check "$SCENE" page_reflow_px "$(ae "$WORK/refs/$SCENE.closed.png" "$OUT/$SCENE.png" "${AT[CROP_PAGE_LEFT]}")" le 0
 }
