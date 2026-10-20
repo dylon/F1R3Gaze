@@ -581,6 +581,12 @@ HTML
     cat >"$SITE/plain.html" <<'HTML'
 <html><head><title>Plain page</title><style>body{font-family:sans-serif;margin:32px;color:#222;background:#fff}</style></head><body><h1>Plain page</h1><p>A static document.</p></body></html>
 HTML
+    cat >"$SITE/history-start.html" <<'HTML'
+<html><head><title>History start</title><style>
+body{margin:0;background:white;color:#222}
+a{display:block;position:absolute;left:100px;top:150px;width:240px;height:80px;background:#cc0000}
+</style></head><body><h1>History start</h1><a href="plain.html">Open plain page</a></body></html>
+HTML
     # L13's page: its own light and dark styles, chosen by
     # prefers-color-scheme (scenes 83 and 84).
     cat >"$SITE/scheme.html" <<'HTML'
@@ -937,6 +943,16 @@ hist_diff() {
 }
 count_color() { magick "$1" -alpha off -format %c histogram:info:- | gawk -v c="$2" 'toupper($0) ~ c { n += $1 } END { print n + 0 }'; }
 pixel_gray() { magick "$1" -crop "1x1+$2+$3" -format '%[fx:mean*255]' info: | awk '{printf "%.0f\n", $1}'; }
+wait_pixel_gray() {
+    local x=$1 y=$2 limit=$3 image="$WORK/refs/.pixel-ready.png" deadline=$((SECONDS + 15)) gray
+    while :; do
+        import -window root "$image"
+        gray=$(pixel_gray "$image" "$x" "$y")
+        ((gray <= limit)) && return 0
+        ((SECONDS < deadline)) || { fail "page pixel at $x,$y did not paint (gray $gray)"; return 1; }
+        sleep 0.2
+    done
+}
 # count_color_in IMAGE CROP COLOUR: pixels of exactly COLOUR inside CROP.
 count_color_in() { magick "$1" -crop "$2" +repage -alpha off -format %c histogram:info:- | gawk -v c="$3" 'toupper($0) ~ c { n += $1 } END { print n + 0 }'; }
 # Highest WCAG contrast between the dominant colour of a crop and any colour
@@ -1179,8 +1195,7 @@ scene_32a_scrollbars() {
     local tabs
     tabs=$(jq -cn --arg site "$SITE_URL" '[{url: ($site + "/scrollbars.html"), title: "Overflow in both directions", parent: null}]')
     seed dark tabs false false 0 "$tabs"
-    launch && wait_title "Overflow in both directions" || return 1
-    sleep 1
+    launch && wait_title "Overflow in both directions" && wait_pixel_gray "$((W - 7))" "$((H / 5))" 200 || return 1
     pointer PAGE
     xdotool click --repeat 3 --delay 100 5
     sleep 0.6
@@ -1191,7 +1206,13 @@ scene_32a_scrollbars() {
     cp -f -- "$OUT/$SCENE.horizontal.png" "$OUT/$SCENE.png"
     check "$SCENE" vertical_thumb "$(pixel_gray "$OUT/$SCENE.vertical.png" "$((W - 7))" "$((H / 5))")" le 200
     check "$SCENE" horizontal_thumb "$(pixel_gray "$OUT/$SCENE.horizontal.png" "$((W / 4))" "$((H - 31))")" le 200
-    xdotool mousemove "$((W - 7))" "$((H / 5))" mousedown 1 mousemove "$((W - 7))" "$((H / 2))" mouseup 1
+    xdotool mousemove "$((W - 7))" "$((H / 5))"
+    sleep 0.2
+    xdotool mousedown 1
+    sleep 0.2
+    xdotool mousemove "$((W - 7))" "$((H / 2))"
+    sleep 0.2
+    xdotool mouseup 1
     sleep 0.6
     import -window root "$OUT/$SCENE.dragged.png"
     check "$SCENE" dragged_thumb_old_position "$(pixel_gray "$OUT/$SCENE.dragged.png" "$((W - 7))" "$((H / 5))")" ge 240
@@ -1241,11 +1262,15 @@ scene_44_nav_enabled() {
 }
 scene_44a_mouse_history() {
     new_profile "$SCENE"
-    seed dark tabs false false 0
-    launch && wait_title "$NOTES_TITLE" && key ctrl+l && key ctrl+a && typeit "$SITE_URL/plain.html" && key Return && wait_title "Plain page" || return 1
+    local tabs
+    tabs=$(jq -cn --arg site "$SITE_URL" '[{url: ($site + "/history-start.html"), title: "History start", parent: null}]')
+    seed dark tabs false false 0 "$tabs"
+    launch && wait_title "History start" && wait_pixel_gray 150 260 200 || return 1
+    xdotool mousemove 150 260 click 1
+    wait_title "Plain page" || return 1
     pointer PAGE
     xdotool click 8
-    wait_title "$NOTES_TITLE" || return 1
+    wait_title "History start" || return 1
     xdotool click 9
     wait_title "Plain page" && shot 0.8
 }
