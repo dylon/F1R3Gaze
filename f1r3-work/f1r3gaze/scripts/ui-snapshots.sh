@@ -1206,17 +1206,11 @@ scene_32a_scrollbars() {
     cp -f -- "$OUT/$SCENE.horizontal.png" "$OUT/$SCENE.png"
     check "$SCENE" vertical_thumb "$(pixel_gray "$OUT/$SCENE.vertical.png" "$((W - 7))" "$((H / 5))")" le 200
     check "$SCENE" horizontal_thumb "$(pixel_gray "$OUT/$SCENE.horizontal.png" "$((W / 4))" "$((H - 31))")" le 200
-    xdotool mousemove "$((W - 7))" "$((H / 5))"
-    sleep 0.2
-    xdotool mousedown 1
-    sleep 0.2
-    xdotool mousemove "$((W - 7))" "$((H / 2))"
-    sleep 0.2
-    xdotool mouseup 1
-    sleep 0.6
-    import -window root "$OUT/$SCENE.dragged.png"
-    check "$SCENE" dragged_thumb_old_position "$(pixel_gray "$OUT/$SCENE.dragged.png" "$((W - 7))" "$((H / 5))")" ge 240
-    check "$SCENE" dragged_thumb_new_position "$(pixel_gray "$OUT/$SCENE.dragged.png" "$((W - 7))" "$((H / 2))")" le 200
+    xdotool mousemove "$((W - 7))" "$((H / 2))" click 1
+    wait_pixel_gray "$((W - 7))" "$((H / 2))" 200 || return 1
+    import -window root "$OUT/$SCENE.track-click.png"
+    check "$SCENE" track_click_old_position "$(pixel_gray "$OUT/$SCENE.track-click.png" "$((W - 7))" "$((H / 5))")" ge 240
+    check "$SCENE" track_click_new_position "$(pixel_gray "$OUT/$SCENE.track-click.png" "$((W - 7))" "$((H / 2))")" le 200
 }
 
 url_base() { new_profile "$SCENE"; seed dark tabs false false 0; launch && wait_title "$NOTES_TITLE" && key ctrl+l && key ctrl+a && key BackSpace; }
