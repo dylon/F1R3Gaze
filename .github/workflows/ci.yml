@@ -87,13 +87,13 @@ jobs:
           if ! command -v magick >/dev/null; then
             sudo ln -s "$(command -v convert)" /usr/local/bin/magick
           fi
-      - name: Render Leo icons in both themes
+      - name: Smoke test icons, scrollbars, and mouse history
         run: |
           cargo build --locked -p gaze-shell --bin f1r3gaze
           icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
           test -n "$icd"
           export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" LIBGL_ALWAYS_SOFTWARE=1
-          scripts/ui-snapshots.sh --after --only '^(0[12]|27)-' \
+          scripts/ui-snapshots.sh --after --only '^(0[12]|27|32a|44a)-' \
             --bin target/debug/f1r3gaze \
             --out "$RUNNER_TEMP/icon-snapshots" \
             --work "$RUNNER_TEMP/icon-work" --timeout 45 --keep

@@ -844,6 +844,20 @@ fn leo_toolbar_icon_is_parsed_and_laid_out() {
 }
 
 #[test]
+fn viewport_thumb_tracks_both_axes_and_disappears_without_overflow() {
+    let bars = PageScrollbars {
+        x: 42.0, y: 84.0, width: 1200.0, height: 700.0,
+        scroll_x: 600.0, scroll_y: 900.0, max_x: 1200.0, max_y: 1800.0,
+    };
+    let (vertical_start, vertical_length) = bars.thumb(ScrollAxis::Vertical).unwrap();
+    let (horizontal_start, horizontal_length) = bars.thumb(ScrollAxis::Horizontal).unwrap();
+    assert!((vertical_start - (700.0 - vertical_length) / 2.0).abs() < 0.01);
+    assert!((horizontal_start - (1200.0 - horizontal_length) / 2.0).abs() < 0.01);
+    assert!(PageScrollbars { max_x: 0.0, max_y: 0.0, ..bars }.thumb(ScrollAxis::Vertical).is_none());
+    assert!(PageScrollbars { max_x: 0.0, max_y: 0.0, ..bars }.thumb(ScrollAxis::Horizontal).is_none());
+}
+
+#[test]
 fn icon_only_controls_center_their_icon_slots() {
     fn check(doc: &BaseDocument, control: &str) {
         let button = doc

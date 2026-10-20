@@ -84,7 +84,7 @@ use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::application::macos::ApplicationHandlerExtMacOS;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, Position};
-use winit::event::{DeviceEvent, DeviceId, PointerKind, StartCause, WindowEvent};
+use winit::event::{ButtonSource, DeviceEvent, DeviceId, ElementState, MouseButton, PointerKind, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::monitor::{Fullscreen, MonitorHandle};
 use winit::raw_window_handle::RawDisplayHandle;
@@ -704,6 +704,20 @@ fn mouse_left(event: &WindowEvent) -> bool {
     )
 }
 
+/// Side mouse buttons are browser history controls, independent of the
+/// element under the pointer. Consume both halves of the click so a page
+/// cannot also receive an unmatched press or release.
+fn mouse_history_button(event: &WindowEvent) -> Option<(bool, bool)> {
+    if let WindowEvent::PointerButton { button, state, .. } = event {
+        match button {
+            ButtonSource::Mouse(MouseButton::Back) => return Some((true, *state == ElementState::Pressed)),
+            ButtonSource::Mouse(MouseButton::Forward) => return Some((false, *state == ElementState::Pressed)),
+            _ => {}
+        }
+    }
+    None
+}
+
 // Every method is forwarded, so Blitz behaves as it does on its own apart
 // from the three additions. The lint fails the build if winit adds a method
 // that is not forwarded.
@@ -755,6 +769,12 @@ impl<R: WindowRenderer> ApplicationHandler for ChromeApplication<R> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        if let Some((back, pressed)) = mouse_history_button(&event) {
+            if pressed && let Some(chrome) = self.chrome(window_id) {
+                chrome.mouse_history(back);
+            }
+            return;
+        }
         let resized = self.poll_on_resize && changes_layout_size(&event);
         let left = self.end_hover_on_leave && mouse_left(&event);
         // Read before Blitz takes the event.
@@ -900,6 +920,24 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use winit::dpi::PhysicalSize;
     use winit::event::{FingerId, SurfaceSizeWriter};
+
+    #[test]
+    fn side_mouse_buttons_are_history_events_on_press_only() {
+        let event = |button, state| WindowEvent::PointerButton {
+            device_id: None,
+            state,
+            position: PhysicalPosition::new(10.0, 10.0),
+            primary: true,
+            button: ButtonSource::Mouse(button),
+            is_macos_activation_click: false,
+        };
+        assert_eq!(mouse_history_button(&event(MouseButton::Back, ElementState::Pressed)), Some((true, true)));
+        assert_eq!(mouse_history_button(&event(MouseButton::Forward, ElementState::Pressed)), Some((false, true)));
+        assert_eq!(mouse_history_button(&event(MouseButton::Back, ElementState::Released)), Some((true, false)));
+        assert_eq!(mouse_history_button(&event(MouseButton::Forward, ElementState::Released)), Some((false, false)));
+        assert_eq!(mouse_history_button(&event(MouseButton::Left, ElementState::Pressed)), None);
+        assert_eq!(mouse_history_button(&event(MouseButton::Right, ElementState::Pressed)), None);
+    }
 
     #[test]
     fn only_a_new_size_or_scale_polls_at_once() {

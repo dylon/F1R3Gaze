@@ -12,7 +12,7 @@ path = "src/main.rs"
 [features]
 default = ["window"]
 # The windowed browser (winit + vello). Without it: headless tools only.
-window = ["dep:blitz-shell", "dep:anyrender_vello", "dep:anyrender", "dep:winit", "dep:rfd"]
+window = ["dep:blitz-shell", "dep:blitz-paint", "dep:anyrender_vello", "dep:anyrender", "dep:winit", "dep:rfd"]
 os-keyring = ["gaze-shard/os-keyring"]
 # Per-frame timings on stdout, for profiling the render loop: Blitz's resolve
 # phases, Vello's frame phases, and the window's own line per frame
@@ -31,6 +31,7 @@ blitz-dom = { workspace = true, features = ["svg", "woff", "system-fonts", "file
 blitz-html.workspace = true
 blitz-traits.workspace = true
 blitz-shell = { workspace = true, optional = true, features = ["clipboard"] }
+blitz-paint = { workspace = true, optional = true, features = ["scrollbars"] }
 anyrender_vello = { workspace = true, optional = true }
 anyrender = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }

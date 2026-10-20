@@ -121,10 +121,10 @@ SCENES=(
     13-console-dark 14-console-light 15-appearance-dark 16-appearance-light
     17-appearance-bad-palette 18-appearance-low-contrast 19-collapsed-dark 20-collapsed-light
     21-tab-menu 22-tab-menu-after-action 23-tabs-search 24-tabs-tree 25-many-tabs 26-history-search
-    27-find-open 28-find-matches 29-find-next 30-find-cleared 31-find-tab-switch 32-find-scroll
+    27-find-open 28-find-matches 29-find-next 30-find-cleared 31-find-tab-switch 32-find-scroll 32a-scrollbars
     33-url-empty 34-url-suggestions 35-url-suggestion-down 36-url-escape 37-url-blur 38-url-switch-to-tab
     39-prompt-net 40-prompt-shard 41-error-page 42-newtab
-    43-nav-disabled 44-nav-enabled 45-rail-hover 46-row-hover 47-flash-shown 48-flash-expired
+    43-nav-disabled 44-nav-enabled 44a-mouse-history 45-rail-hover 46-row-hover 47-flash-shown 48-flash-expired
     49-search-reset 50-wallet-review 51-history-clear
     52-theme-appearance-to-light 53-theme-appearance-fresh-light
     54-theme-appearance-to-dark 55-theme-appearance-fresh-dark
@@ -147,6 +147,8 @@ SCENES=(
 # (L8) and the lamp scenes (L11) came after the before capture and use only the
 # after coordinates.
 declare -A ONLY_IN=(
+    [44a-mouse-history]=after
+    [32a-scrollbars]=after
     [61-cursor-back]=after [62-cursor-rail]=after [63-cursor-tab-row]=after
     [64-cursor-link]=after [65-cursor-text]=after [66-cursor-hover-style]=after
     [67-cursor-resting]=after [68-cursor-css-none]=after
@@ -570,6 +572,12 @@ HTML
         done
         printf '</body></html>\n'
     } >"$SITE/long.html"
+    cat >"$SITE/scrollbars.html" <<'HTML'
+<html><head><title>Overflow in both directions</title><style>
+body{margin:0;width:2400px;height:2400px;background:white;color:#222}
+#marker{position:absolute;left:1600px;top:1600px}
+</style></head><body><h1>Overflow in both directions</h1><p id="marker">Far corner</p></body></html>
+HTML
     cat >"$SITE/plain.html" <<'HTML'
 <html><head><title>Plain page</title><style>body{font-family:sans-serif;margin:32px;color:#222;background:#fff}</style></head><body><h1>Plain page</h1><p>A static document.</p></body></html>
 HTML
@@ -928,6 +936,7 @@ hist_diff() {
         <(magick "$1" -alpha off -format %c histogram:info:-) <(magick "$2" -alpha off -format %c histogram:info:-)
 }
 count_color() { magick "$1" -alpha off -format %c histogram:info:- | gawk -v c="$2" 'toupper($0) ~ c { n += $1 } END { print n + 0 }'; }
+pixel_gray() { magick "$1" -crop "1x1+$2+$3" -format '%[fx:mean*255]' info: | awk '{printf "%.0f\n", $1}'; }
 # count_color_in IMAGE CROP COLOUR: pixels of exactly COLOUR inside CROP.
 count_color_in() { magick "$1" -crop "$2" +repage -alpha off -format %c histogram:info:- | gawk -v c="$3" 'toupper($0) ~ c { n += $1 } END { print n + 0 }'; }
 # Highest WCAG contrast between the dominant colour of a crop and any colour
@@ -1165,6 +1174,29 @@ scene_32_find_scroll() {
     seed dark tabs false false 0 "$tabs"
     launch && wait_title "Long page" && key ctrl+f && typeit marker && pointer PAGE && xdotool click --repeat 3 --delay 120 5 && shot 1
 }
+scene_32a_scrollbars() {
+    new_profile "$SCENE"
+    local tabs
+    tabs=$(jq -cn --arg site "$SITE_URL" '[{url: ($site + "/scrollbars.html"), title: "Overflow in both directions", parent: null}]')
+    seed dark tabs false false 0 "$tabs"
+    launch && wait_title "Overflow in both directions" || return 1
+    sleep 1
+    pointer PAGE
+    xdotool click --repeat 3 --delay 100 5
+    sleep 0.6
+    import -window root "$OUT/$SCENE.vertical.png"
+    xdotool click --repeat 3 --delay 100 6
+    sleep 0.6
+    import -window root "$OUT/$SCENE.horizontal.png"
+    cp -f -- "$OUT/$SCENE.horizontal.png" "$OUT/$SCENE.png"
+    check "$SCENE" vertical_thumb "$(pixel_gray "$OUT/$SCENE.vertical.png" "$((W - 7))" "$((H / 5))")" le 200
+    check "$SCENE" horizontal_thumb "$(pixel_gray "$OUT/$SCENE.horizontal.png" "$((W / 4))" "$((H - 31))")" le 200
+    xdotool mousemove "$((W - 7))" "$((H / 5))" mousedown 1 mousemove "$((W - 7))" "$((H / 2))" mouseup 1
+    sleep 0.6
+    import -window root "$OUT/$SCENE.dragged.png"
+    check "$SCENE" dragged_thumb_old_position "$(pixel_gray "$OUT/$SCENE.dragged.png" "$((W - 7))" "$((H / 5))")" ge 240
+    check "$SCENE" dragged_thumb_new_position "$(pixel_gray "$OUT/$SCENE.dragged.png" "$((W - 7))" "$((H / 2))")" le 200
+}
 
 url_base() { new_profile "$SCENE"; seed dark tabs false false 0; launch && wait_title "$NOTES_TITLE" && key ctrl+l && key ctrl+a && key BackSpace; }
 scene_33_url_empty() {
@@ -1206,6 +1238,16 @@ scene_44_nav_enabled() {
     new_profile "$SCENE"
     seed dark tabs false false 0
     launch && wait_title "$NOTES_TITLE" && key ctrl+l && key ctrl+a && typeit "$SITE_URL/plain.html" && key Return && wait_title "Plain page" && pointer NEUTRAL && shot 1
+}
+scene_44a_mouse_history() {
+    new_profile "$SCENE"
+    seed dark tabs false false 0
+    launch && wait_title "$NOTES_TITLE" && key ctrl+l && key ctrl+a && typeit "$SITE_URL/plain.html" && key Return && wait_title "Plain page" || return 1
+    pointer PAGE
+    xdotool click 8
+    wait_title "$NOTES_TITLE" || return 1
+    xdotool click 9
+    wait_title "Plain page" && shot 0.8
 }
 scene_45_rail_hover() {
     new_profile "$SCENE"

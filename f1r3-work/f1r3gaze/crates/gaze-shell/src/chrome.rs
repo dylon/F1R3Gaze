@@ -291,10 +291,10 @@ button:focus,input:focus{outline:2px solid var(--gaze-accent);outline-offset:1px
 .btn-primary.btn-danger{background:var(--gaze-danger);border-color:var(--gaze-danger);color:var(--gaze-bg)}
 .btn:disabled,.btn:disabled:hover{background:transparent;border-color:var(--gaze-border);color:var(--gaze-border);box-shadow:none}
 .btn-ghost:disabled,.btn-ghost:disabled:hover{border-color:transparent}
-.icon-btn{position:relative;width:30px;height:30px;font-size:13px;color:var(--gaze-muted)}
+.icon-btn{position:relative;width:30px;height:30px;font-size:16px;color:var(--gaze-muted)}
 .icon-btn:hover{background:var(--gaze-hover);color:var(--gaze-text)}
 .icon-btn.on{color:var(--gaze-accent)}
-.icon-btn-sm{width:24px;height:24px;border-radius:var(--radius-sm);font-size:11.5px}
+.icon-btn-sm{width:24px;height:24px;border-radius:var(--radius-sm);font-size:14px}
 .icon-btn:disabled,.icon-btn:disabled:hover{background:transparent;color:var(--gaze-border)}
 .chip{position:relative;height:26px;padding:0 10px;gap:6px;border-color:var(--gaze-border);border-radius:13px;font-size:11.5px;color:var(--gaze-muted)}
 .chip:hover{background:var(--gaze-hover);color:var(--gaze-text)}
@@ -401,7 +401,7 @@ mark{background:transparent;color:inherit}
 .tab-icon{flex:none;width:14px;text-align:center;font-size:11px}
 .tab-icon.warn{color:var(--gaze-warning)}.tab-icon.err{color:var(--gaze-danger-text)}
 .tab-title{flex:1;min-width:0;overflow:hidden}
-.tab-close{flex:none;display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;font-size:11px;visibility:hidden}
+.tab-close{flex:none;display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;font-size:13px;visibility:hidden}
 .tab:hover .tab-close,.tab.on .tab-close{visibility:visible}
 /* An inactive tab's close button overlays the end of its title on hover,
    so the title has the room when it is not. */
@@ -438,7 +438,7 @@ mark{background:transparent;color:inherit}
 /* Workspace, rail, sidebar */
 #workspace{display:flex;flex:1;min-height:0}
 #rail{width:42px;flex:none;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;background:var(--gaze-bg);border-right:1px solid var(--gaze-border)}
-.rail-btn{position:relative;width:34px;height:34px;font-size:15px;color:var(--gaze-muted)}
+.rail-btn{position:relative;width:34px;height:34px;font-size:18px;color:var(--gaze-muted)}
 .rail-btn:hover{background:var(--gaze-hover);color:var(--gaze-text)}
 .rail-btn.on{background:linear-gradient(var(--gaze-accent),var(--gaze-accent)) 0 0/3px 100% no-repeat border-box,var(--gaze-hover);color:var(--gaze-accent)}
 #sidebar{width:300px;flex:none;display:flex;flex-direction:column;min-height:0;background:var(--gaze-surface);border-right:1px solid var(--gaze-border)}
@@ -452,6 +452,9 @@ mark{background:transparent;color:inherit}
 /* Page area and find */
 #main{flex:1;position:relative;display:flex;min-width:0;min-height:0;background:white}
 .view{flex:1;width:100%;height:100%;overflow:hidden}
+#page-v-scrollbar,#page-h-scrollbar{position:absolute;z-index:4;display:none;pointer-events:none;background:#777c;border:1px solid #fff9;border-radius:6px}
+#page-v-scrollbar{right:2px;width:10px}
+#page-h-scrollbar{bottom:2px;height:10px}
 #findoverlay{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2}
 .findhit{position:absolute;border-radius:2px;background:#ffd54f59}
 .findhit.active{background:transparent;box-shadow:0 0 0 2px #e8710a}
@@ -519,7 +522,7 @@ const SHELL: &str = r#"<html><head><title>F1R3Gaze</title><style>__CSS__</style>
 <div id="tabs">__TAB_STRIP__</div>
 <div id="toolbar">__TOOLBAR__</div>
 <div id="prompt"></div>
-<div id="workspace"><div id="rail">__RAIL__</div><div id="sidebar" class="__SIDEBAR_CLASS__"><div id="sidehead"></div><div id="sidecontrols"></div><div id="panel"></div><div id="wallet" class="hidden">__WALLET_FORM__</div></div><div id="main"><div id="findoverlay"></div><div id="findbar" class="off">__FIND_BOX__</div></div></div>
+<div id="workspace"><div id="rail">__RAIL__</div><div id="sidebar" class="__SIDEBAR_CLASS__"><div id="sidehead"></div><div id="sidecontrols"></div><div id="panel"></div><div id="wallet" class="hidden">__WALLET_FORM__</div></div><div id="main"><div id="page-v-scrollbar"></div><div id="page-h-scrollbar"></div><div id="findoverlay"></div><div id="findbar" class="off">__FIND_BOX__</div></div></div>
 <div id="status"></div>
 </body></html>"#;
 
@@ -2643,6 +2646,7 @@ pub struct ChromeDocument {
     /// Closed tabs, the most recent last.
     closed: Vec<SavedTab>,
     drag: Option<u64>,
+    page_scroll_drag: Option<PageScrollDrag>,
     menu_tab: Option<u64>,
     side_query: String,
     side_pages: bool,
@@ -2700,6 +2704,46 @@ pub struct ChromeDocument {
     fitter: TextFitter,
 }
 
+#[derive(Clone, Copy)]
+enum ScrollAxis {
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Clone, Copy)]
+struct PageScrollDrag {
+    axis: ScrollAxis,
+    offset_in_thumb: f32,
+}
+
+/// The viewport's scrollbar is owned by the chrome: Blitz's scrollbar
+/// feature paints scrolling elements, but does not paint viewport scrollbars.
+#[derive(Clone, Copy)]
+struct PageScrollbars {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    scroll_x: f32,
+    scroll_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+impl PageScrollbars {
+    fn thumb(&self, axis: ScrollAxis) -> Option<(f32, f32)> {
+        let (length, max_scroll, scroll) = match axis {
+            ScrollAxis::Vertical => (self.height, self.max_y, self.scroll_y),
+            ScrollAxis::Horizontal => (self.width, self.max_x, self.scroll_x),
+        };
+        if max_scroll <= 0.5 || length <= 0.0 {
+            return None;
+        }
+        let thumb = (length * length / (length + max_scroll)).clamp(32.0_f32.min(length), length);
+        Some(((scroll / max_scroll) * (length - thumb), thumb))
+    }
+}
+
 fn qn(k: &str) -> QualName {
     QualName::new(None, ns!(), LocalName::from(k))
 }
@@ -2712,6 +2756,115 @@ fn page_is_laid_out(page: &RhoDocument) -> bool {
 }
 
 impl ChromeDocument {
+    pub(crate) fn mouse_history(&mut self, back: bool) {
+        self.act(if back { Action::Back } else { Action::Fwd });
+    }
+
+    fn page_scrollbars(&mut self) -> Option<PageScrollbars> {
+        let main = self.inner.get_node(self.id("main")?)?;
+        let position = main.absolute_position(0.0, 0.0);
+        let size = main.final_layout().size;
+        let page = rho_mut(&mut self.inner, self.tabs.get(self.active)?.1)?;
+        let base = page.base();
+        let doc = base.borrow();
+        let root = doc.root_element();
+        let layout = root.final_layout();
+        let content_width = layout.size.width.max(layout.scrollable_overflow_rect.right);
+        let content_height = layout.size.height.max(layout.scrollable_overflow_rect.bottom);
+        let scroll = doc.viewport_scroll();
+        Some(PageScrollbars {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+            scroll_x: scroll.x as f32,
+            scroll_y: scroll.y as f32,
+            max_x: (content_width - size.width).max(0.0),
+            max_y: (content_height - size.height).max(0.0),
+        })
+    }
+
+    fn render_page_scrollbars(&mut self) -> bool {
+        let bars = self.page_scrollbars();
+        let mut changed = false;
+        for (axis, id) in [
+            (ScrollAxis::Vertical, "page-v-scrollbar"),
+            (ScrollAxis::Horizontal, "page-h-scrollbar"),
+        ] {
+            let style = bars.and_then(|bars| bars.thumb(axis)).map(|(start, length)| match axis {
+                ScrollAxis::Vertical => format!("display:block;top:{start:.1}px;height:{length:.1}px"),
+                ScrollAxis::Horizontal => format!("display:block;left:{start:.1}px;width:{length:.1}px"),
+            });
+            changed |= self.sync_attr(id, "style", style.as_deref());
+        }
+        changed
+    }
+
+    /// Capture a drag on the visible viewport thumb before Blitz routes the
+    /// pointer to the page below it. The track also accepts a click to jump.
+    fn page_scrollbar_event(&mut self, event: &UiEvent) -> bool {
+        let pointer = match event {
+            UiEvent::PointerDown(p) | UiEvent::PointerMove(p) | UiEvent::PointerUp(p) | UiEvent::PointerCancel(p)
+                if p.is_mouse() => p,
+            _ => return false,
+        };
+        let x = pointer.coords.client_x;
+        let y = pointer.coords.client_y;
+        if let UiEvent::PointerDown(p) = event {
+            if p.button != MouseEventButton::Main {
+                return false;
+            }
+            let Some(bars) = self.page_scrollbars() else { return false };
+            let axis = if bars.thumb(ScrollAxis::Vertical).is_some()
+                && x >= bars.x + bars.width - 12.0 && x < bars.x + bars.width
+                && y >= bars.y && y < bars.y + bars.height
+            {
+                ScrollAxis::Vertical
+            } else if bars.thumb(ScrollAxis::Horizontal).is_some()
+                && y >= bars.y + bars.height - 12.0 && y < bars.y + bars.height
+                && x >= bars.x && x < bars.x + bars.width
+            {
+                ScrollAxis::Horizontal
+            } else {
+                return false;
+            };
+            let (start, length) = bars.thumb(axis).expect("visible scrollbar has a thumb");
+            let at = match axis {
+                ScrollAxis::Vertical => y - bars.y,
+                ScrollAxis::Horizontal => x - bars.x,
+            };
+            let offset_in_thumb = if (start..start + length).contains(&at) { at - start } else { length / 2.0 };
+            self.page_scroll_drag = Some(PageScrollDrag { axis, offset_in_thumb });
+        }
+        let Some(drag) = self.page_scroll_drag else { return false };
+        match event {
+            UiEvent::PointerMove(_) | UiEvent::PointerDown(_) => {
+                let Some(bars) = self.page_scrollbars() else { return true };
+                let Some((_, length)) = bars.thumb(drag.axis) else { return true };
+                let (at, origin, track, max_scroll) = match drag.axis {
+                    ScrollAxis::Vertical => (y, bars.y, bars.height, bars.max_y),
+                    ScrollAxis::Horizontal => (x, bars.x, bars.width, bars.max_x),
+                };
+                let offset = ((at - origin - drag.offset_in_thumb) / (track - length).max(1.0) * max_scroll)
+                    .clamp(0.0, max_scroll);
+                if let Some(page) = rho_mut(&mut self.inner, self.tabs[self.active].1) {
+                    let base = page.base();
+                    let mut doc = base.borrow_mut();
+                    let mut scroll = doc.viewport_scroll();
+                    match drag.axis {
+                        ScrollAxis::Vertical => scroll.y = f64::from(offset),
+                        ScrollAxis::Horizontal => scroll.x = f64::from(offset),
+                    }
+                    doc.set_viewport_scroll(scroll);
+                }
+                self.wake.wake();
+            }
+            UiEvent::PointerUp(_) | UiEvent::PointerCancel(_) => self.page_scroll_drag = None,
+            _ => {}
+        }
+        true
+    }
+
     /// A window on `url`, with the system's preference fixed as unknown:
     /// tests, which never run `dbus-send` (`launch` passes the real one).
     pub fn new(eng: Rc<Engine>, url: &str) -> ChromeDocument {
@@ -2794,6 +2947,7 @@ impl ChromeDocument {
             lazy: BTreeMap::new(),
             closed: Vec::with_capacity(CLOSED_LIMIT + 1),
             drag: None,
+            page_scroll_drag: None,
             menu_tab: None,
             side_query: String::new(),
             side_pages: false,
@@ -2995,6 +3149,7 @@ impl ChromeDocument {
         }
         // Ledger L1/H6: the outgoing tab keeps no find selection.
         self.clear_find_selection();
+        self.page_scroll_drag = None;
         self.active = i;
         let id = self.tabs[i].0.id;
         if let Some(url) = self.lazy.remove(&id) {
@@ -5033,6 +5188,7 @@ impl ChromeDocument {
         changed |= self.render_prompt();
         changed |= self.render_sidebar();
         changed |= self.render_find();
+        changed |= self.render_page_scrollbars();
         changed |= self.render_status();
         let title = &self.tabs[self.active].0.title;
         let wt = if title.is_empty() {
@@ -5099,6 +5255,9 @@ impl Drop for ChromeDocument {
 
 impl ChromeDocument {
     fn dispatch_ui_event(&mut self, event: UiEvent) {
+        if self.page_scrollbar_event(&event) {
+            return;
+        }
         // The window owns browser shortcuts and its fields' keys even while a
         // page sub-document has focus; they are handled before Blitz routes
         // the key anywhere.
