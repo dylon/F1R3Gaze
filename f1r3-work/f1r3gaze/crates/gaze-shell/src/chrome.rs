@@ -268,7 +268,7 @@ const CSS: &str = r#"
       border box. */
 :root{--sans:'Noto Sans',system-ui,sans-serif;--mono:'Fira Code',monospace;--radius-sm:5px;--radius-md:7px;--radius-lg:10px}
 *{box-sizing:border-box}
-.leo-icon{display:inline-flex;align-items:center;justify-content:center;vertical-align:-.125em;line-height:1}
+.leo-icon{display:inline-flex;align-items:center;justify-content:center;width:1em;height:1em;flex:none;line-height:1}
 .leo-icon::before{display:block}
 html,body{margin:0;height:100%;font:13px/1.35 var(--sans);color:var(--gaze-text);background:var(--gaze-bg)}
 body{display:flex;flex-direction:column}

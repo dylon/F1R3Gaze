@@ -844,6 +844,45 @@ fn leo_toolbar_icon_is_parsed_and_laid_out() {
 }
 
 #[test]
+fn icon_only_controls_center_their_icon_slots() {
+    fn check(doc: &BaseDocument, control: &str) {
+        let button = doc
+            .query_selector(control)
+            .expect("a valid selector")
+            .unwrap_or_else(|| panic!("nothing matches {control}"));
+        let icon_selector = format!("{control} .leo-icon");
+        let icon = doc
+            .query_selector(&icon_selector)
+            .expect("a valid selector")
+            .unwrap_or_else(|| panic!("nothing matches {icon_selector}"));
+        let button = doc.get_node(button).expect("the control").final_layout();
+        let icon = doc.get_node(icon).expect("the icon").final_layout();
+        let x = icon.location.x + icon.size.width / 2.0 - button.size.width / 2.0;
+        let y = icon.location.y + icon.size.height / 2.0 - button.size.height / 2.0;
+        assert!(
+            x.abs() <= 0.5 && y.abs() <= 0.5,
+            "{control}: icon offset ({x}, {y}) px"
+        );
+    }
+
+    let doc = laid_out_shell_with("tabs", "");
+    check(&doc, "#back");
+    check(&doc, "#rail-tabs");
+
+    let doc = laid_out_shell_with(
+        "panel",
+        r#"<button class="icon-btn icon-btn-sm" aria-label="Close"><i class="leo-icon leo-close"></i></button>"#,
+    );
+    check(&doc, "#panel .icon-btn-sm");
+
+    let doc = laid_out_shell_with(
+        "tablist",
+        r#"<div class="tab on" style="width:160px"><span class="tab-title">Tab</span><span class="tab-close"><i class="leo-icon leo-close"></i></span></div>"#,
+    );
+    check(&doc, ".tab-close");
+}
+
+#[test]
 fn labels_are_never_bare_text_in_flex_boxes() {
     let mut failures = Vec::new();
     for (region, fragment) in sample_fragments() {

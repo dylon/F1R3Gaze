@@ -70,6 +70,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Verify generated Leo font
+        run: |
+          python3 -m pip install --user fonttools==4.66.1
+          python3 f1r3-work/f1r3gaze/scripts/build-leo-font.py --check
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
@@ -89,10 +93,11 @@ jobs:
           icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
           test -n "$icd"
           export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" LIBGL_ALWAYS_SOFTWARE=1
-          scripts/ui-snapshots.sh --after --only '^0[12]-' \
+          scripts/ui-snapshots.sh --after --only '^(0[12]|27)-' \
             --bin target/debug/f1r3gaze \
             --out "$RUNNER_TEMP/icon-snapshots" \
             --work "$RUNNER_TEMP/icon-work" --timeout 45 --keep
+          python3 scripts/check-icon-centering.py "$RUNNER_TEMP/icon-snapshots"
       - name: Preserve failed icon screenshots
         if: failure()
         uses: actions/upload-artifact@v4
